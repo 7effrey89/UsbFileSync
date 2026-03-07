@@ -38,6 +38,14 @@ public sealed class JsonSyncSettingsStore : ISyncSettingsStore
         {
             return null;
         }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     public void Save(SyncConfiguration configuration)
@@ -54,6 +62,7 @@ public sealed class JsonSyncSettingsStore : ISyncSettingsStore
 
         try
         {
+            // Write to a temporary file first so a failed save doesn't leave a partially written settings file behind.
             using (var stream = File.Create(temporaryPath))
             {
                 JsonSerializer.Serialize(stream, configuration, SerializerOptions);
@@ -63,9 +72,18 @@ public sealed class JsonSyncSettingsStore : ISyncSettingsStore
         }
         finally
         {
-            if (File.Exists(temporaryPath))
+            try
             {
-                File.Delete(temporaryPath);
+                if (File.Exists(temporaryPath))
+                {
+                    File.Delete(temporaryPath);
+                }
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
             }
         }
     }

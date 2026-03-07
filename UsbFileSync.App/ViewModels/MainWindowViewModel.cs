@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
 using UsbFileSync.App.Commands;
 using UsbFileSync.Core.Models;
@@ -6,10 +7,13 @@ using UsbFileSync.Core.Services;
 
 namespace UsbFileSync.App.ViewModels;
 
-public sealed class MainWindowViewModel : ObservableObject
+public sealed class MainWindowViewModel : ObservableObject, IDisposable
 {
+    private static readonly TimeSpan SettingsSaveDelay = TimeSpan.FromMilliseconds(250);
+
     private readonly SyncService _syncService;
     private readonly ISyncSettingsStore? _settingsStore;
+    private CancellationTokenSource? _persistConfigurationCancellationTokenSource;
     private string _sourcePath = string.Empty;
     private string _destinationPath = string.Empty;
     private SyncMode _selectedMode = SyncMode.OneWay;
@@ -206,7 +210,7 @@ public sealed class MainWindowViewModel : ObservableObject
             return;
         }
 
-        PersistConfiguration();
+        ScheduleConfigurationPersist();
     }
 
     private bool IsConfigurationComplete() =>
@@ -262,9 +266,20 @@ public sealed class MainWindowViewModel : ObservableObject
                 ? "Restored the previous sync configuration."
                 : "Configure the source and destination drives to begin.";
         }
+        catch (IOException exception)
+        {
+            Trace.TraceWarning($"Unable to read the saved sync configuration. {exception}");
+            StatusMessage = "Couldn't read the saved sync configuration.";
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            Trace.TraceWarning($"Access to the saved sync configuration was denied. {exception}");
+            StatusMessage = "Couldn't access the saved sync configuration.";
+        }
         catch (Exception exception)
         {
-            StatusMessage = $"Couldn't load the saved sync configuration. {exception.Message}";
+            Trace.TraceError($"Unexpected error while loading the saved sync configuration. {exception}");
+            StatusMessage = "Couldn't load the saved sync configuration.";
         }
         finally
         {
@@ -274,21 +289,89 @@ public sealed class MainWindowViewModel : ObservableObject
         }
     }
 
-    private void PersistConfiguration()
+    private void ScheduleConfigurationPersist()
     {
         if (_settingsStore is null)
         {
             return;
         }
 
+        _persistConfigurationCancellationTokenSource?.Cancel();
+        var cancellationTokenSource = new CancellationTokenSource();
+        _persistConfigurationCancellationTokenSource = cancellationTokenSource;
+        _ = PersistConfigurationAsync(cancellationTokenSource);
+    }
+
+    private async Task PersistConfigurationAsync(CancellationTokenSource cancellationTokenSource)
+    {
         try
         {
-            _settingsStore.Save(CreateConfiguration());
+            await Task.Delay(SettingsSaveDelay, cancellationTokenSource.Token).ConfigureAwait(true);
+            PersistConfigurationNow();
+        }
+        catch (OperationCanceledException) when (cancellationTokenSource.IsCancellationRequested)
+        {
+        }
+        catch (IOException exception)
+        {
+            Trace.TraceWarning($"Unable to save the sync configuration. {exception}");
+            StatusMessage = "Couldn't save the sync configuration.";
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            Trace.TraceWarning($"Access to the sync configuration file was denied. {exception}");
+            StatusMessage = "Couldn't access the sync configuration file.";
         }
         catch (Exception exception)
         {
-            StatusMessage = $"Couldn't save the sync configuration. {exception.Message}";
+            Trace.TraceError($"Unexpected error while saving the sync configuration. {exception}");
+            StatusMessage = "Couldn't save the sync configuration.";
         }
+        finally
+        {
+            if (ReferenceEquals(_persistConfigurationCancellationTokenSource, cancellationTokenSource))
+            {
+                _persistConfigurationCancellationTokenSource = null;
+            }
+
+            cancellationTokenSource.Dispose();
+        }
+    }
+
+    private void PersistConfigurationNow()
+    {
+        if (_settingsStore is null)
+        {
+            return;
+        }
+
+        _settingsStore.Save(CreateConfiguration());
+    }
+
+    public void Dispose()
+    {
+        _persistConfigurationCancellationTokenSource?.Cancel();
+        _persistConfigurationCancellationTokenSource?.Dispose();
+        _persistConfigurationCancellationTokenSource = null;
+
+        try
+        {
+            PersistConfigurationNow();
+        }
+        catch (IOException exception)
+        {
+            Trace.TraceWarning($"Unable to save the sync configuration during shutdown. {exception}");
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            Trace.TraceWarning($"Access to the sync configuration file was denied during shutdown. {exception}");
+        }
+        catch (Exception exception)
+        {
+            Trace.TraceError($"Unexpected error while saving the sync configuration during shutdown. {exception}");
+        }
+
+        GC.SuppressFinalize(this);
     }
 
     private async Task RunBusyOperationAsync(Func<Task> action)
