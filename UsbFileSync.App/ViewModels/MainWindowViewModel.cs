@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using UsbFileSync.App.Commands;
 using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Services;
@@ -8,27 +9,31 @@ namespace UsbFileSync.App.ViewModels;
 public sealed class MainWindowViewModel : ObservableObject
 {
     private readonly SyncService _syncService;
+    private readonly ISyncSettingsStore? _settingsStore;
     private string _sourcePath = string.Empty;
     private string _destinationPath = string.Empty;
     private SyncMode _selectedMode = SyncMode.OneWay;
     private bool _detectMoves = true;
     private bool _dryRun = true;
     private bool _isBusy;
+    private bool _isLoadingSavedConfiguration;
     private double _progressValue;
     private string _statusMessage = "Configure the source and destination drives to begin.";
 
     public MainWindowViewModel()
-        : this(new SyncService())
+        : this(new SyncService(), CreateDefaultSettingsStore())
     {
     }
 
-    public MainWindowViewModel(SyncService syncService)
+    public MainWindowViewModel(SyncService syncService, ISyncSettingsStore? settingsStore = null)
     {
         _syncService = syncService;
+        _settingsStore = settingsStore;
         AvailableModes = Enum.GetValues<SyncMode>();
         PlannedActions = new ObservableCollection<SyncAction>();
-        AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, () => !IsBusy);
-        StartSyncCommand = new AsyncRelayCommand(StartSyncAsync, () => !IsBusy);
+        AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, CanExecuteSyncCommands);
+        StartSyncCommand = new AsyncRelayCommand(StartSyncAsync, CanExecuteSyncCommands);
+        LoadSavedConfiguration();
     }
 
     public IEnumerable<SyncMode> AvailableModes { get; }
@@ -42,31 +47,61 @@ public sealed class MainWindowViewModel : ObservableObject
     public string SourcePath
     {
         get => _sourcePath;
-        set => SetProperty(ref _sourcePath, value);
+        set
+        {
+            if (SetProperty(ref _sourcePath, value))
+            {
+                HandleConfigurationChanged();
+            }
+        }
     }
 
     public string DestinationPath
     {
         get => _destinationPath;
-        set => SetProperty(ref _destinationPath, value);
+        set
+        {
+            if (SetProperty(ref _destinationPath, value))
+            {
+                HandleConfigurationChanged();
+            }
+        }
     }
 
     public SyncMode SelectedMode
     {
         get => _selectedMode;
-        set => SetProperty(ref _selectedMode, value);
+        set
+        {
+            if (SetProperty(ref _selectedMode, value))
+            {
+                HandleConfigurationChanged();
+            }
+        }
     }
 
     public bool DetectMoves
     {
         get => _detectMoves;
-        set => SetProperty(ref _detectMoves, value);
+        set
+        {
+            if (SetProperty(ref _detectMoves, value))
+            {
+                HandleConfigurationChanged();
+            }
+        }
     }
 
     public bool DryRun
     {
         get => _dryRun;
-        set => SetProperty(ref _dryRun, value);
+        set
+        {
+            if (SetProperty(ref _dryRun, value))
+            {
+                HandleConfigurationChanged();
+            }
+        }
     }
 
     public bool IsBusy
@@ -94,6 +129,18 @@ public sealed class MainWindowViewModel : ObservableObject
         private set => SetProperty(ref _statusMessage, value);
     }
 
+    private static ISyncSettingsStore CreateDefaultSettingsStore()
+    {
+        var settingsPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "UsbFileSync",
+            "settings.json");
+
+        return new JsonSyncSettingsStore(settingsPath);
+    }
+
+    private bool CanExecuteSyncCommands() => !IsBusy && IsConfigurationComplete();
+
     private SyncConfiguration CreateConfiguration() => new()
     {
         SourcePath = SourcePath,
@@ -105,6 +152,11 @@ public sealed class MainWindowViewModel : ObservableObject
 
     private async Task AnalyzeAsync()
     {
+        if (!TryValidateConfiguration())
+        {
+            return;
+        }
+
         await RunBusyOperationAsync(async () =>
         {
             var actions = await _syncService.AnalyzeChangesAsync(CreateConfiguration()).ConfigureAwait(true);
@@ -116,6 +168,11 @@ public sealed class MainWindowViewModel : ObservableObject
 
     private async Task StartSyncAsync()
     {
+        if (!TryValidateConfiguration())
+        {
+            return;
+        }
+
         await RunBusyOperationAsync(async () =>
         {
             var progress = new Progress<SyncProgress>(update =>
@@ -137,6 +194,101 @@ public sealed class MainWindowViewModel : ObservableObject
                 ProgressValue = 100;
             }
         }).ConfigureAwait(true);
+    }
+
+    private void HandleConfigurationChanged()
+    {
+        AnalyzeCommand.RaiseCanExecuteChanged();
+        StartSyncCommand.RaiseCanExecuteChanged();
+
+        if (_isLoadingSavedConfiguration)
+        {
+            return;
+        }
+
+        PersistConfiguration();
+    }
+
+    private bool IsConfigurationComplete() =>
+        !string.IsNullOrWhiteSpace(SourcePath) &&
+        !string.IsNullOrWhiteSpace(DestinationPath) &&
+        !string.Equals(SourcePath, DestinationPath, StringComparison.OrdinalIgnoreCase);
+
+    private bool TryValidateConfiguration()
+    {
+        if (string.IsNullOrWhiteSpace(SourcePath))
+        {
+            StatusMessage = "Choose a primary drive path before running synchronization.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(DestinationPath))
+        {
+            StatusMessage = "Choose a secondary drive path before running synchronization.";
+            return false;
+        }
+
+        if (string.Equals(SourcePath, DestinationPath, StringComparison.OrdinalIgnoreCase))
+        {
+            StatusMessage = "Primary and secondary drive paths must be different.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private void LoadSavedConfiguration()
+    {
+        if (_settingsStore is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var savedConfiguration = _settingsStore.Load();
+            if (savedConfiguration is null)
+            {
+                return;
+            }
+
+            _isLoadingSavedConfiguration = true;
+            SourcePath = savedConfiguration.SourcePath;
+            DestinationPath = savedConfiguration.DestinationPath;
+            SelectedMode = savedConfiguration.Mode;
+            DetectMoves = savedConfiguration.DetectMoves;
+            DryRun = savedConfiguration.DryRun;
+            StatusMessage = IsConfigurationComplete()
+                ? "Restored the previous sync configuration."
+                : "Configure the source and destination drives to begin.";
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = $"Couldn't load the saved sync configuration. {exception.Message}";
+        }
+        finally
+        {
+            _isLoadingSavedConfiguration = false;
+            AnalyzeCommand.RaiseCanExecuteChanged();
+            StartSyncCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    private void PersistConfiguration()
+    {
+        if (_settingsStore is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _settingsStore.Save(CreateConfiguration());
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = $"Couldn't save the sync configuration. {exception.Message}";
+        }
     }
 
     private async Task RunBusyOperationAsync(Func<Task> action)
