@@ -17,6 +17,7 @@ UsbFileSync is a Windows desktop file synchronization tool built with WPF and .N
 - Configurable parallel file copy count, including `0` for unlimited parallel copy operations.
 - Settings persistence between runs.
 - Browse buttons for selecting source and destination folders.
+- Custom application and window icon tailored to the sync workflow.
 - Windows shell file icons in the preview so items match Explorer more closely.
 - Clickable source and destination preview paths that open Explorer and select the file when possible, plus a right-click menu with `Open file` and `Open file folder` actions.
 

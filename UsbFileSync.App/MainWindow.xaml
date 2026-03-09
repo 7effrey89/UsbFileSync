@@ -6,6 +6,7 @@
         xmlns:models="clr-namespace:UsbFileSync.Core.Models;assembly=UsbFileSync.Core"
         mc:Ignorable="d"
         Title="USB File Sync"
+        Icon="Assets/AppIcon.ico"
         Height="820"
         Width="1380"
         MinHeight="620"
