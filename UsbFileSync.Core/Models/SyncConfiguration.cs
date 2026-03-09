@@ -11,4 +11,8 @@ public sealed class SyncConfiguration
     public bool DetectMoves { get; init; } = true;
 
     public bool DryRun { get; init; }
+
+    public bool VerifyChecksums { get; init; }
+
+    public int ParallelCopyCount { get; init; } = 1;
 }

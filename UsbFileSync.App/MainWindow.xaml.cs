@@ -15,5 +15,18 @@ public partial class MainWindow : Window
         Closed += OnClosed;
     }
 
+    private void OnOpenSettingsClicked(object sender, RoutedEventArgs e)
+    {
+        var dialog = new SettingsDialog(_viewModel.ParallelCopyCount)
+        {
+            Owner = this,
+        };
+
+        if (dialog.ShowDialog() == true)
+        {
+            _viewModel.UpdateParallelCopyCount(dialog.ParallelCopyCount);
+        }
+    }
+
     private void OnClosed(object? sender, EventArgs e) => _viewModel.Dispose();
 }

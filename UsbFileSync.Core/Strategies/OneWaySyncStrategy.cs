@@ -12,7 +12,20 @@ public sealed class OneWaySyncStrategy : ISyncStrategy
 
         var sourceFiles = DirectorySnapshotBuilder.Build(configuration.SourcePath);
         var destinationFiles = DirectorySnapshotBuilder.Build(configuration.DestinationPath);
+        var sourceDirectories = DirectorySnapshotBuilder.BuildDirectories(configuration.SourcePath);
+        var destinationDirectories = DirectorySnapshotBuilder.BuildDirectories(configuration.DestinationPath);
         var actions = new List<SyncAction>();
+
+        foreach (var directory in sourceDirectories
+                     .Where(directory => !destinationDirectories.Contains(directory))
+                     .OrderBy(directory => directory, StringComparer.OrdinalIgnoreCase))
+        {
+            actions.Add(new SyncAction(
+                SyncActionType.CreateDirectoryOnDestination,
+                directory,
+                null,
+                Path.Combine(configuration.DestinationPath, directory)));
+        }
 
         var sourceOnly = sourceFiles.Values.Where(file => !destinationFiles.ContainsKey(file.RelativePath)).ToList();
         var destinationOnly = destinationFiles.Values.Where(file => !sourceFiles.ContainsKey(file.RelativePath)).ToList();
@@ -31,7 +44,7 @@ public sealed class OneWaySyncStrategy : ISyncStrategy
                 if (!file.Matches(destinationFile))
                 {
                     actions.Add(new SyncAction(
-                        SyncActionType.CopyToDestination,
+                        SyncActionType.OverwriteFileOnDestination,
                         file.RelativePath,
                         file.FullPath,
                         Path.Combine(configuration.DestinationPath, file.RelativePath)));
@@ -57,11 +70,35 @@ public sealed class OneWaySyncStrategy : ISyncStrategy
                 file.FullPath));
         }
 
+        foreach (var directory in destinationDirectories
+                     .Where(directory => !sourceDirectories.Contains(directory))
+                     .OrderByDescending(directory => directory.Count(character => character is '\\' or '/'))
+                     .ThenByDescending(directory => directory, StringComparer.OrdinalIgnoreCase))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            actions.Add(new SyncAction(
+                SyncActionType.DeleteDirectoryFromDestination,
+                directory,
+                null,
+                Path.Combine(configuration.DestinationPath, directory)));
+        }
+
         return Task.FromResult<IReadOnlyList<SyncAction>>(actions
-            .OrderBy(action => action.RelativePath, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(action => action.Type)
+            .OrderBy(action => GetActionSortRank(action.Type))
+            .ThenBy(action => action.RelativePath, StringComparer.OrdinalIgnoreCase)
             .ToList());
     }
+
+    private static int GetActionSortRank(SyncActionType actionType) => actionType switch
+    {
+        SyncActionType.CreateDirectoryOnDestination => 0,
+        SyncActionType.MoveOnDestination => 1,
+        SyncActionType.CopyToDestination => 2,
+        SyncActionType.OverwriteFileOnDestination => 3,
+        SyncActionType.DeleteFromDestination => 4,
+        SyncActionType.DeleteDirectoryFromDestination => 5,
+        _ => 5,
+    };
 
     private static void PairMoves(
         SyncConfiguration configuration,

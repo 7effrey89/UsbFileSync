@@ -30,6 +30,8 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
             Mode = SyncMode.TwoWay,
             DetectMoves = false,
             DryRun = true,
+            VerifyChecksums = true,
+            ParallelCopyCount = 4,
         };
 
         store.Save(configuration);
@@ -41,6 +43,28 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
         Assert.Equal(configuration.Mode, restored.Mode);
         Assert.Equal(configuration.DetectMoves, restored.DetectMoves);
         Assert.Equal(configuration.DryRun, restored.DryRun);
+        Assert.Equal(configuration.VerifyChecksums, restored.VerifyChecksums);
+        Assert.Equal(configuration.ParallelCopyCount, restored.ParallelCopyCount);
+    }
+
+    [Fact]
+    public void Save_ThenLoad_RoundTripsUnlimitedParallelCopyCount()
+    {
+        Directory.CreateDirectory(_rootPath);
+        var settingsPath = Path.Combine(_rootPath, "settings.json");
+        var store = new JsonSyncSettingsStore(settingsPath);
+        var configuration = new SyncConfiguration
+        {
+            SourcePath = @"E:\MainDrive",
+            DestinationPath = @"F:\BackupDrive",
+            ParallelCopyCount = 0,
+        };
+
+        store.Save(configuration);
+        var restored = store.Load();
+
+        Assert.NotNull(restored);
+        Assert.Equal(0, restored.ParallelCopyCount);
     }
 
     [Fact]

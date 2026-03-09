@@ -12,7 +12,31 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
 
         var sourceFiles = DirectorySnapshotBuilder.Build(configuration.SourcePath);
         var destinationFiles = DirectorySnapshotBuilder.Build(configuration.DestinationPath);
+        var sourceDirectories = DirectorySnapshotBuilder.BuildDirectories(configuration.SourcePath);
+        var destinationDirectories = DirectorySnapshotBuilder.BuildDirectories(configuration.DestinationPath);
         var actions = new List<SyncAction>();
+
+        foreach (var directory in sourceDirectories
+                     .Where(directory => !destinationDirectories.Contains(directory))
+                     .OrderBy(directory => directory, StringComparer.OrdinalIgnoreCase))
+        {
+            actions.Add(new SyncAction(
+                SyncActionType.CreateDirectoryOnDestination,
+                directory,
+                null,
+                Path.Combine(configuration.DestinationPath, directory)));
+        }
+
+        foreach (var directory in destinationDirectories
+                     .Where(directory => !sourceDirectories.Contains(directory))
+                     .OrderBy(directory => directory, StringComparer.OrdinalIgnoreCase))
+        {
+            actions.Add(new SyncAction(
+                SyncActionType.CreateDirectoryOnSource,
+                directory,
+                Path.Combine(configuration.SourcePath, directory),
+                null));
+        }
 
         var allPaths = sourceFiles.Keys
             .Union(destinationFiles.Keys, StringComparer.OrdinalIgnoreCase)
@@ -39,7 +63,7 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
                 if (currentSourceFile.LastWriteTimeUtc >= currentDestinationFile.LastWriteTimeUtc)
                 {
                     actions.Add(new SyncAction(
-                        SyncActionType.CopyToDestination,
+                        SyncActionType.OverwriteFileOnDestination,
                         relativePath,
                         currentSourceFile.FullPath,
                         currentDestinationFile.FullPath));
@@ -47,7 +71,7 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
                 else
                 {
                     actions.Add(new SyncAction(
-                        SyncActionType.CopyToSource,
+                        SyncActionType.OverwriteFileOnSource,
                         relativePath,
                         currentSourceFile.FullPath,
                         currentDestinationFile.FullPath));
@@ -74,6 +98,20 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
             }
         }
 
-        return Task.FromResult<IReadOnlyList<SyncAction>>(actions);
+        return Task.FromResult<IReadOnlyList<SyncAction>>(actions
+            .OrderBy(action => GetActionSortRank(action.Type))
+            .ThenBy(action => action.RelativePath, StringComparer.OrdinalIgnoreCase)
+            .ToList());
     }
+
+    private static int GetActionSortRank(SyncActionType actionType) => actionType switch
+    {
+        SyncActionType.CreateDirectoryOnDestination => 0,
+        SyncActionType.CreateDirectoryOnSource => 0,
+        SyncActionType.CopyToDestination => 1,
+        SyncActionType.CopyToSource => 1,
+        SyncActionType.OverwriteFileOnDestination => 2,
+        SyncActionType.OverwriteFileOnSource => 2,
+        _ => 3,
+    };
 }
