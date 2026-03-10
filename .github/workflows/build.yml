@@ -1,0 +1,32 @@
+name: Build
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6.0.2
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5.2.0
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore "${{ github.workspace }}/UsbFileSync.sln"
+
+      - name: Build
+        run: dotnet build "${{ github.workspace }}/UsbFileSync.sln" --configuration Release --no-restore
+
+      - name: Run unit tests
+        run: dotnet test "${{ github.workspace }}/UsbFileSync.Tests/UsbFileSync.Tests.csproj" --framework net8.0 --configuration Release --no-build

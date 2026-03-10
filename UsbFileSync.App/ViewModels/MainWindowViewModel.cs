@@ -1,0 +1,977 @@
+using System.Collections.ObjectModel;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
+using UsbFileSync.App.Commands;
+using UsbFileSync.App.Services;
+using UsbFileSync.Core.Models;
+using UsbFileSync.Core.Services;
+
+namespace UsbFileSync.App.ViewModels;
+
+public sealed class MainWindowViewModel : ObservableObject, IDisposable
+{
+    private static readonly TimeSpan SettingsSaveDelay = TimeSpan.FromMilliseconds(250);
+
+    private readonly SyncService _syncService;
+    private readonly ISyncSettingsStore? _settingsStore;
+    private readonly IFolderPickerService _folderPickerService;
+    private readonly IFileLauncherService _fileLauncherService;
+    private readonly Dictionary<string, SyncPreviewRowViewModel> _previewRowsByRelativePath = new(StringComparer.OrdinalIgnoreCase);
+    private CancellationTokenSource? _persistConfigurationCancellationTokenSource;
+    private CancellationTokenSource? _syncCancellationTokenSource;
+    private IReadOnlyList<SyncAction> _queuedActions = [];
+    private int _completedQueuedActions;
+    private string _currentTransferItem = "No active transfer.";
+    private string _currentTransferDetails = "Queue is idle.";
+    private double _currentTransferProgressValue;
+    private string _sourcePath = string.Empty;
+    private string _destinationPath = string.Empty;
+    private SyncMode _selectedMode = SyncMode.OneWay;
+    private int _parallelCopyCount = 1;
+    private bool _detectMoves = true;
+    private bool _dryRun = true;
+    private bool _verifyChecksums;
+    private bool _isBusy;
+    private bool _isSyncRunning;
+    private bool _isLoadingSavedConfiguration;
+    private double _progressValue;
+    private string _statusMessage = "Configure the source and destination drives to begin.";
+
+    public MainWindowViewModel()
+        : this(new SyncService(), CreateDefaultSettingsStore(), new WindowsFolderPickerService(), new WindowsFileLauncherService())
+    {
+    }
+
+    public MainWindowViewModel(
+        SyncService syncService,
+        ISyncSettingsStore? settingsStore = null,
+        IFolderPickerService? folderPickerService = null,
+        IFileLauncherService? fileLauncherService = null)
+    {
+        _syncService = syncService;
+        _settingsStore = settingsStore;
+        _folderPickerService = folderPickerService ?? new WindowsFolderPickerService();
+        _fileLauncherService = fileLauncherService ?? new WindowsFileLauncherService();
+        AvailableModes = Enum.GetValues<SyncMode>();
+        PlannedActions = new ObservableCollection<SyncAction>();
+        NewFiles = new ObservableCollection<SyncPreviewRowViewModel>();
+        ChangedFiles = new ObservableCollection<SyncPreviewRowViewModel>();
+        DeletedFiles = new ObservableCollection<SyncPreviewRowViewModel>();
+        UnchangedFiles = new ObservableCollection<SyncPreviewRowViewModel>();
+        AllFiles = new ObservableCollection<SyncPreviewRowViewModel>();
+        ActivityLog = new ObservableCollection<SyncLogEntryViewModel>();
+        RemainingQueue = new ObservableCollection<QueueActionViewModel>();
+        AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, CanExecuteSyncCommands);
+        ToggleSyncCommand = new RelayCommand(ToggleSync, CanExecuteToggleSyncCommand);
+        BrowseSourcePathCommand = new RelayCommand(BrowseSourcePath);
+        BrowseDestinationPathCommand = new RelayCommand(BrowseDestinationPath);
+        OpenPreviewItemCommand = new ParameterizedRelayCommand(OpenPreviewItem, CanOpenPreviewItem);
+        OpenPreviewContainingFolderCommand = new ParameterizedRelayCommand(OpenPreviewContainingFolder, CanOpenPreviewItem);
+        OpenPreviewFileCommand = new ParameterizedRelayCommand(OpenPreviewFile, CanOpenPreviewFile);
+        OpenDestinationPreviewItemCommand = new ParameterizedRelayCommand(OpenDestinationPreviewItem, CanOpenDestinationPreviewItem);
+        OpenDestinationPreviewContainingFolderCommand = new ParameterizedRelayCommand(OpenDestinationPreviewContainingFolder, CanOpenDestinationPreviewItem);
+        OpenDestinationPreviewFileCommand = new ParameterizedRelayCommand(OpenDestinationPreviewFile, CanOpenDestinationPreviewFile);
+        LoadSavedConfiguration();
+        AddLog("Info", "Application ready.");
+    }
+
+    public IEnumerable<SyncMode> AvailableModes { get; }
+
+    public ObservableCollection<SyncAction> PlannedActions { get; }
+
+    public ObservableCollection<SyncPreviewRowViewModel> NewFiles { get; }
+
+    public ObservableCollection<SyncPreviewRowViewModel> ChangedFiles { get; }
+
+    public ObservableCollection<SyncPreviewRowViewModel> DeletedFiles { get; }
+
+    public ObservableCollection<SyncPreviewRowViewModel> UnchangedFiles { get; }
+
+    public ObservableCollection<SyncPreviewRowViewModel> AllFiles { get; }
+
+    public ObservableCollection<SyncLogEntryViewModel> ActivityLog { get; }
+
+    public ObservableCollection<QueueActionViewModel> RemainingQueue { get; }
+
+    public AsyncRelayCommand AnalyzeCommand { get; }
+
+    public RelayCommand ToggleSyncCommand { get; }
+
+    public RelayCommand BrowseSourcePathCommand { get; }
+
+    public RelayCommand BrowseDestinationPathCommand { get; }
+
+    public ParameterizedRelayCommand OpenPreviewItemCommand { get; }
+
+    public ParameterizedRelayCommand OpenPreviewContainingFolderCommand { get; }
+
+    public ParameterizedRelayCommand OpenPreviewFileCommand { get; }
+
+    public ParameterizedRelayCommand OpenDestinationPreviewItemCommand { get; }
+
+    public ParameterizedRelayCommand OpenDestinationPreviewContainingFolderCommand { get; }
+
+    public ParameterizedRelayCommand OpenDestinationPreviewFileCommand { get; }
+
+    public string SourcePath
+    {
+        get => _sourcePath;
+        set
+        {
+            if (SetProperty(ref _sourcePath, value))
+            {
+                HandleConfigurationChanged();
+            }
+        }
+    }
+
+    public string DestinationPath
+    {
+        get => _destinationPath;
+        set
+        {
+            if (SetProperty(ref _destinationPath, value))
+            {
+                HandleConfigurationChanged();
+            }
+        }
+    }
+
+    public SyncMode SelectedMode
+    {
+        get => _selectedMode;
+        set
+        {
+            if (SetProperty(ref _selectedMode, value))
+            {
+                RaisePropertyChanged(nameof(DirectionIndicator));
+                RaisePropertyChanged(nameof(LeftDirectionIndicator));
+                RaisePropertyChanged(nameof(RightDirectionIndicator));
+                RaisePropertyChanged(nameof(SourceLocationDescription));
+                RaisePropertyChanged(nameof(DestinationLocationDescription));
+                HandleConfigurationChanged();
+            }
+        }
+    }
+
+    public string DirectionIndicator => SelectedMode switch
+    {
+        SyncMode.OneWay => ">>",
+        SyncMode.TwoWay => "<>",
+        _ => ">>",
+    };
+
+    public string LeftDirectionIndicator => SelectedMode switch
+    {
+        SyncMode.OneWay => ">",
+        SyncMode.TwoWay => "<",
+        _ => ">",
+    };
+
+    public string RightDirectionIndicator => ">";
+
+    public string SourceLocationDescription => SelectedMode switch
+    {
+        SyncMode.OneWay => "This side is treated as the source of truth for one-way sync.",
+        SyncMode.TwoWay => "Changes on this side are reconciled in both directions during two-way sync.",
+        _ => "This side is treated as the source of truth for one-way sync.",
+    };
+
+    public string DestinationLocationDescription => SelectedMode switch
+    {
+        SyncMode.OneWay => "This side receives created folders, new files, and overwrite updates.",
+        SyncMode.TwoWay => "Changes on this side are also reconciled back to the source location.",
+        _ => "This side receives created folders, new files, and overwrite updates.",
+    };
+
+    public bool DetectMoves
+    {
+        get => _detectMoves;
+        set
+        {
+            if (SetProperty(ref _detectMoves, value))
+            {
+                HandleConfigurationChanged();
+            }
+        }
+    }
+
+    public bool DryRun
+    {
+        get => _dryRun;
+        set
+        {
+            if (SetProperty(ref _dryRun, value))
+            {
+                HandleConfigurationChanged();
+            }
+        }
+    }
+
+    public bool VerifyChecksums
+    {
+        get => _verifyChecksums;
+        set
+        {
+            if (SetProperty(ref _verifyChecksums, value))
+            {
+                HandleConfigurationChanged();
+            }
+        }
+    }
+
+    public bool IsBusy
+    {
+        get => _isBusy;
+        private set
+        {
+            if (SetProperty(ref _isBusy, value))
+            {
+                AnalyzeCommand.RaiseCanExecuteChanged();
+                ToggleSyncCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    public bool IsSyncRunning
+    {
+        get => _isSyncRunning;
+        private set
+        {
+            if (SetProperty(ref _isSyncRunning, value))
+            {
+                RaisePropertyChanged(nameof(SyncButtonText));
+                AnalyzeCommand.RaiseCanExecuteChanged();
+                ToggleSyncCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    public double ProgressValue
+    {
+        get => _progressValue;
+        private set => SetProperty(ref _progressValue, value);
+    }
+
+    public string StatusMessage
+    {
+        get => _statusMessage;
+        private set => SetProperty(ref _statusMessage, value);
+    }
+
+    public string CurrentTransferItem
+    {
+        get => _currentTransferItem;
+        private set => SetProperty(ref _currentTransferItem, value);
+    }
+
+    public string CurrentTransferDetails
+    {
+        get => _currentTransferDetails;
+        private set => SetProperty(ref _currentTransferDetails, value);
+    }
+
+    public double CurrentTransferProgressValue
+    {
+        get => _currentTransferProgressValue;
+        private set => SetProperty(ref _currentTransferProgressValue, value);
+    }
+
+    public int NewFilesCount => NewFiles.Count;
+
+    public int ChangedFilesCount => ChangedFiles.Count;
+
+    public int DeletedFilesCount => DeletedFiles.Count;
+
+    public int UnchangedFilesCount => UnchangedFiles.Count;
+
+    public int AllFilesCount => AllFiles.Count;
+
+    public bool? AreAllNewFilesSelected
+    {
+        get => GetSelectionState(NewFiles);
+        set => SetSelection(NewFiles, value);
+    }
+
+    public bool? AreAllChangedFilesSelected
+    {
+        get => GetSelectionState(ChangedFiles);
+        set => SetSelection(ChangedFiles, value);
+    }
+
+    public bool? AreAllDeletedFilesSelected
+    {
+        get => GetSelectionState(DeletedFiles);
+        set => SetSelection(DeletedFiles, value);
+    }
+
+    public bool? AreAllUnchangedFilesSelected
+    {
+        get => GetSelectionState(UnchangedFiles);
+        set => SetSelection(UnchangedFiles, value);
+    }
+
+    public bool? AreAllFilesSelected
+    {
+        get => GetSelectionState(AllFiles);
+        set => SetSelection(AllFiles, value);
+    }
+
+    public string QueueSummary => RemainingQueue.Count == 0
+        ? "Queue empty"
+        : $"{RemainingQueue.Count} queued item(s) remaining";
+
+    public int ParallelCopyCount
+    {
+        get => _parallelCopyCount;
+        set
+        {
+            var normalizedValue = Math.Max(0, value);
+            if (SetProperty(ref _parallelCopyCount, normalizedValue))
+            {
+                HandleConfigurationChanged();
+            }
+        }
+    }
+
+    public string SyncButtonText => IsSyncRunning ? "Stop synchronization" : "Synchronize";
+
+    private static ISyncSettingsStore CreateDefaultSettingsStore()
+    {
+        var settingsPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "UsbFileSync",
+            "settings.json");
+
+        return new JsonSyncSettingsStore(settingsPath);
+    }
+
+    private void BrowseSourcePath()
+    {
+        var selectedPath = _folderPickerService.PickFolder("Select the source drive or folder", SourcePath);
+        if (!string.IsNullOrWhiteSpace(selectedPath))
+        {
+            SourcePath = selectedPath;
+        }
+    }
+
+    private void BrowseDestinationPath()
+    {
+        var selectedPath = _folderPickerService.PickFolder("Select the destination drive or folder", DestinationPath);
+        if (!string.IsNullOrWhiteSpace(selectedPath))
+        {
+            DestinationPath = selectedPath;
+        }
+    }
+
+    private void OpenPreviewItem(object? parameter)
+    {
+        if (parameter is SyncPreviewRowViewModel row && !string.IsNullOrWhiteSpace(row.OpenPath))
+        {
+            _fileLauncherService.OpenItem(row.OpenPath);
+        }
+    }
+
+    private void OpenPreviewContainingFolder(object? parameter)
+    {
+        if (parameter is SyncPreviewRowViewModel row && !string.IsNullOrWhiteSpace(row.OpenPath))
+        {
+            _fileLauncherService.OpenContainingFolder(row.OpenPath);
+        }
+    }
+
+    private void OpenPreviewFile(object? parameter)
+    {
+        if (parameter is SyncPreviewRowViewModel row && File.Exists(row.OpenPath))
+        {
+            _fileLauncherService.OpenFile(row.OpenPath);
+        }
+    }
+
+    private void OpenDestinationPreviewItem(object? parameter)
+    {
+        if (parameter is SyncPreviewRowViewModel row && !string.IsNullOrWhiteSpace(row.OpenDestinationPath))
+        {
+            _fileLauncherService.OpenItem(row.OpenDestinationPath);
+        }
+    }
+
+    private void OpenDestinationPreviewContainingFolder(object? parameter)
+    {
+        if (parameter is SyncPreviewRowViewModel row && !string.IsNullOrWhiteSpace(row.OpenDestinationPath))
+        {
+            _fileLauncherService.OpenContainingFolder(row.OpenDestinationPath);
+        }
+    }
+
+    private void OpenDestinationPreviewFile(object? parameter)
+    {
+        if (parameter is SyncPreviewRowViewModel row && File.Exists(row.OpenDestinationPath))
+        {
+            _fileLauncherService.OpenFile(row.OpenDestinationPath);
+        }
+    }
+
+    private static bool CanOpenPreviewItem(object? parameter) =>
+        parameter is SyncPreviewRowViewModel row && !string.IsNullOrWhiteSpace(row.OpenPath);
+
+    private static bool CanOpenPreviewFile(object? parameter) =>
+        parameter is SyncPreviewRowViewModel row && File.Exists(row.OpenPath);
+
+    private static bool CanOpenDestinationPreviewItem(object? parameter) =>
+        parameter is SyncPreviewRowViewModel row && !string.IsNullOrWhiteSpace(row.OpenDestinationPath);
+
+    private static bool CanOpenDestinationPreviewFile(object? parameter) =>
+        parameter is SyncPreviewRowViewModel row && File.Exists(row.OpenDestinationPath);
+
+    private bool CanExecuteSyncCommands() => !IsBusy && !IsSyncRunning && IsConfigurationComplete();
+
+    private bool CanExecuteToggleSyncCommand() => IsSyncRunning || (!IsBusy && IsConfigurationComplete());
+
+    private void ToggleSync()
+    {
+        if (IsSyncRunning)
+        {
+            _syncCancellationTokenSource?.Cancel();
+            AddLog("Sync", "Stop requested by user.");
+            StatusMessage = "Stopping synchronization...";
+            return;
+        }
+
+        _ = StartSyncAsync();
+    }
+
+    private SyncConfiguration CreateConfiguration() => new()
+    {
+        SourcePath = SourcePath,
+        DestinationPath = DestinationPath,
+        Mode = SelectedMode,
+        DetectMoves = DetectMoves,
+        DryRun = DryRun,
+        VerifyChecksums = VerifyChecksums,
+        ParallelCopyCount = ParallelCopyCount,
+    };
+
+    public void UpdateParallelCopyCount(int parallelCopyCount)
+    {
+        ParallelCopyCount = parallelCopyCount;
+        AddLog("Settings", ParallelCopyCount == 0
+            ? "Parallel copy count set to unlimited."
+            : $"Parallel copy count set to {ParallelCopyCount}.");
+    }
+
+    private async Task AnalyzeAsync()
+    {
+        if (!TryValidateConfiguration())
+        {
+            return;
+        }
+
+        await RunBusyOperationAsync(async () =>
+        {
+            var configuration = CreateConfiguration();
+            var actionsTask = _syncService.AnalyzeChangesAsync(configuration);
+            var previewTask = _syncService.BuildPreviewAsync(configuration);
+            await Task.WhenAll(actionsTask, previewTask).ConfigureAwait(true);
+            var actions = actionsTask.Result;
+            var preview = previewTask.Result;
+
+            ReplaceActions(actions);
+            ReplacePreview(preview);
+            ReplaceQueue(GetSelectedActions());
+            StatusMessage = actions.Count == 0
+                ? "Folders are already synchronized."
+                : $"Preview generated with {actions.Count} planned action(s). Select the items to synchronize.";
+            ProgressValue = 0;
+            CurrentTransferProgressValue = 0;
+            CurrentTransferItem = actions.Count == 0 ? "No file operations required." : "Preview ready.";
+            CurrentTransferDetails = QueueSummary;
+            AddLog("Analyze", StatusMessage);
+        }).ConfigureAwait(true);
+    }
+
+    private async Task StartSyncAsync()
+    {
+        if (!TryValidateConfiguration())
+        {
+            return;
+        }
+
+        var cancellationTokenSource = new CancellationTokenSource();
+        _syncCancellationTokenSource = cancellationTokenSource;
+        IsSyncRunning = true;
+
+        await RunBusyOperationAsync(async () =>
+        {
+            var configuration = CreateConfiguration();
+            if (PlannedActions.Count == 0 && AllFiles.Count == 0)
+            {
+                var initialActions = await _syncService.AnalyzeChangesAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(true);
+                var initialPreview = await _syncService.BuildPreviewAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(true);
+                ReplaceActions(initialActions);
+                ReplacePreview(initialPreview);
+                ReplaceQueue(GetSelectedActions());
+            }
+
+            var actions = GetSelectedActions();
+
+            if (actions.Count == 0)
+            {
+                StatusMessage = PlannedActions.Count == 0
+                    ? "Folders are already synchronized."
+                    : "Select at least one file or folder in the preview before synchronizing.";
+                AddLog("Sync", PlannedActions.Count == 0
+                    ? "No queued operations to process."
+                    : "Synchronization skipped because no preview items were selected.");
+                CurrentTransferItem = "No active transfer.";
+                CurrentTransferDetails = "Queue is idle.";
+                CurrentTransferProgressValue = 0;
+                ProgressValue = 0;
+                return;
+            }
+
+            _queuedActions = actions;
+            _completedQueuedActions = 0;
+            CurrentTransferItem = actions[0].RelativePath;
+            CurrentTransferDetails = QueueSummary;
+            CurrentTransferProgressValue = 0;
+            AddLog("Sync", $"Synchronization started with {actions.Count} queued operation(s).");
+
+            string? activeTransferItem = null;
+            var progress = new Progress<SyncProgress>(update =>
+            {
+                while (_completedQueuedActions < update.CompletedOperations && _completedQueuedActions < _queuedActions.Count)
+                {
+                    var completedAction = _queuedActions[_completedQueuedActions];
+                    if (RemainingQueue.Count > 0)
+                    {
+                        RemainingQueue.RemoveAt(0);
+                        RaisePropertyChanged(nameof(QueueSummary));
+                    }
+
+                    AddLog("Done", $"{completedAction.Type}: {completedAction.RelativePath}");
+                    MarkPreviewRowCompleted(completedAction.RelativePath);
+                    _completedQueuedActions++;
+                }
+
+                if (!string.Equals(activeTransferItem, update.CurrentItem, StringComparison.OrdinalIgnoreCase) && update.CompletedOperations < update.TotalOperations)
+                {
+                    activeTransferItem = update.CurrentItem;
+                    AddLog("Copy", $"Processing {update.CurrentItem}");
+                }
+
+                CurrentTransferItem = update.CurrentItem;
+                UpdatePreviewRowProgress(update.CurrentItem, update.CurrentItemProgressPercentage, update.CurrentItemBytesTransferred);
+                CurrentTransferProgressValue = update.CurrentItemProgressPercentage;
+                CurrentTransferDetails = update.CurrentItemTotalBytes.HasValue
+                    ? $"{update.CurrentItemBytesTransferred:n0} / {update.CurrentItemTotalBytes.Value:n0} bytes, {QueueSummary}"
+                    : QueueSummary;
+                ProgressValue = update.TotalOperations == 0
+                    ? 0
+                    : Math.Round(((double)update.CompletedOperations + (update.CurrentItemProgressPercentage / 100d)) / update.TotalOperations * 100, 0);
+                StatusMessage = $"Processing {update.CurrentItem} ({update.CompletedOperations}/{update.TotalOperations}).";
+            });
+
+            var result = await _syncService.ExecutePlannedAsync(configuration, actions, progress, cancellationTokenSource.Token).ConfigureAwait(true);
+            var refreshedActions = await _syncService.AnalyzeChangesAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(true);
+            var refreshedPreview = await _syncService.BuildPreviewAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(true);
+            ReplaceActions(refreshedActions);
+            ReplacePreview(refreshedPreview);
+            ReplaceQueue(GetSelectedActions());
+            StatusMessage = result.IsDryRun
+                ? $"Dry run complete with {result.Actions.Count} planned action(s)."
+                : $"Synchronization complete. Applied {result.AppliedOperations} action(s).";
+
+            if (!result.IsDryRun)
+            {
+                ProgressValue = 100;
+                CurrentTransferProgressValue = 100;
+            }
+
+            CurrentTransferDetails = QueueSummary;
+            AddLog("Sync", StatusMessage);
+        }, cancellationTokenSource.Token).ConfigureAwait(true);
+
+        if (ReferenceEquals(_syncCancellationTokenSource, cancellationTokenSource))
+        {
+            _syncCancellationTokenSource.Dispose();
+            _syncCancellationTokenSource = null;
+        }
+
+        IsSyncRunning = false;
+    }
+
+    private void HandleConfigurationChanged()
+    {
+        AnalyzeCommand.RaiseCanExecuteChanged();
+        ToggleSyncCommand.RaiseCanExecuteChanged();
+
+        if (_isLoadingSavedConfiguration)
+        {
+            return;
+        }
+
+        ScheduleConfigurationPersist();
+    }
+
+    private bool IsConfigurationComplete() =>
+        !string.IsNullOrWhiteSpace(SourcePath) &&
+        !string.IsNullOrWhiteSpace(DestinationPath) &&
+        !string.Equals(SourcePath, DestinationPath, StringComparison.OrdinalIgnoreCase);
+
+    private bool TryValidateConfiguration()
+    {
+        if (string.IsNullOrWhiteSpace(SourcePath))
+        {
+            StatusMessage = "Choose a source drive path before running synchronization.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(DestinationPath))
+        {
+            StatusMessage = "Choose a destination drive path before running synchronization.";
+            return false;
+        }
+
+        if (string.Equals(SourcePath, DestinationPath, StringComparison.OrdinalIgnoreCase))
+        {
+            StatusMessage = "Source and destination drive paths must be different.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private void LoadSavedConfiguration()
+    {
+        if (_settingsStore is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var savedConfiguration = _settingsStore.Load();
+            if (savedConfiguration is null)
+            {
+                return;
+            }
+
+            _isLoadingSavedConfiguration = true;
+            SourcePath = savedConfiguration.SourcePath;
+            DestinationPath = savedConfiguration.DestinationPath;
+            SelectedMode = savedConfiguration.Mode;
+            DetectMoves = savedConfiguration.DetectMoves;
+            DryRun = savedConfiguration.DryRun;
+            VerifyChecksums = savedConfiguration.VerifyChecksums;
+            ParallelCopyCount = savedConfiguration.ParallelCopyCount;
+            StatusMessage = IsConfigurationComplete()
+                ? "Restored the previous sync configuration."
+                : "Configure the source and destination drives to begin.";
+        }
+        catch (IOException exception)
+        {
+            Trace.TraceWarning($"Unable to read the saved sync configuration. {exception}");
+            StatusMessage = "Couldn't read the saved sync configuration.";
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            Trace.TraceWarning($"Access to the saved sync configuration was denied. {exception}");
+            StatusMessage = "Couldn't access the saved sync configuration.";
+        }
+        catch (Exception exception)
+        {
+            Trace.TraceError($"Unexpected error while loading the saved sync configuration. {exception}");
+            StatusMessage = "Couldn't load the saved sync configuration.";
+        }
+        finally
+        {
+            _isLoadingSavedConfiguration = false;
+            AnalyzeCommand.RaiseCanExecuteChanged();
+            ToggleSyncCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    private void ScheduleConfigurationPersist()
+    {
+        if (_settingsStore is null)
+        {
+            return;
+        }
+
+        _persistConfigurationCancellationTokenSource?.Cancel();
+        var cancellationTokenSource = new CancellationTokenSource();
+        _persistConfigurationCancellationTokenSource = cancellationTokenSource;
+        _ = PersistConfigurationAsync(cancellationTokenSource);
+    }
+
+    private async Task PersistConfigurationAsync(CancellationTokenSource cancellationTokenSource)
+    {
+        try
+        {
+            await Task.Delay(SettingsSaveDelay, cancellationTokenSource.Token).ConfigureAwait(true);
+            PersistConfigurationNow();
+        }
+        catch (OperationCanceledException) when (cancellationTokenSource.IsCancellationRequested)
+        {
+        }
+        catch (IOException exception)
+        {
+            Trace.TraceWarning($"Unable to save the sync configuration. {exception}");
+            StatusMessage = "Couldn't save the sync configuration.";
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            Trace.TraceWarning($"Access to the sync configuration file was denied. {exception}");
+            StatusMessage = "Couldn't access the sync configuration file.";
+        }
+        catch (Exception exception)
+        {
+            Trace.TraceError($"Unexpected error while saving the sync configuration. {exception}");
+            StatusMessage = "Couldn't save the sync configuration.";
+        }
+        finally
+        {
+            if (ReferenceEquals(_persistConfigurationCancellationTokenSource, cancellationTokenSource))
+            {
+                _persistConfigurationCancellationTokenSource = null;
+            }
+
+            cancellationTokenSource.Dispose();
+        }
+    }
+
+    private void PersistConfigurationNow()
+    {
+        if (_settingsStore is null)
+        {
+            return;
+        }
+
+        _settingsStore.Save(CreateConfiguration());
+    }
+
+    public void Dispose()
+    {
+        _persistConfigurationCancellationTokenSource?.Cancel();
+        _persistConfigurationCancellationTokenSource?.Dispose();
+        _persistConfigurationCancellationTokenSource = null;
+        _syncCancellationTokenSource?.Cancel();
+        _syncCancellationTokenSource?.Dispose();
+        _syncCancellationTokenSource = null;
+
+        try
+        {
+            PersistConfigurationNow();
+        }
+        catch (IOException exception)
+        {
+            Trace.TraceWarning($"Unable to save the sync configuration during shutdown. {exception}");
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            Trace.TraceWarning($"Access to the sync configuration file was denied during shutdown. {exception}");
+        }
+        catch (Exception exception)
+        {
+            Trace.TraceError($"Unexpected error while saving the sync configuration during shutdown. {exception}");
+        }
+
+        GC.SuppressFinalize(this);
+    }
+
+    private async Task RunBusyOperationAsync(Func<Task> action, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            IsBusy = true;
+            StatusMessage = "Working...";
+            await action().ConfigureAwait(true);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            StatusMessage = "Synchronization stopped.";
+            CurrentTransferDetails = QueueSummary;
+            CurrentTransferProgressValue = 0;
+            PauseActivePreviewRows();
+            AddLog("Sync", "Synchronization cancelled.");
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = exception.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private void ReplaceActions(IEnumerable<SyncAction> actions)
+    {
+        PlannedActions.Clear();
+        foreach (var action in actions)
+        {
+            PlannedActions.Add(action);
+        }
+    }
+
+    private void ReplacePreview(IEnumerable<SyncPreviewItem> items)
+    {
+        foreach (var existingRow in _previewRowsByRelativePath.Values)
+        {
+            existingRow.PropertyChanged -= OnPreviewRowPropertyChanged;
+        }
+
+        var rows = items.Select(item => new SyncPreviewRowViewModel(item)).ToList();
+        _previewRowsByRelativePath.Clear();
+        foreach (var row in rows)
+        {
+            _previewRowsByRelativePath[row.RelativePath] = row;
+            row.PropertyChanged += OnPreviewRowPropertyChanged;
+        }
+
+        ReplaceRows(NewFiles, rows.Where(row => row.Status == "New File"));
+        ReplaceRows(ChangedFiles, rows.Where(row => row.Category == SyncPreviewCategory.ChangedFiles));
+        ReplaceRows(DeletedFiles, rows.Where(row => row.Category == SyncPreviewCategory.DeletedFiles));
+        ReplaceRows(UnchangedFiles, rows.Where(row => row.Status == "Unchanged"));
+        ReplaceRows(AllFiles, rows);
+        RaisePropertyChanged(nameof(NewFilesCount));
+        RaisePropertyChanged(nameof(ChangedFilesCount));
+        RaisePropertyChanged(nameof(DeletedFilesCount));
+        RaisePropertyChanged(nameof(UnchangedFilesCount));
+        RaisePropertyChanged(nameof(AllFilesCount));
+        RaiseSelectionStateChanged();
+    }
+
+    private void ReplaceQueue(IEnumerable<SyncAction> actions)
+    {
+        RemainingQueue.Clear();
+        foreach (var action in actions)
+        {
+            RemainingQueue.Add(new QueueActionViewModel(action));
+        }
+
+        RaisePropertyChanged(nameof(QueueSummary));
+    }
+
+    private IReadOnlyList<SyncAction> GetSelectedActions()
+    {
+        var selectedPaths = _previewRowsByRelativePath.Values
+            .Where(row => row.CanSelect && row.IsSelected)
+            .Select(row => row.RelativePath)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return PlannedActions
+            .Where(action => selectedPaths.Contains(action.RelativePath))
+            .ToList();
+    }
+
+    private bool? GetSelectionState(IEnumerable<SyncPreviewRowViewModel> rows)
+    {
+        var selectableRows = rows.Where(row => row.CanSelect).ToList();
+        if (selectableRows.Count == 0)
+        {
+            return false;
+        }
+
+        var selectedCount = selectableRows.Count(row => row.IsSelected);
+        if (selectedCount == 0)
+        {
+            return false;
+        }
+
+        if (selectedCount == selectableRows.Count)
+        {
+            return true;
+        }
+
+        return null;
+    }
+
+    private void SetSelection(IEnumerable<SyncPreviewRowViewModel> rows, bool? isSelected)
+    {
+        foreach (var row in rows.Where(row => row.CanSelect))
+        {
+                row.IsSelected = isSelected ?? false;
+        }
+
+        UpdateSelectedQueue();
+    }
+
+    private void OnPreviewRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(SyncPreviewRowViewModel.IsSelected))
+        {
+            UpdateSelectedQueue();
+        }
+    }
+
+    private void UpdateSelectedQueue()
+    {
+        ReplaceQueue(GetSelectedActions());
+        RaiseSelectionStateChanged();
+    }
+
+    private void RaiseSelectionStateChanged()
+    {
+        RaisePropertyChanged(nameof(AreAllNewFilesSelected));
+        RaisePropertyChanged(nameof(AreAllChangedFilesSelected));
+        RaisePropertyChanged(nameof(AreAllDeletedFilesSelected));
+        RaisePropertyChanged(nameof(AreAllUnchangedFilesSelected));
+        RaisePropertyChanged(nameof(AreAllFilesSelected));
+    }
+
+    private void ReplaceRows(ObservableCollection<SyncPreviewRowViewModel> target, IEnumerable<SyncPreviewRowViewModel> rows)
+    {
+        target.Clear();
+        foreach (var row in rows)
+        {
+            target.Add(row);
+        }
+    }
+
+    private void UpdatePreviewRowProgress(string relativePath, double progressValue, long bytesTransferred)
+    {
+        if (_previewRowsByRelativePath.TryGetValue(relativePath, out var row))
+        {
+            if (progressValue >= 100)
+            {
+                row.MarkCompleted();
+                return;
+            }
+
+            row.MarkInProgress(progressValue, bytesTransferred, DateTime.UtcNow);
+        }
+    }
+
+    private void MarkPreviewRowCompleted(string relativePath)
+    {
+        if (_previewRowsByRelativePath.TryGetValue(relativePath, out var row))
+        {
+            row.MarkCompleted();
+        }
+    }
+
+    private void PauseActivePreviewRows()
+    {
+        foreach (var row in _previewRowsByRelativePath.Values)
+        {
+            if (row.ProgressStateText == "Transferring")
+            {
+                row.MarkPaused();
+            }
+        }
+    }
+
+    private void AddLog(string state, string message)
+    {
+        ActivityLog.Insert(0, new SyncLogEntryViewModel(state, message));
+        const int maxLogEntries = 200;
+        while (ActivityLog.Count > maxLogEntries)
+        {
+            ActivityLog.RemoveAt(ActivityLog.Count - 1);
+        }
+    }
+}
