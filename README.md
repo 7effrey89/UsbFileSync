@@ -6,6 +6,7 @@ UsbFileSync is a Windows desktop file synchronization tool built with WPF and .N
 
 - One-way synchronization from source to destination.
 - Two-way synchronization using last-write-time reconciliation.
+- Persistent `.sync-metadata/file-index.json` tracking for two-way sync sessions, including per-device IDs and `lastSyncedBy` file ownership metadata.
 - Detection of new files, modified files, deleted files, renamed files, and empty directories.
 - Folder creation and folder deletion synchronization.
 - Preview-first workflow with filtered tabs for new, changed, deleted, unchanged, and all items.
@@ -48,7 +49,7 @@ In one-way mode, the source location is treated as the source of truth.
 In two-way mode, both sides are compared.
 
 - New files can be copied in either direction.
-- Modified files are resolved by comparing last write times.
+- Modified files are resolved by comparing last write times, with persisted `.sync-metadata` state used to distinguish true deletions from files that should not be resurrected on the next session.
 - New folders can be created on either side.
 
 ## User Interface Features
@@ -121,7 +122,7 @@ The solution includes automated coverage for:
 ## Known Limitations
 
 - Cancellation is safe, but it is not a true resume system. Restarting synchronization re-analyzes the file set and starts the interrupted file from the beginning.
-- Two-way sync currently relies on last write times rather than a persistent sync database.
+- Two-way sync persists pairwise metadata inside `.sync-metadata`, but conflict resolution still falls back to last write times when both sides changed the same file between sync sessions.
 - The app is currently Windows-only.
 
 ## Development Notes

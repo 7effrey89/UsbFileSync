@@ -8,16 +8,23 @@ public sealed class SyncService
 {
     private readonly ISyncStrategy _oneWayStrategy;
     private readonly ISyncStrategy _twoWayStrategy;
+    private readonly SyncMetadataStore _metadataStore;
 
     public SyncService()
-        : this(new OneWaySyncStrategy(), new TwoWaySyncStrategy())
+        : this(new OneWaySyncStrategy(), new TwoWaySyncStrategy(), new SyncMetadataStore())
     {
     }
 
     public SyncService(ISyncStrategy oneWayStrategy, ISyncStrategy twoWayStrategy)
+        : this(oneWayStrategy, twoWayStrategy, new SyncMetadataStore())
+    {
+    }
+
+    private SyncService(ISyncStrategy oneWayStrategy, ISyncStrategy twoWayStrategy, SyncMetadataStore metadataStore)
     {
         _oneWayStrategy = oneWayStrategy;
         _twoWayStrategy = twoWayStrategy;
+        _metadataStore = metadataStore;
     }
 
     public Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(SyncConfiguration configuration, CancellationToken cancellationToken = default) =>
@@ -82,6 +89,11 @@ public sealed class SyncService
             var action = actions[index];
             ApplySequentialAsync(configuration, action, progress, appliedOperations, actions.Count, cancellationToken);
             appliedOperations++;
+        }
+
+        if (configuration.Mode == SyncMode.TwoWay)
+        {
+            PersistTwoWayMetadata(configuration, actions);
         }
 
         return new SyncResult(actions, appliedOperations, false);
@@ -425,4 +437,116 @@ public sealed class SyncService
             File.Move(sourcePath, destinationPath);
         }
     }
+
+    private void PersistTwoWayMetadata(SyncConfiguration configuration, IReadOnlyList<SyncAction> actions)
+    {
+        var sourceMetadata = _metadataStore.Load(configuration.SourcePath);
+        var destinationMetadata = _metadataStore.Load(configuration.DestinationPath);
+        var sourceDeviceId = _metadataStore.GetOrCreateDeviceId(sourceMetadata);
+        var destinationDeviceId = _metadataStore.GetOrCreateDeviceId(destinationMetadata);
+        var existingPeerState = _metadataStore.GetSharedPeerState(sourceMetadata, destinationDeviceId, destinationMetadata, sourceDeviceId);
+        var currentPeerState = BuildCurrentPeerState(configuration, actions, existingPeerState, sourceDeviceId, destinationDeviceId);
+
+        sourceMetadata.PeerStates[destinationDeviceId] = currentPeerState;
+        destinationMetadata.PeerStates[sourceDeviceId] = currentPeerState;
+
+        _metadataStore.Save(configuration.SourcePath, sourceMetadata);
+        _metadataStore.Save(configuration.DestinationPath, destinationMetadata);
+    }
+
+    private static SyncPeerState BuildCurrentPeerState(
+        SyncConfiguration configuration,
+        IReadOnlyList<SyncAction> actions,
+        SyncPeerState? existingPeerState,
+        string sourceDeviceId,
+        string destinationDeviceId)
+    {
+        var currentSourceFiles = DirectorySnapshotBuilder.Build(configuration.SourcePath);
+        var currentDestinationFiles = DirectorySnapshotBuilder.Build(configuration.DestinationPath);
+        var entries = existingPeerState?.Entries.ToDictionary(
+            pair => pair.Key,
+            pair => Clone(pair.Value),
+            StringComparer.OrdinalIgnoreCase) ?? new Dictionary<string, SyncFileIndexEntry>(StringComparer.OrdinalIgnoreCase);
+        var actionsByRelativePath = actions
+            .GroupBy(action => action.RelativePath, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var allPaths = currentSourceFiles.Keys
+            .Union(currentDestinationFiles.Keys, StringComparer.OrdinalIgnoreCase)
+            .Union(entries.Keys, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var recordedAtUtc = DateTime.UtcNow;
+
+        foreach (var relativePath in allPaths)
+        {
+            var hasSource = currentSourceFiles.TryGetValue(relativePath, out var sourceFile);
+            var hasDestination = currentDestinationFiles.TryGetValue(relativePath, out var destinationFile);
+            actionsByRelativePath.TryGetValue(relativePath, out var action);
+            entries.TryGetValue(relativePath, out var existingEntry);
+
+            if (hasSource && hasDestination && sourceFile!.Matches(destinationFile!))
+            {
+                entries[relativePath] = new SyncFileIndexEntry
+                {
+                    RelativePath = relativePath,
+                    Length = sourceFile.Length,
+                    LastWriteTimeUtc = sourceFile.LastWriteTimeUtc,
+                    LastSyncedBy = ResolveLastSyncedBy(action, existingEntry, sourceDeviceId, destinationDeviceId),
+                };
+                continue;
+            }
+
+            if (!hasSource && !hasDestination)
+            {
+                if (action is SyncAction { Type: SyncActionType.DeleteFromDestination or SyncActionType.DeleteFromSource })
+                {
+                    entries[relativePath] = new SyncFileIndexEntry
+                    {
+                        RelativePath = relativePath,
+                        IsDeleted = true,
+                        DeletedAtUtc = recordedAtUtc,
+                        LastSyncedBy = action.Type == SyncActionType.DeleteFromDestination ? sourceDeviceId : destinationDeviceId,
+                    };
+                }
+                else if (existingEntry is not null)
+                {
+                    entries[relativePath] = new SyncFileIndexEntry
+                    {
+                        RelativePath = relativePath,
+                        IsDeleted = true,
+                        DeletedAtUtc = existingEntry.DeletedAtUtc ?? recordedAtUtc,
+                        LastSyncedBy = string.IsNullOrWhiteSpace(existingEntry.LastSyncedBy) ? sourceDeviceId : existingEntry.LastSyncedBy,
+                    };
+                }
+            }
+        }
+
+        return new SyncPeerState
+        {
+            RecordedAtUtc = recordedAtUtc,
+            Entries = entries,
+        };
+    }
+
+    private static string ResolveLastSyncedBy(
+        SyncAction? action,
+        SyncFileIndexEntry? existingEntry,
+        string sourceDeviceId,
+        string destinationDeviceId) => action?.Type switch
+    {
+        SyncActionType.CopyToDestination => sourceDeviceId,
+        SyncActionType.OverwriteFileOnDestination => sourceDeviceId,
+        SyncActionType.CopyToSource => destinationDeviceId,
+        SyncActionType.OverwriteFileOnSource => destinationDeviceId,
+        _ => string.IsNullOrWhiteSpace(existingEntry?.LastSyncedBy) ? sourceDeviceId : existingEntry!.LastSyncedBy,
+    };
+
+    private static SyncFileIndexEntry Clone(SyncFileIndexEntry entry) => new()
+    {
+        RelativePath = entry.RelativePath,
+        Length = entry.Length,
+        LastWriteTimeUtc = entry.LastWriteTimeUtc,
+        IsDeleted = entry.IsDeleted,
+        DeletedAtUtc = entry.DeletedAtUtc,
+        LastSyncedBy = entry.LastSyncedBy,
+    };
 }

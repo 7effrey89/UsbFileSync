@@ -1,5 +1,6 @@
 using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Services;
+using System.Text.Json;
 
 namespace UsbFileSync.Tests;
 
@@ -172,6 +173,7 @@ public sealed class SyncServiceTests : IDisposable
         var source = CreateDirectory("source");
         var destination = CreateDirectory("destination");
         WriteFile(source, "user.txt", "payload", new DateTime(2024, 4, 1, 0, 0, 0, DateTimeKind.Utc));
+        WriteFile(source, Path.Combine(".sync-metadata", "file-index.json"), "{}", new DateTime(2024, 4, 1, 0, 0, 0, DateTimeKind.Utc));
         WriteFile(source, Path.Combine("System Volume Information", "IndexerVolumeGuid"), "metadata", new DateTime(2024, 4, 1, 0, 0, 0, DateTimeKind.Utc));
 
         var service = new SyncService();
@@ -185,6 +187,64 @@ public sealed class SyncServiceTests : IDisposable
         var action = Assert.Single(actions);
         Assert.Equal(SyncActionType.CopyToDestination, action.Type);
         Assert.Equal("user.txt", action.RelativePath);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_TwoWayPersistsMetadataAndPropagatesTrackedDeletion()
+    {
+        var source = CreateDirectory("source");
+        var destination = CreateDirectory("destination");
+        WriteFile(source, "shared.txt", "same", new DateTime(2024, 6, 1, 0, 0, 0, DateTimeKind.Utc));
+        WriteFile(destination, "shared.txt", "same", new DateTime(2024, 6, 1, 0, 0, 0, DateTimeKind.Utc));
+
+        var service = new SyncService();
+        var configuration = new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.TwoWay,
+        };
+
+        var initialResult = await service.ExecuteAsync(configuration);
+
+        Assert.Equal(0, initialResult.AppliedOperations);
+
+        using var sourceMetadata = await LoadMetadataAsync(source);
+        using var destinationMetadata = await LoadMetadataAsync(destination);
+        var sourceDeviceId = sourceMetadata.RootElement.GetProperty("DeviceId").GetString();
+        var destinationDeviceId = destinationMetadata.RootElement.GetProperty("DeviceId").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(sourceDeviceId));
+        Assert.False(string.IsNullOrWhiteSpace(destinationDeviceId));
+
+        var synchronizedEntry = sourceMetadata.RootElement
+            .GetProperty("PeerStates")
+            .GetProperty(destinationDeviceId!)
+            .GetProperty("Entries")
+            .GetProperty("shared.txt");
+        Assert.False(synchronizedEntry.GetProperty("IsDeleted").GetBoolean());
+        Assert.False(string.IsNullOrWhiteSpace(synchronizedEntry.GetProperty("LastSyncedBy").GetString()));
+
+        File.Delete(Path.Combine(destination, "shared.txt"));
+
+        var actions = await service.AnalyzeChangesAsync(configuration);
+
+        var action = Assert.Single(actions);
+        Assert.Equal(SyncActionType.DeleteFromSource, action.Type);
+
+        await service.ExecutePlannedAsync(configuration, actions);
+
+        Assert.False(File.Exists(Path.Combine(source, "shared.txt")));
+        Assert.False(File.Exists(Path.Combine(destination, "shared.txt")));
+
+        using var updatedSourceMetadata = await LoadMetadataAsync(source);
+        var deletedEntry = updatedSourceMetadata.RootElement
+            .GetProperty("PeerStates")
+            .GetProperty(destinationDeviceId!)
+            .GetProperty("Entries")
+            .GetProperty("shared.txt");
+
+        Assert.True(deletedEntry.GetProperty("IsDeleted").GetBoolean());
+        Assert.Equal(destinationDeviceId, deletedEntry.GetProperty("LastSyncedBy").GetString());
     }
 
     [Fact]
@@ -402,6 +462,12 @@ public sealed class SyncServiceTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
         File.WriteAllText(fullPath, content);
         File.SetLastWriteTimeUtc(fullPath, timestamp);
+    }
+
+    private static async Task<JsonDocument> LoadMetadataAsync(string root)
+    {
+        var metadataPath = Path.Combine(root, ".sync-metadata", "file-index.json");
+        return JsonDocument.Parse(await File.ReadAllTextAsync(metadataPath));
     }
 
     public void Dispose()
