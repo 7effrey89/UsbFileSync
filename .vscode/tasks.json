@@ -1,0 +1,32 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build UsbFileSync solution",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "build",
+        "${workspaceFolder}/UsbFileSync.sln",
+        "-v",
+        "minimal"
+      ],
+      "problemMatcher": "$msCompile",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "run UsbFileSync app",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "run",
+        "--project",
+        "${workspaceFolder}/UsbFileSync.App/UsbFileSync.App.csproj"
+      ],
+      "problemMatcher": "$msCompile"
+    }
+  ]
+}

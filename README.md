@@ -96,6 +96,8 @@ dotnet build UsbFileSync.sln -v minimal
 
 ### Run the desktop app
 
+From the solution root, `dotnet run` still needs an explicit startup project because the solution contains multiple projects. Use the app project directly, or launch `Launch UsbFileSync App` from VS Code.
+
 ```powershell
 dotnet run --project UsbFileSync.App/UsbFileSync.App.csproj
 ```
