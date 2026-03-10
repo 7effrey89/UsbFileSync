@@ -537,7 +537,9 @@ public sealed class SyncService
         SyncActionType.OverwriteFileOnDestination => sourceDeviceId,
         SyncActionType.CopyToSource => destinationDeviceId,
         SyncActionType.OverwriteFileOnSource => destinationDeviceId,
-        _ => string.IsNullOrWhiteSpace(existingEntry?.LastSyncedBy) ? sourceDeviceId : existingEntry!.LastSyncedBy,
+        _ => existingEntry is null || string.IsNullOrWhiteSpace(existingEntry.LastSyncedBy)
+            ? sourceDeviceId
+            : existingEntry.LastSyncedBy,
     };
 
     private static SyncFileIndexEntry Clone(SyncFileIndexEntry entry) => new()

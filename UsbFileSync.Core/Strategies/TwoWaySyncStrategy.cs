@@ -153,10 +153,12 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
         var shouldDelete = trackedEntry is not null &&
             !trackedEntry.IsDeleted &&
             trackedEntry.Matches(existingFile);
+        var sourceFullPath = copyActionType == SyncActionType.CopyToDestination ? existingFullPath : missingFullPath;
+        var destinationFullPath = copyActionType == SyncActionType.CopyToDestination ? missingFullPath : existingFullPath;
 
         return shouldDelete
-            ? new SyncAction(deleteActionType, relativePath, copyActionType == SyncActionType.CopyToDestination ? existingFullPath : missingFullPath, copyActionType == SyncActionType.CopyToDestination ? missingFullPath : existingFullPath)
-            : new SyncAction(copyActionType, relativePath, copyActionType == SyncActionType.CopyToDestination ? existingFullPath : missingFullPath, copyActionType == SyncActionType.CopyToDestination ? missingFullPath : existingFullPath);
+            ? new SyncAction(deleteActionType, relativePath, sourceFullPath, destinationFullPath)
+            : new SyncAction(copyActionType, relativePath, sourceFullPath, destinationFullPath);
     }
 
     private static int GetActionSortRank(SyncActionType actionType) => actionType switch
