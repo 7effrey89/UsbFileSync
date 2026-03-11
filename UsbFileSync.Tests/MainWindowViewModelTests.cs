@@ -385,6 +385,29 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public async Task ToggleSyncCommand_LogsWarning_WhenNoPreviewItemsAreSelected()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("pending.txt", "payload");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+            DryRun = false,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 1 && viewModel.AllFilesCount == 1).ConfigureAwait(true);
+
+        viewModel.ToggleSyncCommand.Execute(null);
+        await WaitForAsync(() => !viewModel.IsSyncRunning).ConfigureAwait(true);
+
+        Assert.Equal("Warning", viewModel.ActivityLog[0].State);
+        Assert.Equal("Synchronization skipped because no items to be synced were selected.", viewModel.ActivityLog[0].Message);
+        Assert.True(viewModel.ActivityLog[0].IsAlert);
+    }
+
+    [Fact]
     public void ToggleSyncCommand_ShowsValidationError_WhenDestinationDriveIsUnavailable()
     {
         if (!OperatingSystem.IsWindows())
@@ -512,6 +535,22 @@ public sealed class MainWindowViewModelTests
         Assert.Empty(viewModel.RemainingQueue);
         Assert.False(viewModel.AreAllNewFilesSelected);
         Assert.False(viewModel.AreAllFilesSelected);
+    }
+
+    [Fact]
+    public void ActivityLogFilter_ShowsOnlyAlerts_WhenRequested()
+    {
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null));
+
+        viewModel.SourcePath = "C:\\source";
+        viewModel.DestinationPath = string.Empty;
+        viewModel.ToggleSyncCommand.Execute(null);
+        viewModel.ShowAlertsOnlyActivityLog = true;
+
+        var filteredEntries = viewModel.ActivityLogView.Cast<SyncLogEntryViewModel>().ToList();
+
+        Assert.NotEmpty(filteredEntries);
+        Assert.All(filteredEntries, entry => Assert.True(entry.IsAlert));
     }
 
     private static async Task WaitForAsync(Func<bool> condition)

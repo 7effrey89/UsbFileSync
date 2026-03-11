@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Windows.Data;
 using UsbFileSync.App.Commands;
 using UsbFileSync.App.Services;
 using UsbFileSync.Core.Models;
@@ -42,6 +43,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _isStatusSuccess;
     private bool _isSourcePathFocused;
     private bool _isDestinationPathFocused;
+    private ActivityLogFilter _selectedActivityLogFilter = ActivityLogFilter.All;
 
     public MainWindowViewModel()
         : this(new SyncService(), CreateDefaultSettingsStore(), new WindowsFolderPickerService(), new WindowsFileLauncherService(), new WindowsDriveDisplayNameService())
@@ -68,6 +70,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         UnchangedFiles = new ObservableCollection<SyncPreviewRowViewModel>();
         AllFiles = new ObservableCollection<SyncPreviewRowViewModel>();
         ActivityLog = new ObservableCollection<SyncLogEntryViewModel>();
+        ActivityLogView = CollectionViewSource.GetDefaultView(ActivityLog);
+        ActivityLogView.Filter = ShouldIncludeActivityLogEntry;
         RemainingQueue = new ObservableCollection<QueueActionViewModel>();
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, CanExecuteSyncCommands);
         ToggleSyncCommand = new RelayCommand(ToggleSync, CanExecuteToggleSyncCommand);
@@ -99,7 +103,45 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<SyncLogEntryViewModel> ActivityLog { get; }
 
+    public ICollectionView ActivityLogView { get; }
+
     public ObservableCollection<QueueActionViewModel> RemainingQueue { get; }
+
+    public bool ShowAllActivityLog
+    {
+        get => _selectedActivityLogFilter == ActivityLogFilter.All;
+        set
+        {
+            if (value)
+            {
+                SetActivityLogFilter(ActivityLogFilter.All);
+            }
+        }
+    }
+
+    public bool ShowAlertsOnlyActivityLog
+    {
+        get => _selectedActivityLogFilter == ActivityLogFilter.AlertsOnly;
+        set
+        {
+            if (value)
+            {
+                SetActivityLogFilter(ActivityLogFilter.AlertsOnly);
+            }
+        }
+    }
+
+    public bool ShowVerboseOnlyActivityLog
+    {
+        get => _selectedActivityLogFilter == ActivityLogFilter.VerboseOnly;
+        set
+        {
+            if (value)
+            {
+                SetActivityLogFilter(ActivityLogFilter.VerboseOnly);
+            }
+        }
+    }
 
     public AsyncRelayCommand AnalyzeCommand { get; }
 
@@ -517,7 +559,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         if (!TryValidateConfiguration(requireAccessibleDestinationPath: false))
         {
-            AddLog("Error", StatusMessage);
+            AddLog("Error", StatusMessage, SyncLogSeverity.Error);
             return;
         }
 
@@ -548,7 +590,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         if (!TryValidateConfiguration(requireAccessibleDestinationPath: true))
         {
-            AddLog("Error", StatusMessage);
+            AddLog("Error", StatusMessage, SyncLogSeverity.Error);
             return;
         }
 
@@ -577,9 +619,12 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 StatusMessage = PlannedActions.Count == 0
                     ? "Folders are already synchronized."
                     : "Select at least one file or folder in the preview before synchronizing.";
-                AddLog("Sync", PlannedActions.Count == 0
-                    ? "No queued operations to process."
-                    : "Synchronization skipped because no items to be synced were selected.");
+                AddLog(
+                    PlannedActions.Count == 0 ? "Sync" : "Warning",
+                    PlannedActions.Count == 0
+                        ? "No queued operations to process."
+                        : "Synchronization skipped because no items to be synced were selected.",
+                    PlannedActions.Count == 0 ? SyncLogSeverity.Verbose : SyncLogSeverity.Warning);
                 CurrentTransferItem = "No active transfer.";
                 CurrentTransferDetails = "Queue is idle.";
                 CurrentTransferProgressValue = 0;
@@ -960,12 +1005,12 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             CurrentTransferDetails = QueueSummary;
             CurrentTransferProgressValue = 0;
             PauseActivePreviewRows();
-            AddLog("Sync", "Synchronization cancelled.");
+            AddLog("Warning", "Synchronization cancelled.", SyncLogSeverity.Warning);
         }
         catch (Exception exception)
         {
             StatusMessage = exception.Message;
-            AddLog("Error", exception.Message);
+            AddLog("Error", exception.Message, SyncLogSeverity.Error);
         }
         finally
         {
@@ -1130,13 +1175,51 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void AddLog(string state, string message)
+    private void AddLog(string state, string message, SyncLogSeverity severity = SyncLogSeverity.Verbose)
     {
-        ActivityLog.Insert(0, new SyncLogEntryViewModel(state, message));
+        ActivityLog.Insert(0, new SyncLogEntryViewModel(state, message, severity));
         const int maxLogEntries = 200;
         while (ActivityLog.Count > maxLogEntries)
         {
             ActivityLog.RemoveAt(ActivityLog.Count - 1);
         }
+
+        ActivityLogView.Refresh();
+    }
+
+    private void SetActivityLogFilter(ActivityLogFilter filter)
+    {
+        if (_selectedActivityLogFilter == filter)
+        {
+            return;
+        }
+
+        _selectedActivityLogFilter = filter;
+        RaisePropertyChanged(nameof(ShowAllActivityLog));
+        RaisePropertyChanged(nameof(ShowAlertsOnlyActivityLog));
+        RaisePropertyChanged(nameof(ShowVerboseOnlyActivityLog));
+        ActivityLogView.Refresh();
+    }
+
+    private bool ShouldIncludeActivityLogEntry(object item)
+    {
+        if (item is not SyncLogEntryViewModel entry)
+        {
+            return false;
+        }
+
+        return _selectedActivityLogFilter switch
+        {
+            ActivityLogFilter.AlertsOnly => entry.IsAlert,
+            ActivityLogFilter.VerboseOnly => !entry.IsAlert,
+            _ => true,
+        };
+    }
+
+    private enum ActivityLogFilter
+    {
+        All,
+        AlertsOnly,
+        VerboseOnly,
     }
 }
