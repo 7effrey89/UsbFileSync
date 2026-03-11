@@ -11,6 +11,22 @@ using UsbFileSync.Core.Services;
 
 namespace UsbFileSync.App.ViewModels;
 
+public enum PreviewTabKind
+{
+    NewFiles,
+    ChangedFiles,
+    DeletedFiles,
+    UnchangedFiles,
+    AllFiles,
+}
+
+public enum PreviewSelectionTarget
+{
+    FileName,
+    FileFolder,
+    FullPath,
+}
+
 public sealed class MainWindowViewModel : ObservableObject, IDisposable
 {
     private static readonly TimeSpan SettingsSaveDelay = TimeSpan.FromMilliseconds(250);
@@ -44,6 +60,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _isSourcePathFocused;
     private bool _isDestinationPathFocused;
     private ActivityLogFilter _selectedActivityLogFilter = ActivityLogFilter.All;
+    private bool _suppressSelectionUpdates;
 
     public MainWindowViewModel()
         : this(new SyncService(), CreateDefaultSettingsStore(), new WindowsFolderPickerService(), new WindowsFileLauncherService(), new WindowsDriveDisplayNameService())
@@ -537,6 +554,37 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         AddLog("Settings", ParallelCopyCount == 0
             ? "Parallel copy count set to auto."
             : $"Parallel copy count set to {ParallelCopyCount}.");
+    }
+
+    public void SelectAllInTab(PreviewTabKind tabKind)
+    {
+        UpdateSelectionForRows(GetRowsForTab(tabKind), _ => true);
+    }
+
+    public void InvertSelectionInTab(PreviewTabKind tabKind)
+    {
+        UpdateSelectionForRows(GetRowsForTab(tabKind), row => !row.IsSelected);
+    }
+
+    public int SelectByPattern(PreviewTabKind tabKind, string keyword, PreviewSelectionTarget target)
+    {
+        var normalizedKeyword = keyword?.Trim();
+        if (string.IsNullOrWhiteSpace(normalizedKeyword))
+        {
+            return 0;
+        }
+
+        var rows = GetRowsForTab(tabKind)
+            .Where(row => row.CanSelect)
+            .ToList();
+
+        if (rows.Count == 0)
+        {
+            return 0;
+        }
+
+        UpdateSelectionForRows(rows, row => MatchesPattern(row, normalizedKeyword, target));
+        return rows.Count(row => row.IsSelected);
     }
 
     public void SetSourcePathFocused(bool isFocused)
@@ -1102,21 +1150,94 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void SetSelection(IEnumerable<SyncPreviewRowViewModel> rows, bool? isSelected)
     {
-        foreach (var row in rows.Where(row => row.CanSelect))
+        UpdateSelectionForRows(rows, _ => isSelected ?? false);
+    }
+
+    private void OnPreviewRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!_suppressSelectionUpdates && e.PropertyName == nameof(SyncPreviewRowViewModel.IsSelected))
         {
-                row.IsSelected = isSelected ?? false;
+            UpdateSelectedQueue();
+        }
+    }
+
+    private IReadOnlyList<SyncPreviewRowViewModel> GetRowsForTab(PreviewTabKind tabKind) => tabKind switch
+    {
+        PreviewTabKind.NewFiles => NewFiles,
+        PreviewTabKind.ChangedFiles => ChangedFiles,
+        PreviewTabKind.DeletedFiles => DeletedFiles,
+        PreviewTabKind.UnchangedFiles => UnchangedFiles,
+        _ => AllFiles,
+    };
+
+    private void UpdateSelectionForRows(IEnumerable<SyncPreviewRowViewModel> rows, Func<SyncPreviewRowViewModel, bool> selectionFactory)
+    {
+        var selectableRows = rows
+            .Where(row => row.CanSelect)
+            .ToList();
+
+        if (selectableRows.Count == 0)
+        {
+            return;
+        }
+
+        _suppressSelectionUpdates = true;
+        try
+        {
+            foreach (var row in selectableRows)
+            {
+                row.IsSelected = selectionFactory(row);
+            }
+        }
+        finally
+        {
+            _suppressSelectionUpdates = false;
         }
 
         UpdateSelectedQueue();
     }
 
-    private void OnPreviewRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    private static bool MatchesPattern(SyncPreviewRowViewModel row, string keyword, PreviewSelectionTarget target)
     {
-        if (e.PropertyName == nameof(SyncPreviewRowViewModel.IsSelected))
+        return target switch
         {
-            UpdateSelectedQueue();
-        }
+            PreviewSelectionTarget.FileName => GetPathCandidates(row)
+                .Select(Path.GetFileName)
+                .Any(value => ContainsKeyword(value, keyword)),
+            PreviewSelectionTarget.FileFolder => GetPathCandidates(row)
+                .Select(Path.GetDirectoryName)
+                .Any(value => ContainsKeyword(value, keyword)),
+            PreviewSelectionTarget.FullPath => GetPathCandidates(row)
+                .Any(value => ContainsKeyword(value, keyword)),
+            _ => false,
+        };
     }
+
+    private static IEnumerable<string> GetPathCandidates(SyncPreviewRowViewModel row)
+    {
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrWhiteSpace(row.SourcePath))
+        {
+            paths.Add(row.SourcePath);
+        }
+
+        if (!string.IsNullOrWhiteSpace(row.DestinationPath))
+        {
+            paths.Add(row.DestinationPath);
+        }
+
+        if (!string.IsNullOrWhiteSpace(row.Name))
+        {
+            paths.Add(row.Name);
+        }
+
+        return paths;
+    }
+
+    private static bool ContainsKeyword(string? value, string keyword) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        value.Contains(keyword, StringComparison.OrdinalIgnoreCase);
 
     private void UpdateSelectedQueue()
     {

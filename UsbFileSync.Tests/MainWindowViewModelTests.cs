@@ -553,6 +553,86 @@ public sealed class MainWindowViewModelTests
         Assert.All(filteredEntries, entry => Assert.True(entry.IsAlert));
     }
 
+    [Fact]
+    public async Task SelectAllInTab_SelectsAllRowsInRequestedTab()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("one.txt", "one");
+        workspace.WriteSourceFile("nested\\two.txt", "two");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+            DryRun = false,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 2 && viewModel.AllFilesCount == 2).ConfigureAwait(true);
+
+        viewModel.SelectAllInTab(PreviewTabKind.NewFiles);
+
+        Assert.All(viewModel.NewFiles, row => Assert.True(row.IsSelected));
+        Assert.Equal(2, viewModel.RemainingQueue.Count);
+    }
+
+    [Fact]
+    public async Task SelectByPattern_FiltersSelectionByFileNameFolderAndFullPath()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("photos\\holiday-shot.txt", "one");
+        workspace.WriteSourceFile("docs\\notes.txt", "two");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+            DryRun = false,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 2 && viewModel.AllFilesCount == 2).ConfigureAwait(true);
+
+        var fileNameMatches = viewModel.SelectByPattern(PreviewTabKind.NewFiles, "holiday", PreviewSelectionTarget.FileName);
+        Assert.Equal(1, fileNameMatches);
+        Assert.True(viewModel.NewFiles.Single(row => row.RelativePath == "holiday-shot.txt").IsSelected);
+        Assert.False(viewModel.NewFiles.Single(row => row.RelativePath == "notes.txt").IsSelected);
+
+        var folderMatches = viewModel.SelectByPattern(PreviewTabKind.NewFiles, "docs", PreviewSelectionTarget.FileFolder);
+        Assert.Equal(1, folderMatches);
+        Assert.False(viewModel.NewFiles.Single(row => row.RelativePath == "holiday-shot.txt").IsSelected);
+        Assert.True(viewModel.NewFiles.Single(row => row.RelativePath == "notes.txt").IsSelected);
+
+        var fullPathMatches = viewModel.SelectByPattern(PreviewTabKind.NewFiles, "photos\\holiday-shot", PreviewSelectionTarget.FullPath);
+        Assert.Equal(1, fullPathMatches);
+        Assert.True(viewModel.NewFiles.Single(row => row.RelativePath == "holiday-shot.txt").IsSelected);
+        Assert.False(viewModel.NewFiles.Single(row => row.RelativePath == "notes.txt").IsSelected);
+    }
+
+    [Fact]
+    public async Task InvertSelectionInTab_FlipsSelectionStateForSelectableRows()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("one.txt", "one");
+        workspace.WriteSourceFile("two.txt", "two");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+            DryRun = false,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 2 && viewModel.AllFilesCount == 2).ConfigureAwait(true);
+
+        viewModel.NewFiles[0].IsSelected = true;
+        viewModel.NewFiles[1].IsSelected = false;
+
+        viewModel.InvertSelectionInTab(PreviewTabKind.NewFiles);
+
+        Assert.False(viewModel.NewFiles[0].IsSelected);
+        Assert.True(viewModel.NewFiles[1].IsSelected);
+        Assert.Single(viewModel.RemainingQueue);
+    }
+
     private static async Task WaitForAsync(Func<bool> condition)
     {
         var deadline = DateTime.UtcNow.AddSeconds(3);
