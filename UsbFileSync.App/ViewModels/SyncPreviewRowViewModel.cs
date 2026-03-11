@@ -28,6 +28,7 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
     private static readonly System.Windows.Media.Brush ModifiedStatusBrush = CreateFrozenBrush(184, 125, 0);
     private static readonly System.Windows.Media.Brush RenamedStatusBrush = CreateFrozenBrush(15, 108, 189);
     private static readonly System.Windows.Media.Brush UnchangedStatusBrush = CreateFrozenBrush(98, 98, 98);
+    private static readonly System.Windows.Media.Brush TransparentBrush = CreateFrozenBrush(0, 0, 0, 0);
 
     private readonly SyncActionType? _actionType;
     private readonly bool _hasPlannedAction;
@@ -201,9 +202,11 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
 
     public double SyncActionFillWidth => SyncActionProgressScale * SyncActionVisualWidth;
 
-    public System.Windows.Media.Brush SyncActionBrush => StatusBrush;
+    public System.Windows.Media.Brush SyncActionBrush => IsUnchangedAction ? TransparentBrush : StatusBrush;
 
-    public System.Windows.Media.Brush SyncActionTrackFillBrush => SyncActionTrackBrush;
+    public System.Windows.Media.Brush SyncActionTrackFillBrush => IsUnchangedAction ? TransparentBrush : SyncActionTrackBrush;
+
+    public System.Windows.Media.Brush SyncActionStrokeBrush => IsUnchangedAction ? TransparentBrush : StatusBrush;
 
     public System.Windows.Media.Brush SourcePathBrush => IsSourceAction ? StatusBrush : DefaultPathBrush;
 
@@ -411,7 +414,12 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
 
     private static System.Windows.Media.Brush CreateFrozenBrush(byte red, byte green, byte blue)
     {
-        var brush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(red, green, blue));
+        return CreateFrozenBrush(255, red, green, blue);
+    }
+
+    private static System.Windows.Media.Brush CreateFrozenBrush(byte alpha, byte red, byte green, byte blue)
+    {
+        var brush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(alpha, red, green, blue));
         brush.Freeze();
         return brush;
     }

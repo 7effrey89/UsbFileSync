@@ -109,6 +109,9 @@ public sealed class SyncPreviewRowViewModelTests
         AssertBrushColor(row.DestinationPathBrush, 32, 32, 32);
         AssertBrushColor(row.SourceStatusGlyphBrush, 98, 98, 98);
         AssertBrushColor(row.DestinationStatusGlyphBrush, 98, 98, 98);
+        AssertTransparentBrush(row.SyncActionBrush);
+        AssertTransparentBrush(row.SyncActionTrackFillBrush);
+        AssertTransparentBrush(row.SyncActionStrokeBrush);
         Assert.Equal("On hold", row.TransferSpeedText);
         Assert.Equal("Done", row.ProgressStateText);
     }
@@ -305,6 +308,12 @@ public sealed class SyncPreviewRowViewModelTests
     {
         var solidColorBrush = Assert.IsType<SolidColorBrush>(brush);
         Assert.Equal(Color.FromRgb(red, green, blue), solidColorBrush.Color);
+    }
+
+    private static void AssertTransparentBrush(Brush brush)
+    {
+        var solidColorBrush = Assert.IsType<SolidColorBrush>(brush);
+        Assert.Equal(Color.FromArgb(0, 0, 0, 0), solidColorBrush.Color);
     }
 
     private sealed class StubFileIconProvider(ImageSource? iconToReturn) : IFileIconProvider
