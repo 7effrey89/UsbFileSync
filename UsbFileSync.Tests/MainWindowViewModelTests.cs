@@ -34,6 +34,45 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public void SourceAndDestinationDisplayText_UseExplorerStyleLabels_WhenNotFocused()
+    {
+        var driveDisplayNameService = new StubDriveDisplayNameService();
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            driveDisplayNameService: driveDisplayNameService)
+        {
+            SourcePath = "F:\\",
+            DestinationPath = "D:\\",
+        };
+
+        Assert.Equal("XTIVIA (F:)", viewModel.SourcePathDisplayText);
+        Assert.Equal("Backup Drive (D:)", viewModel.DestinationPathDisplayText);
+    }
+
+    [Fact]
+    public void SourceAndDestinationDisplayText_ShowRawPath_WhenFocused()
+    {
+        var driveDisplayNameService = new StubDriveDisplayNameService();
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            driveDisplayNameService: driveDisplayNameService)
+        {
+            SourcePath = "F:\\",
+            DestinationPath = "D:\\",
+        };
+
+        viewModel.SetSourcePathFocused(true);
+        viewModel.SetDestinationPathFocused(true);
+
+        Assert.Equal("F:\\", viewModel.SourcePathDisplayText);
+        Assert.Equal("D:\\", viewModel.DestinationPathDisplayText);
+    }
+
+    [Fact]
     public void DirectionIndicator_UsesDoubleArrowForOneWay()
     {
         using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null));
@@ -87,10 +126,11 @@ public sealed class MainWindowViewModelTests
         var completionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var strategy = new BlockingSyncStrategy(completionSource);
         var syncService = new SyncService(strategy, strategy);
+        using var workspace = new SyncTestWorkspace();
         using var viewModel = new MainWindowViewModel(syncService, settingsStore: null, folderPickerService: new StubFolderPickerService(null))
         {
-            SourcePath = "F:\\Primary",
-            DestinationPath = "E:\\Backup"
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath
         };
 
         viewModel.ToggleSyncCommand.Execute(null);
@@ -103,6 +143,26 @@ public sealed class MainWindowViewModelTests
 
         Assert.Equal("Synchronize", viewModel.SyncButtonText);
         Assert.Equal("Synchronization stopped.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public void LoadSavedConfiguration_SetsSuccessStatus_WhenConfigurationRestored()
+    {
+        var settingsStore = new StubSyncSettingsStore(new SyncConfiguration
+        {
+            SourcePath = "F:\\Primary",
+            DestinationPath = "E:\\Backup",
+            Mode = SyncMode.OneWay,
+            DetectMoves = true,
+            DryRun = true,
+            VerifyChecksums = false,
+            ParallelCopyCount = 1,
+        });
+
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: settingsStore, folderPickerService: new StubFolderPickerService(null));
+
+        Assert.Equal("Restored the previous sync configuration.", viewModel.StatusMessage);
+        Assert.True(viewModel.IsStatusSuccess);
     }
 
     [Fact]
@@ -123,6 +183,23 @@ public sealed class MainWindowViewModelTests
         viewModel.VerifyChecksums = true;
 
         Assert.True(viewModel.VerifyChecksums);
+    }
+
+    [Fact]
+    public void DetectMoves_IsOnlyAvailableInOneWayMode()
+    {
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null));
+
+        Assert.True(viewModel.IsDetectMovesAvailable);
+
+        viewModel.SelectedMode = SyncMode.TwoWay;
+
+        Assert.False(viewModel.IsDetectMovesAvailable);
+        Assert.True(viewModel.DetectMoves);
+
+        viewModel.SelectedMode = SyncMode.OneWay;
+
+        Assert.True(viewModel.IsDetectMovesAvailable);
     }
 
     [Fact]
@@ -238,6 +315,136 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public async Task ToggleSyncCommand_ProcessesQueuedActions_WhenPreviewSelectionIsUnavailable()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("queued.txt", "payload");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+            DryRun = false,
+        };
+
+        var action = new SyncAction(
+            SyncActionType.CopyToDestination,
+            "queued.txt",
+            Path.Combine(workspace.SourcePath, "queued.txt"),
+            Path.Combine(workspace.DestinationPath, "queued.txt"));
+
+        viewModel.PlannedActions.Add(action);
+        viewModel.RemainingQueue.Add(new QueueActionViewModel(action));
+
+        viewModel.ToggleSyncCommand.Execute(null);
+        await WaitForAsync(() => File.Exists(Path.Combine(workspace.DestinationPath, "queued.txt")) && !viewModel.IsSyncRunning).ConfigureAwait(true);
+
+        Assert.True(File.Exists(Path.Combine(workspace.DestinationPath, "queued.txt")));
+        Assert.Equal("payload", await File.ReadAllTextAsync(Path.Combine(workspace.DestinationPath, "queued.txt")).ConfigureAwait(true));
+    }
+
+    [Fact]
+    public async Task ToggleSyncCommand_MentionsChecksumVerification_WhenChecksumModeIsEnabled()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("verified.txt", "payload");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+            DryRun = false,
+            VerifyChecksums = true,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 1 && viewModel.AllFilesCount == 1).ConfigureAwait(true);
+        viewModel.AreAllNewFilesSelected = true;
+
+        viewModel.ToggleSyncCommand.Execute(null);
+        await WaitForAsync(() =>
+            File.Exists(Path.Combine(workspace.DestinationPath, "verified.txt")) &&
+            viewModel.StatusMessage == "Synchronization complete. Applied 1 action(s). Checksum verification passed for 1 copied file(s)." &&
+            !viewModel.IsSyncRunning).ConfigureAwait(true);
+
+        Assert.Equal("Synchronization complete. Applied 1 action(s). Checksum verification passed for 1 copied file(s).", viewModel.StatusMessage);
+        Assert.Equal("Sync", viewModel.ActivityLog[0].State);
+        Assert.Equal("Synchronization complete. Applied 1 action(s). Checksum verification passed for 1 copied file(s).", viewModel.ActivityLog[0].Message);
+    }
+
+    [Fact]
+    public void ToggleSyncCommand_ShowsValidationError_WhenDestinationDriveIsUnavailable()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var existingDriveLetters = DriveInfo.GetDrives()
+            .Select(drive => char.ToUpperInvariant(drive.Name[0]))
+            .ToHashSet();
+        var missingDriveLetter = Enumerable.Range('D', 'Z' - 'D' + 1)
+            .Select(value => (char)value)
+            .FirstOrDefault(letter => !existingDriveLetters.Contains(letter));
+
+        if (missingDriveLetter == default)
+        {
+            return;
+        }
+
+        using var workspace = new SyncTestWorkspace();
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = $"{missingDriveLetter}:\\",
+            DryRun = false,
+        };
+
+        viewModel.ToggleSyncCommand.Execute(null);
+
+        Assert.Equal("Destination path does not exist or is not accessible.", viewModel.StatusMessage);
+        Assert.False(viewModel.IsSyncRunning);
+        Assert.Equal("Error", viewModel.ActivityLog[0].State);
+        Assert.Equal("Destination path does not exist or is not accessible.", viewModel.ActivityLog[0].Message);
+    }
+
+    [Fact]
+    public void AnalyzeCommand_ShowsValidationError_WhenDestinationDriveIsUnavailable()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var existingDriveLetters = DriveInfo.GetDrives()
+            .Select(drive => char.ToUpperInvariant(drive.Name[0]))
+            .ToHashSet();
+        var missingDriveLetter = Enumerable.Range('D', 'Z' - 'D' + 1)
+            .Select(value => (char)value)
+            .FirstOrDefault(letter => !existingDriveLetters.Contains(letter));
+
+        if (missingDriveLetter == default)
+        {
+            return;
+        }
+
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("only-source.txt", "payload");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = $"{missingDriveLetter}:\\",
+            DryRun = false,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+
+        WaitForAsync(() => viewModel.NewFilesCount == 1 && viewModel.AllFilesCount == 1).GetAwaiter().GetResult();
+
+        Assert.Equal("Preview generated with 1 planned action(s). Select the items to synchronize.", viewModel.StatusMessage);
+        Assert.Equal("Analyze", viewModel.ActivityLog[0].State);
+        Assert.Equal("Preview generated with 1 planned action(s). Select the items to synchronize.", viewModel.ActivityLog[0].Message);
+    }
+
+    [Fact]
     public async Task HeaderSelection_ClearsFilteredRows_WhenSetToFalse()
     {
         using var workspace = new SyncTestWorkspace();
@@ -334,6 +541,25 @@ public sealed class MainWindowViewModelTests
         {
             LastOperation = "open-file";
             LastPath = path;
+        }
+    }
+
+    private sealed class StubDriveDisplayNameService : IDriveDisplayNameService
+    {
+        public string FormatPathForDisplay(string path) => path switch
+        {
+            "F:\\" => "XTIVIA (F:)",
+            "D:\\" => "Backup Drive (D:)",
+            _ => path,
+        };
+    }
+
+    private sealed class StubSyncSettingsStore(SyncConfiguration? configuration) : ISyncSettingsStore
+    {
+        public SyncConfiguration? Load() => configuration;
+
+        public void Save(SyncConfiguration configuration)
+        {
         }
     }
 

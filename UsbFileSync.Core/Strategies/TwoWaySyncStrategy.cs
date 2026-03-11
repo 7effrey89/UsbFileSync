@@ -14,9 +14,9 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
 
         var sourceMetadata = _metadataStore.Load(configuration.SourcePath);
         var destinationMetadata = _metadataStore.Load(configuration.DestinationPath);
-        var sourceDeviceId = _metadataStore.GetOrCreateDeviceId(sourceMetadata);
-        var destinationDeviceId = _metadataStore.GetOrCreateDeviceId(destinationMetadata);
-        var peerState = _metadataStore.GetSharedPeerState(sourceMetadata, destinationDeviceId, destinationMetadata, sourceDeviceId);
+        var sourceRootId = _metadataStore.GetOrCreateRootId(sourceMetadata);
+        var destinationRootId = _metadataStore.GetOrCreateRootId(destinationMetadata);
+        var peerState = _metadataStore.GetSharedPeerState(sourceMetadata, destinationRootId, destinationMetadata, sourceRootId);
         var sourceFiles = DirectorySnapshotBuilder.Build(configuration.SourcePath);
         var destinationFiles = DirectorySnapshotBuilder.Build(configuration.DestinationPath);
         var sourceDirectories = DirectorySnapshotBuilder.BuildDirectories(configuration.SourcePath);

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace UsbFileSync.Core.Services;
 
@@ -40,30 +41,87 @@ internal sealed class SyncMetadataStore
         }
     }
 
-    public string GetOrCreateDeviceId(SyncMetadataDocument document)
+    public string GetOrCreateRootId(SyncMetadataDocument document)
     {
         ArgumentNullException.ThrowIfNull(document);
 
-        if (!string.IsNullOrWhiteSpace(document.DeviceId))
+        if (!string.IsNullOrWhiteSpace(document.RootId))
         {
-            return document.DeviceId;
+            return document.RootId;
         }
 
-        document.DeviceId = Guid.NewGuid().ToString("N");
-        return document.DeviceId;
+        document.RootId = Guid.NewGuid().ToString("N");
+        return document.RootId;
     }
+
+    public string GetRootDisplayName(string rootPath)
+    {
+        if (string.IsNullOrWhiteSpace(rootPath))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            var fullPath = Path.GetFullPath(rootPath);
+            var root = Path.GetPathRoot(fullPath);
+            if (string.IsNullOrWhiteSpace(root))
+            {
+                return fullPath;
+            }
+
+            var normalizedFullPath = fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var normalizedRoot = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (!string.Equals(normalizedFullPath, normalizedRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                return fullPath;
+            }
+
+            var driveInfo = new DriveInfo(root);
+            var driveText = normalizedRoot;
+            var label = string.IsNullOrWhiteSpace(driveInfo.VolumeLabel)
+                ? GetDefaultDriveLabel(driveInfo.DriveType)
+                : driveInfo.VolumeLabel.Trim();
+
+            return string.IsNullOrWhiteSpace(label)
+                ? driveText
+                : $"{label} ({driveText})";
+        }
+        catch (IOException)
+        {
+            return rootPath;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return rootPath;
+        }
+        catch (ArgumentException)
+        {
+            return rootPath;
+        }
+    }
+
+    private static string GetDefaultDriveLabel(DriveType driveType) => driveType switch
+    {
+        DriveType.Fixed => "Local Disk",
+        DriveType.Removable => "USB Drive",
+        DriveType.Network => "Network Drive",
+        DriveType.CDRom => "CD Drive",
+        DriveType.Ram => "RAM Disk",
+        _ => string.Empty,
+    };
 
     public SyncPeerState? GetSharedPeerState(
         SyncMetadataDocument sourceDocument,
-        string destinationDeviceId,
+        string destinationRootId,
         SyncMetadataDocument destinationDocument,
-        string sourceDeviceId)
+        string sourceRootId)
     {
         ArgumentNullException.ThrowIfNull(sourceDocument);
         ArgumentNullException.ThrowIfNull(destinationDocument);
 
-        sourceDocument.PeerStates.TryGetValue(destinationDeviceId, out var sourcePeerState);
-        destinationDocument.PeerStates.TryGetValue(sourceDeviceId, out var destinationPeerState);
+        sourceDocument.PeerStates.TryGetValue(destinationRootId, out var sourcePeerState);
+        destinationDocument.PeerStates.TryGetValue(sourceRootId, out var destinationPeerState);
 
         return sourcePeerState switch
         {
@@ -118,13 +176,17 @@ internal sealed class SyncMetadataStore
 
 internal sealed class SyncMetadataDocument
 {
-    public string? DeviceId { get; set; }
+    public string? RootId { get; set; }
+
+    public string? RootName { get; set; }
 
     public Dictionary<string, SyncPeerState> PeerStates { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 internal sealed class SyncPeerState
 {
+    public string PeerRootName { get; set; } = string.Empty;
+
     public DateTime RecordedAtUtc { get; set; }
 
     public Dictionary<string, SyncFileIndexEntry> Entries { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -142,10 +204,16 @@ internal sealed class SyncFileIndexEntry
 
     public DateTime? DeletedAtUtc { get; set; }
 
-    public string LastSyncedBy { get; set; } = string.Empty;
+    public string LastSyncedByRootId { get; set; } = string.Empty;
+
+    public string LastSyncedByRootName { get; set; } = string.Empty;
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ChecksumSha256 { get; set; }
 
     public bool Matches(FileSnapshot snapshot) =>
         !IsDeleted &&
         Length == snapshot.Length &&
-        LastWriteTimeUtc == snapshot.LastWriteTimeUtc;
+        LastWriteTimeUtc is { } lastWriteTimeUtc &&
+        FileTimestampComparer.AreEquivalent(lastWriteTimeUtc, snapshot.LastWriteTimeUtc);
 }

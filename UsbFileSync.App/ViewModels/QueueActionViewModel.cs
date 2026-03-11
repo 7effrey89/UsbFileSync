@@ -6,10 +6,13 @@ public sealed class QueueActionViewModel
 {
     public QueueActionViewModel(SyncAction action)
     {
+        ActionModel = action;
         Action = action.Type.ToString();
         RelativePath = action.RelativePath;
         FullPath = ResolveFullPath(action);
     }
+
+    public SyncAction ActionModel { get; }
 
     public string Action { get; }
 
