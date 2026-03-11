@@ -31,10 +31,17 @@ public sealed class SyncPreviewRowViewModelTests
         Assert.Null(row.IconSource);
         Assert.Equal("\uE8A5", row.IconGlyph);
         Assert.Equal("+", row.StatusGlyph);
-        Assert.Equal("ADD", row.ActionBadgeText);
+        Assert.Equal("CopyToDestination", row.Action);
+        Assert.Equal("Add", row.SyncActionText);
+        Assert.Equal(string.Empty, row.SourceStatusGlyph);
+        Assert.Equal("+", row.DestinationStatusGlyph);
+        AssertBrushColor(row.SourcePathBrush, 32, 32, 32);
+        AssertBrushColor(row.DestinationPathBrush, 18, 140, 68);
         Assert.Equal("Pending", row.TransferSpeedText);
         Assert.Equal(0, row.ProgressValue);
         Assert.Equal("Queued", row.ProgressStateText);
+        Assert.False(row.IsSourceAction);
+        Assert.True(row.IsDestinationAction);
     }
 
     [Fact]
@@ -61,7 +68,10 @@ public sealed class SyncPreviewRowViewModelTests
         Assert.Same(iconProvider.IconToReturn, row.IconSource);
         Assert.Equal("\uE8B7", row.IconGlyph);
         Assert.Equal("×", row.StatusGlyph);
-        Assert.Equal("DELETE", row.ActionBadgeText);
+        Assert.Equal("Delete", row.SyncActionText);
+        Assert.Equal(string.Empty, row.SourceStatusGlyph);
+        Assert.Equal("×", row.DestinationStatusGlyph);
+        AssertBrushColor(row.DestinationPathBrush, 196, 43, 28);
         Assert.Equal("Pending", row.TransferSpeedText);
         Assert.Equal(0, row.ProgressValue);
         Assert.Equal("Queued", row.ProgressStateText);
@@ -86,7 +96,9 @@ public sealed class SyncPreviewRowViewModelTests
 
         Assert.Equal(100, row.ProgressValue);
         Assert.Equal("▮▮", row.StatusGlyph);
-        Assert.Equal("UNCHANGED", row.ActionBadgeText);
+        Assert.Equal("Unchanged", row.SyncActionText);
+        Assert.Equal(string.Empty, row.SourceStatusGlyph);
+        Assert.Equal(string.Empty, row.DestinationStatusGlyph);
         Assert.Equal("On hold", row.TransferSpeedText);
         Assert.Equal("Done", row.ProgressStateText);
     }
@@ -109,7 +121,10 @@ public sealed class SyncPreviewRowViewModelTests
             PlannedActionType: SyncActionType.OverwriteFileOnDestination), new StubFileIconProvider(null));
 
         Assert.Equal("✎", row.StatusGlyph);
-        Assert.Equal("OVERWRITE", row.ActionBadgeText);
+        Assert.Equal("Overwrite", row.SyncActionText);
+        Assert.Equal(string.Empty, row.SourceStatusGlyph);
+        Assert.Equal("✎", row.DestinationStatusGlyph);
+        AssertBrushColor(row.DestinationPathBrush, 184, 125, 0);
     }
 
     [Fact]
@@ -130,7 +145,34 @@ public sealed class SyncPreviewRowViewModelTests
             PlannedActionType: SyncActionType.MoveOnDestination), new StubFileIconProvider(null));
 
         Assert.Equal("⇄", row.StatusGlyph);
-        Assert.Equal("MOVE", row.ActionBadgeText);
+        Assert.Equal("Move", row.SyncActionText);
+        Assert.Equal(string.Empty, row.SourceStatusGlyph);
+        Assert.Equal("⇄", row.DestinationStatusGlyph);
+    }
+
+    [Fact]
+    public void SourceSideActionsHighlightOnlySourcePath()
+    {
+        var row = new SyncPreviewRowViewModel(new SyncPreviewItem(
+            RelativePath: "incoming.txt",
+            IsDirectory: false,
+            SourceFullPath: @"F:\incoming.txt",
+            SourceLength: null,
+            SourceLastWriteTimeUtc: null,
+            DestinationFullPath: @"E:\incoming.txt",
+            DestinationLength: 20,
+            DestinationLastWriteTimeUtc: DateTime.UtcNow,
+            Direction: "<-",
+            Status: "New File",
+            Category: SyncPreviewCategory.NewFiles,
+            PlannedActionType: SyncActionType.CopyToSource), new StubFileIconProvider(null));
+
+        Assert.True(row.IsSourceAction);
+        Assert.False(row.IsDestinationAction);
+        Assert.Equal("+", row.SourceStatusGlyph);
+        Assert.Equal(string.Empty, row.DestinationStatusGlyph);
+        AssertBrushColor(row.SourcePathBrush, 18, 140, 68);
+        AssertBrushColor(row.DestinationPathBrush, 32, 32, 32);
     }
 
     [Fact]
@@ -159,11 +201,19 @@ public sealed class SyncPreviewRowViewModelTests
         row.MarkPaused();
         Assert.Equal("Paused", row.ProgressStateText);
         Assert.Equal("Paused", row.TransferSpeedText);
+        Assert.Equal("Add", row.SyncActionText);
 
         row.MarkCompleted();
         Assert.Equal(100, row.ProgressValue);
         Assert.Equal("Done", row.ProgressStateText);
         Assert.Equal("Done", row.TransferSpeedText);
+        Assert.Equal("Added", row.SyncActionText);
+    }
+
+    private static void AssertBrushColor(Brush brush, byte red, byte green, byte blue)
+    {
+        var solidColorBrush = Assert.IsType<SolidColorBrush>(brush);
+        Assert.Equal(Color.FromRgb(red, green, blue), solidColorBrush.Color);
     }
 
     private sealed class StubFileIconProvider(ImageSource? iconToReturn) : IFileIconProvider

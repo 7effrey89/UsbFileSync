@@ -8,10 +8,16 @@ namespace UsbFileSync.App.ViewModels;
 
 public sealed class SyncPreviewRowViewModel : ObservableObject
 {
+    private const string RightChevronGeometry = "M0,14 L12,0 L108,0 L120,14 L108,28 L12,28 Z";
+    private const string LeftChevronGeometry = "M120,14 L108,0 L12,0 L0,14 L12,28 L108,28 Z";
+    private const string RectangleGeometry = "M0,0 L120,0 L120,28 L0,28 Z";
+
+    private static readonly System.Windows.Media.Brush DefaultPathBrush = CreateFrozenBrush(32, 32, 32);
     private static readonly System.Windows.Media.Brush PendingBrush = CreateFrozenBrush(146, 146, 146);
     private static readonly System.Windows.Media.Brush InProgressBrush = CreateFrozenBrush(15, 108, 189);
     private static readonly System.Windows.Media.Brush CompletedBrush = CreateFrozenBrush(24, 142, 76);
     private static readonly System.Windows.Media.Brush PausedBrush = CreateFrozenBrush(214, 140, 0);
+    private static readonly System.Windows.Media.Brush SyncActionTrackBrush = CreateFrozenBrush(230, 230, 230);
     private static readonly System.Windows.Media.Brush NewStatusBrush = CreateFrozenBrush(18, 140, 68);
     private static readonly System.Windows.Media.Brush DeletedStatusBrush = CreateFrozenBrush(196, 43, 28);
     private static readonly System.Windows.Media.Brush ModifiedStatusBrush = CreateFrozenBrush(184, 125, 0);
@@ -52,7 +58,7 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
 
     public string Name { get; }
 
-    public string OpenPath => Name;
+    public string OpenPath => SourcePath;
 
     public string OpenDestinationPath => DestinationPath;
 
@@ -100,6 +106,10 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
 
     public string Action { get; }
 
+    public string SyncActionText => _progressState == PreviewTransferState.Completed
+        ? GetCompletedActionText()
+        : GetBaseActionText();
+
     public string ActionBadgeText => _actionType switch
     {
         SyncActionType.CreateDirectoryOnDestination => "ADD",
@@ -138,6 +148,49 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
 
     public System.Windows.Media.Brush ActionBadgeForegroundBrush => GetAccessibleForegroundBrush(ActionBadgeBrush);
 
+    public bool IsSourceAction => _actionType switch
+    {
+        SyncActionType.CreateDirectoryOnSource => true,
+        SyncActionType.CopyToSource => true,
+        SyncActionType.OverwriteFileOnSource => true,
+        SyncActionType.DeleteDirectoryFromSource => true,
+        SyncActionType.DeleteFromSource => true,
+        _ => false,
+    };
+
+    public bool IsDestinationAction => _actionType switch
+    {
+        SyncActionType.CreateDirectoryOnDestination => true,
+        SyncActionType.CopyToDestination => true,
+        SyncActionType.OverwriteFileOnDestination => true,
+        SyncActionType.DeleteDirectoryFromDestination => true,
+        SyncActionType.DeleteFromDestination => true,
+        SyncActionType.MoveOnDestination => true,
+        _ => false,
+    };
+
+    public string SyncActionShapeData => _actionType switch
+    {
+        null => RectangleGeometry,
+        SyncActionType.NoOp => RectangleGeometry,
+        _ when IsSourceAction => LeftChevronGeometry,
+        _ => RightChevronGeometry,
+    };
+
+    public double SyncActionProgressScale => Math.Clamp(ProgressValue / 100d, 0d, 1d);
+
+    public System.Windows.Media.Brush SyncActionBrush => StatusBrush;
+
+    public System.Windows.Media.Brush SyncActionTrackFillBrush => SyncActionTrackBrush;
+
+    public System.Windows.Media.Brush SourcePathBrush => IsSourceAction ? StatusBrush : DefaultPathBrush;
+
+    public System.Windows.Media.Brush DestinationPathBrush => IsDestinationAction ? StatusBrush : DefaultPathBrush;
+
+    public string SourceStatusGlyph => IsSourceAction ? StatusGlyph : string.Empty;
+
+    public string DestinationStatusGlyph => IsDestinationAction ? StatusGlyph : string.Empty;
+
     public string StatusGlyph => Status switch
     {
         "New File" => "+",
@@ -175,6 +228,7 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
             if (SetProperty(ref _progressValue, normalizedValue))
             {
                 RaisePropertyChanged(nameof(ProgressText));
+                RaisePropertyChanged(nameof(SyncActionProgressScale));
             }
         }
     }
@@ -255,8 +309,46 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
             RaisePropertyChanged(nameof(ProgressStateText));
             RaisePropertyChanged(nameof(ProgressStateGlyph));
             RaisePropertyChanged(nameof(ProgressStateBrush));
+            RaisePropertyChanged(nameof(ProgressStateForegroundBrush));
+            RaisePropertyChanged(nameof(SyncActionText));
         }
     }
+
+    private string GetBaseActionText() => _actionType switch
+    {
+        SyncActionType.CreateDirectoryOnDestination => "Add",
+        SyncActionType.CreateDirectoryOnSource => "Add",
+        SyncActionType.CopyToDestination => "Add",
+        SyncActionType.CopyToSource => "Add",
+        SyncActionType.OverwriteFileOnDestination => "Overwrite",
+        SyncActionType.OverwriteFileOnSource => "Overwrite",
+        SyncActionType.MoveOnDestination => "Move",
+        SyncActionType.DeleteDirectoryFromDestination => "Delete",
+        SyncActionType.DeleteDirectoryFromSource => "Delete",
+        SyncActionType.DeleteFromDestination => "Delete",
+        SyncActionType.DeleteFromSource => "Delete",
+        SyncActionType.NoOp => "Unchanged",
+        null => "Unchanged",
+        _ => Action,
+    };
+
+    private string GetCompletedActionText() => _actionType switch
+    {
+        SyncActionType.CreateDirectoryOnDestination => "Added",
+        SyncActionType.CreateDirectoryOnSource => "Added",
+        SyncActionType.CopyToDestination => "Added",
+        SyncActionType.CopyToSource => "Added",
+        SyncActionType.OverwriteFileOnDestination => "Overwritten",
+        SyncActionType.OverwriteFileOnSource => "Overwritten",
+        SyncActionType.MoveOnDestination => "Moved",
+        SyncActionType.DeleteDirectoryFromDestination => "Deleted",
+        SyncActionType.DeleteDirectoryFromSource => "Deleted",
+        SyncActionType.DeleteFromDestination => "Deleted",
+        SyncActionType.DeleteFromSource => "Deleted",
+        SyncActionType.NoOp => "Unchanged",
+        null => "Unchanged",
+        _ => Action,
+    };
 
     private static string GetDisplayPath(SyncPreviewItem item)
     {
