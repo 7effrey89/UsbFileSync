@@ -101,10 +101,14 @@ public sealed class SyncPreviewRowViewModelTests
             PlannedActionType: null), new StubFileIconProvider(null));
 
         Assert.Equal(100, row.ProgressValue);
-        Assert.Equal("▮▮", row.StatusGlyph);
+        Assert.Equal("||", row.StatusGlyph);
         Assert.Equal("Unchanged", row.SyncActionText);
-        Assert.Equal(string.Empty, row.SourceStatusGlyph);
-        Assert.Equal(string.Empty, row.DestinationStatusGlyph);
+        Assert.Equal("||", row.SourceStatusGlyph);
+        Assert.Equal("||", row.DestinationStatusGlyph);
+        AssertBrushColor(row.SourcePathBrush, 32, 32, 32);
+        AssertBrushColor(row.DestinationPathBrush, 32, 32, 32);
+        AssertBrushColor(row.SourceStatusGlyphBrush, 98, 98, 98);
+        AssertBrushColor(row.DestinationStatusGlyphBrush, 98, 98, 98);
         Assert.Equal("On hold", row.TransferSpeedText);
         Assert.Equal("Done", row.ProgressStateText);
     }
@@ -202,7 +206,7 @@ public sealed class SyncPreviewRowViewModelTests
 
         Assert.False(destinationRow.IsSourceAction);
         Assert.True(destinationRow.IsDestinationAction);
-        Assert.Equal("M0,14 L12,0 L108,0 L120,14 L108,28 L12,28 Z", destinationRow.SyncActionPathData);
+        Assert.Equal("M0,2L96,2 120,14 96,26 0,26 24,14z", destinationRow.SyncActionPathData);
 
         var sourceRow = new SyncPreviewRowViewModel(new SyncPreviewItem(
             RelativePath: "to-source.txt",
@@ -220,7 +224,7 @@ public sealed class SyncPreviewRowViewModelTests
 
         Assert.True(sourceRow.IsSourceAction);
         Assert.False(sourceRow.IsDestinationAction);
-        Assert.Equal("M120,14 L108,0 L12,0 L0,14 L12,28 L108,28 Z", sourceRow.SyncActionPathData);
+        Assert.Equal("M120,2L24,2 0,14 24,26 120,26 96,14z", sourceRow.SyncActionPathData);
     }
 
     [Fact]

@@ -8,8 +8,8 @@ namespace UsbFileSync.App.ViewModels;
 
 public sealed class SyncPreviewRowViewModel : ObservableObject
 {
-    private const string RightChevronGeometry = "M0,14 L12,0 L108,0 L120,14 L108,28 L12,28 Z";
-    private const string LeftChevronGeometry = "M120,14 L108,0 L12,0 L0,14 L12,28 L108,28 Z";
+    private const string RightChevronGeometry = "M0,2 L96,2 L120,14 L96,26 L0,26 L24,14 Z";
+    private const string LeftChevronGeometry = "M120,2 L24,2 L0,14 L24,26 L120,26 L96,14 Z";
     private const string RectangleGeometry = "M0,0 L120,0 L120,28 L0,28 Z";
     private const double SyncActionVisualWidth = 120d;
 
@@ -185,6 +185,8 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
         _ => false,
     };
 
+    public bool IsUnchangedAction => _actionType is null or SyncActionType.NoOp;
+
     public Geometry SyncActionGeometry => _actionType switch
     {
         null => RectangleGeometryShape,
@@ -207,9 +209,13 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
 
     public System.Windows.Media.Brush DestinationPathBrush => IsDestinationAction ? StatusBrush : DefaultPathBrush;
 
-    public string SourceStatusGlyph => IsSourceAction ? StatusGlyph : string.Empty;
+    public string SourceStatusGlyph => HasSourcePath && (IsSourceAction || IsUnchangedAction) ? StatusGlyph : string.Empty;
 
-    public string DestinationStatusGlyph => IsDestinationAction ? StatusGlyph : string.Empty;
+    public string DestinationStatusGlyph => HasDestinationPath && (IsDestinationAction || IsUnchangedAction) ? StatusGlyph : string.Empty;
+
+    public System.Windows.Media.Brush SourceStatusGlyphBrush => IsSourceAction ? SourcePathBrush : StatusBrush;
+
+    public System.Windows.Media.Brush DestinationStatusGlyphBrush => IsDestinationAction ? DestinationPathBrush : StatusBrush;
 
     public string StatusGlyph => Status switch
     {
@@ -217,7 +223,7 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
         "Deleted" => "×",
         "Modified" => "✎",
         "Renamed" => "⇄",
-        "Unchanged" => "▮▮",
+        "Unchanged" => "||",
         _ => "•",
     };
 

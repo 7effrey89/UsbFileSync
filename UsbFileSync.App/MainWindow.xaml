@@ -310,7 +310,7 @@
                                Text="{Binding SourceStatusGlyph}"
                                VerticalAlignment="Center"
                                FontWeight="Bold"
-                               Foreground="{Binding SourcePathBrush}">
+                               Foreground="{Binding SourceStatusGlyphBrush}">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Visibility" Value="Visible" />
@@ -359,7 +359,7 @@
                                Text="{Binding DestinationStatusGlyph}"
                                VerticalAlignment="Center"
                                FontWeight="Bold"
-                               Foreground="{Binding DestinationPathBrush}">
+                               Foreground="{Binding DestinationStatusGlyphBrush}">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Visibility" Value="Visible" />
