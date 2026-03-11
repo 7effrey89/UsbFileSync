@@ -348,14 +348,7 @@
                     <Binding Path="DataContext" RelativeSource="{RelativeSource AncestorType=Window}" />
                 </Button.Tag>
                 <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="{Binding DestinationPath}"
-                               VerticalAlignment="Center"
-                               TextTrimming="CharacterEllipsis"
-                               FontWeight="SemiBold"
-                               Cursor="Hand"
-                               TextDecorations="Underline"
-                               Foreground="{Binding DestinationPathBrush}" />
-                    <TextBlock Margin="8,0,0,0"
+                    <TextBlock Margin="0,0,8,0"
                                Text="{Binding DestinationStatusGlyph}"
                                VerticalAlignment="Center"
                                FontWeight="Bold"
@@ -371,6 +364,13 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
+                    <TextBlock Text="{Binding DestinationPath}"
+                               VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis"
+                               FontWeight="SemiBold"
+                               Cursor="Hand"
+                               TextDecorations="Underline"
+                               Foreground="{Binding DestinationPathBrush}" />
                 </StackPanel>
             </Button>
         </DataTemplate>
@@ -615,7 +615,13 @@
                         <TabControl Grid.Row="1">
                             <TabItem>
                                 <TabItem.Header>
-                                    <TextBlock Text="{Binding NewFilesCount, StringFormat=New Files ({0})}" />
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="+"
+                                                   Margin="0,0,6,0"
+                                                   FontWeight="Bold"
+                                                   Foreground="#128C44" />
+                                        <TextBlock Text="{Binding NewFilesCount, StringFormat=New Files ({0})}" />
+                                    </StackPanel>
                                 </TabItem.Header>
                                 <DataGrid ItemsSource="{Binding NewFiles}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" MinHeight="220">
                                     <DataGrid.Columns>
@@ -629,15 +635,14 @@
                                                 </DataTemplate>
                                             </DataGridTemplateColumn.HeaderTemplate>
                                         </DataGridTemplateColumn>
-                                        <DataGridTemplateColumn Header="Name" CellTemplate="{StaticResource PreviewNameCellTemplate}" Width="400" />
+                                        <DataGridTemplateColumn Header="Source File" CellTemplate="{StaticResource PreviewNameCellTemplate}" Width="400" />
                                         <DataGridTemplateColumn Header="Sync action" CellTemplate="{StaticResource PreviewProgressCellTemplate}" Width="140" />
                                         <DataGridTemplateColumn Header="Transfer speed" CellTemplate="{StaticResource PreviewTransferSpeedCellTemplate}" Width="110" />
+                                        <DataGridTemplateColumn Header="Destination File" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
                                         <DataGridTextColumn Header="Source size" Binding="{Binding SourceSize}" Width="95" />
-                                        <DataGridTextColumn Header="Source modified" Binding="{Binding SourceModified}" Width="150" />
-                                        <DataGridTextColumn Header="Direction" Binding="{Binding Direction}" Width="80" />
-                                        <DataGridTemplateColumn Header="Destination path" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
                                         <DataGridTextColumn Header="Destination size" Binding="{Binding DestinationSize}" Width="95" />
-                                        <DataGridTextColumn Header="Destination modified" Binding="{Binding DestinationModified}" Width="150" />
+                                        <DataGridTextColumn Header="Source Last Modified" Binding="{Binding SourceModified}" Width="150" />
+                                        <DataGridTextColumn Header="Destination Last Modified" Binding="{Binding DestinationModified}" Width="150" />
                                         <DataGridTemplateColumn Header="Status" CellTemplate="{StaticResource PreviewStatusCellTemplate}" Width="140" />
                                         <DataGridTemplateColumn Header="Action" CellTemplate="{StaticResource PreviewActionCellTemplate}" Width="210" />
                                     </DataGrid.Columns>
@@ -645,7 +650,13 @@
                             </TabItem>
                             <TabItem>
                                 <TabItem.Header>
-                                    <TextBlock Text="{Binding ChangedFilesCount, StringFormat=Changed ({0})}" />
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="✎"
+                                                   Margin="0,0,6,0"
+                                                   FontWeight="Bold"
+                                                   Foreground="#B87D00" />
+                                        <TextBlock Text="{Binding ChangedFilesCount, StringFormat=Changed ({0})}" />
+                                    </StackPanel>
                                 </TabItem.Header>
                                 <DataGrid ItemsSource="{Binding ChangedFiles}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" MinHeight="220">
                                     <DataGrid.Columns>
@@ -659,15 +670,14 @@
                                                 </DataTemplate>
                                             </DataGridTemplateColumn.HeaderTemplate>
                                         </DataGridTemplateColumn>
-                                        <DataGridTemplateColumn Header="Name" CellTemplate="{StaticResource PreviewNameCellTemplate}" Width="400" />
+                                        <DataGridTemplateColumn Header="Source File" CellTemplate="{StaticResource PreviewNameCellTemplate}" Width="400" />
                                         <DataGridTemplateColumn Header="Sync action" CellTemplate="{StaticResource PreviewProgressCellTemplate}" Width="140" />
                                         <DataGridTemplateColumn Header="Transfer speed" CellTemplate="{StaticResource PreviewTransferSpeedCellTemplate}" Width="110" />
+                                        <DataGridTemplateColumn Header="Destination File" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
                                         <DataGridTextColumn Header="Source size" Binding="{Binding SourceSize}" Width="95" />
-                                        <DataGridTextColumn Header="Source modified" Binding="{Binding SourceModified}" Width="150" />
-                                        <DataGridTextColumn Header="Direction" Binding="{Binding Direction}" Width="80" />
-                                        <DataGridTemplateColumn Header="Destination path" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
                                         <DataGridTextColumn Header="Destination size" Binding="{Binding DestinationSize}" Width="95" />
-                                        <DataGridTextColumn Header="Destination modified" Binding="{Binding DestinationModified}" Width="150" />
+                                        <DataGridTextColumn Header="Source Last Modified" Binding="{Binding SourceModified}" Width="150" />
+                                        <DataGridTextColumn Header="Destination Last Modified" Binding="{Binding DestinationModified}" Width="150" />
                                         <DataGridTemplateColumn Header="Status" CellTemplate="{StaticResource PreviewStatusCellTemplate}" Width="140" />
                                         <DataGridTemplateColumn Header="Action" CellTemplate="{StaticResource PreviewActionCellTemplate}" Width="210" />
                                     </DataGrid.Columns>
@@ -675,7 +685,13 @@
                             </TabItem>
                             <TabItem>
                                 <TabItem.Header>
-                                    <TextBlock Text="{Binding DeletedFilesCount, StringFormat=Deleted ({0})}" />
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="×"
+                                                   Margin="0,0,6,0"
+                                                   FontWeight="Bold"
+                                                   Foreground="#C42B1C" />
+                                        <TextBlock Text="{Binding DeletedFilesCount, StringFormat=Deleted ({0})}" />
+                                    </StackPanel>
                                 </TabItem.Header>
                                 <DataGrid ItemsSource="{Binding DeletedFiles}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" MinHeight="220">
                                     <DataGrid.Columns>
@@ -689,15 +705,14 @@
                                                 </DataTemplate>
                                             </DataGridTemplateColumn.HeaderTemplate>
                                         </DataGridTemplateColumn>
-                                        <DataGridTemplateColumn Header="Name" CellTemplate="{StaticResource PreviewNameCellTemplate}" Width="400" />
+                                        <DataGridTemplateColumn Header="Source File" CellTemplate="{StaticResource PreviewNameCellTemplate}" Width="400" />
                                         <DataGridTemplateColumn Header="Sync action" CellTemplate="{StaticResource PreviewProgressCellTemplate}" Width="140" />
                                         <DataGridTemplateColumn Header="Transfer speed" CellTemplate="{StaticResource PreviewTransferSpeedCellTemplate}" Width="110" />
+                                        <DataGridTemplateColumn Header="Destination File" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
                                         <DataGridTextColumn Header="Source size" Binding="{Binding SourceSize}" Width="95" />
-                                        <DataGridTextColumn Header="Source modified" Binding="{Binding SourceModified}" Width="150" />
-                                        <DataGridTextColumn Header="Direction" Binding="{Binding Direction}" Width="80" />
-                                        <DataGridTemplateColumn Header="Destination path" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
                                         <DataGridTextColumn Header="Destination size" Binding="{Binding DestinationSize}" Width="95" />
-                                        <DataGridTextColumn Header="Destination modified" Binding="{Binding DestinationModified}" Width="150" />
+                                        <DataGridTextColumn Header="Source Last Modified" Binding="{Binding SourceModified}" Width="150" />
+                                        <DataGridTextColumn Header="Destination Last Modified" Binding="{Binding DestinationModified}" Width="150" />
                                         <DataGridTemplateColumn Header="Status" CellTemplate="{StaticResource PreviewStatusCellTemplate}" Width="140" />
                                         <DataGridTemplateColumn Header="Action" CellTemplate="{StaticResource PreviewActionCellTemplate}" Width="210" />
                                     </DataGrid.Columns>
@@ -705,7 +720,13 @@
                             </TabItem>
                             <TabItem>
                                 <TabItem.Header>
-                                    <TextBlock Text="{Binding UnchangedFilesCount, StringFormat=Unchanged ({0})}" />
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="||"
+                                                   Margin="0,0,6,0"
+                                                   FontWeight="Bold"
+                                                   Foreground="#626262" />
+                                        <TextBlock Text="{Binding UnchangedFilesCount, StringFormat=Unchanged ({0})}" />
+                                    </StackPanel>
                                 </TabItem.Header>
                                 <DataGrid ItemsSource="{Binding UnchangedFiles}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" MinHeight="220">
                                     <DataGrid.Columns>
@@ -719,15 +740,14 @@
                                                 </DataTemplate>
                                             </DataGridTemplateColumn.HeaderTemplate>
                                         </DataGridTemplateColumn>
-                                        <DataGridTemplateColumn Header="Name" CellTemplate="{StaticResource PreviewNameCellTemplate}" Width="400" />
+                                        <DataGridTemplateColumn Header="Source File" CellTemplate="{StaticResource PreviewNameCellTemplate}" Width="400" />
                                         <DataGridTemplateColumn Header="Sync action" CellTemplate="{StaticResource PreviewProgressCellTemplate}" Width="140" />
                                         <DataGridTemplateColumn Header="Transfer speed" CellTemplate="{StaticResource PreviewTransferSpeedCellTemplate}" Width="110" />
+                                        <DataGridTemplateColumn Header="Destination File" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
                                         <DataGridTextColumn Header="Source size" Binding="{Binding SourceSize}" Width="95" />
-                                        <DataGridTextColumn Header="Source modified" Binding="{Binding SourceModified}" Width="150" />
-                                        <DataGridTextColumn Header="Direction" Binding="{Binding Direction}" Width="80" />
-                                        <DataGridTemplateColumn Header="Destination path" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
                                         <DataGridTextColumn Header="Destination size" Binding="{Binding DestinationSize}" Width="95" />
-                                        <DataGridTextColumn Header="Destination modified" Binding="{Binding DestinationModified}" Width="150" />
+                                        <DataGridTextColumn Header="Source Last Modified" Binding="{Binding SourceModified}" Width="150" />
+                                        <DataGridTextColumn Header="Destination Last Modified" Binding="{Binding DestinationModified}" Width="150" />
                                         <DataGridTemplateColumn Header="Status" CellTemplate="{StaticResource PreviewStatusCellTemplate}" Width="140" />
                                         <DataGridTemplateColumn Header="Action" CellTemplate="{StaticResource PreviewActionCellTemplate}" Width="210" />
                                     </DataGrid.Columns>
@@ -735,7 +755,13 @@
                             </TabItem>
                             <TabItem>
                                 <TabItem.Header>
-                                    <TextBlock Text="{Binding AllFilesCount, StringFormat=All ({0})}" />
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="•"
+                                                   Margin="0,0,6,0"
+                                                   FontWeight="Bold"
+                                                   Foreground="#5A5A5A" />
+                                        <TextBlock Text="{Binding AllFilesCount, StringFormat=All ({0})}" />
+                                    </StackPanel>
                                 </TabItem.Header>
                                 <DataGrid ItemsSource="{Binding AllFiles}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" MinHeight="220">
                                     <DataGrid.Columns>
@@ -749,15 +775,14 @@
                                                 </DataTemplate>
                                             </DataGridTemplateColumn.HeaderTemplate>
                                         </DataGridTemplateColumn>
-                                        <DataGridTemplateColumn Header="Name" CellTemplate="{StaticResource PreviewNameCellTemplate}" Width="400" />
+                                        <DataGridTemplateColumn Header="Source File" CellTemplate="{StaticResource PreviewNameCellTemplate}" Width="400" />
                                         <DataGridTemplateColumn Header="Sync action" CellTemplate="{StaticResource PreviewProgressCellTemplate}" Width="140" />
                                         <DataGridTemplateColumn Header="Transfer speed" CellTemplate="{StaticResource PreviewTransferSpeedCellTemplate}" Width="110" />
+                                        <DataGridTemplateColumn Header="Destination File" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
                                         <DataGridTextColumn Header="Source size" Binding="{Binding SourceSize}" Width="95" />
-                                        <DataGridTextColumn Header="Source modified" Binding="{Binding SourceModified}" Width="150" />
-                                        <DataGridTextColumn Header="Direction" Binding="{Binding Direction}" Width="80" />
-                                        <DataGridTemplateColumn Header="Destination path" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
                                         <DataGridTextColumn Header="Destination size" Binding="{Binding DestinationSize}" Width="95" />
-                                        <DataGridTextColumn Header="Destination modified" Binding="{Binding DestinationModified}" Width="150" />
+                                        <DataGridTextColumn Header="Source Last Modified" Binding="{Binding SourceModified}" Width="150" />
+                                        <DataGridTextColumn Header="Destination Last Modified" Binding="{Binding DestinationModified}" Width="150" />
                                         <DataGridTemplateColumn Header="Status" CellTemplate="{StaticResource PreviewStatusCellTemplate}" Width="140" />
                                         <DataGridTemplateColumn Header="Action" CellTemplate="{StaticResource PreviewActionCellTemplate}" Width="210" />
                                     </DataGrid.Columns>
