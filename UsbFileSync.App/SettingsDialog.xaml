@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Application Settings"
         Width="360"
-    Height="220"
+        Height="270"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
         Background="#F3F3F3">
@@ -23,7 +23,7 @@
                      HorizontalAlignment="Left"
                      VerticalContentAlignment="Center" />
             <TextBlock Margin="0,8,0,0"
-                       Text="Enter 0 to let UsbFileSync automatically adjust parallel copy operations while syncing."
+                       Text="Enter 0 to let UsbFileSync automatically assess and use the best amount of parallelism while syncing."
                        TextWrapping="Wrap"
                        Foreground="#616161" />
         </StackPanel>
