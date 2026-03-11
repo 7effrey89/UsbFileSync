@@ -8,15 +8,15 @@ namespace UsbFileSync.App.ViewModels;
 
 public sealed class SyncPreviewRowViewModel : ObservableObject
 {
-    private static readonly System.Windows.Media.Brush PendingBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(146, 146, 146));
-    private static readonly System.Windows.Media.Brush InProgressBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(15, 108, 189));
-    private static readonly System.Windows.Media.Brush CompletedBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(24, 142, 76));
-    private static readonly System.Windows.Media.Brush PausedBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(214, 140, 0));
-    private static readonly System.Windows.Media.Brush NewStatusBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(18, 140, 68));
-    private static readonly System.Windows.Media.Brush DeletedStatusBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(196, 43, 28));
-    private static readonly System.Windows.Media.Brush ModifiedStatusBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(184, 125, 0));
-    private static readonly System.Windows.Media.Brush RenamedStatusBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(15, 108, 189));
-    private static readonly System.Windows.Media.Brush UnchangedStatusBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(98, 98, 98));
+    private static readonly System.Windows.Media.Brush PendingBrush = CreateFrozenBrush(146, 146, 146);
+    private static readonly System.Windows.Media.Brush InProgressBrush = CreateFrozenBrush(15, 108, 189);
+    private static readonly System.Windows.Media.Brush CompletedBrush = CreateFrozenBrush(24, 142, 76);
+    private static readonly System.Windows.Media.Brush PausedBrush = CreateFrozenBrush(214, 140, 0);
+    private static readonly System.Windows.Media.Brush NewStatusBrush = CreateFrozenBrush(18, 140, 68);
+    private static readonly System.Windows.Media.Brush DeletedStatusBrush = CreateFrozenBrush(196, 43, 28);
+    private static readonly System.Windows.Media.Brush ModifiedStatusBrush = CreateFrozenBrush(184, 125, 0);
+    private static readonly System.Windows.Media.Brush RenamedStatusBrush = CreateFrozenBrush(15, 108, 189);
+    private static readonly System.Windows.Media.Brush UnchangedStatusBrush = CreateFrozenBrush(98, 98, 98);
 
     private readonly SyncActionType? _actionType;
     private readonly bool _hasPlannedAction;
@@ -136,6 +136,8 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
         _ => UnchangedStatusBrush,
     };
 
+    public System.Windows.Media.Brush ActionBadgeForegroundBrush => GetAccessibleForegroundBrush(ActionBadgeBrush);
+
     public string StatusGlyph => Status switch
     {
         "New File" => "+",
@@ -205,6 +207,8 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
         PreviewTransferState.Paused => PausedBrush,
         _ => PendingBrush,
     };
+
+    public System.Windows.Media.Brush ProgressStateForegroundBrush => GetAccessibleForegroundBrush(ProgressStateBrush);
 
     public void MarkInProgress(double progressValue, long bytesTransferred, DateTime nowUtc)
     {
@@ -302,6 +306,36 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
         var elapsedSeconds = Math.Max((nowUtc - _transferStartedAtUtc.Value).TotalSeconds, 0.1d);
         var bytesPerSecond = bytesTransferred / elapsedSeconds;
         return $"{FormatSize((long)Math.Round(bytesPerSecond))}/s";
+    }
+
+    private static System.Windows.Media.Brush CreateFrozenBrush(byte red, byte green, byte blue)
+    {
+        var brush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(red, green, blue));
+        brush.Freeze();
+        return brush;
+    }
+
+    private static System.Windows.Media.Brush GetAccessibleForegroundBrush(System.Windows.Media.Brush backgroundBrush)
+    {
+        if (backgroundBrush is not SolidColorBrush solidColorBrush)
+        {
+            return System.Windows.Media.Brushes.White;
+        }
+
+        var luminance =
+            (0.2126 * ConvertChannel(solidColorBrush.Color.R)) +
+            (0.7152 * ConvertChannel(solidColorBrush.Color.G)) +
+            (0.0722 * ConvertChannel(solidColorBrush.Color.B));
+
+        return luminance > 0.35 ? System.Windows.Media.Brushes.Black : System.Windows.Media.Brushes.White;
+    }
+
+    private static double ConvertChannel(byte channel)
+    {
+        var normalizedChannel = channel / 255d;
+        return normalizedChannel <= 0.03928d
+            ? normalizedChannel / 12.92d
+            : Math.Pow((normalizedChannel + 0.055d) / 1.055d, 2.4d);
     }
 
     private enum PreviewTransferState

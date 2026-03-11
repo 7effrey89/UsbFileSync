@@ -364,13 +364,13 @@
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="{Binding ProgressStateGlyph}"
                                        FontWeight="Bold"
-                                       Foreground="White"
+                                       Foreground="{Binding ProgressStateForegroundBrush}"
                                        VerticalAlignment="Center" />
                             <TextBlock Margin="5,0,0,0"
                                        Text="{Binding ProgressStateText}"
                                        FontSize="11"
                                        FontWeight="SemiBold"
-                                       Foreground="White"
+                                       Foreground="{Binding ProgressStateForegroundBrush}"
                                        VerticalAlignment="Center" />
                         </StackPanel>
                     </Border>
@@ -427,7 +427,7 @@
                     <Polygon Points="0,14 12,0 108,0 120,14 108,28 12,28"
                              Fill="{Binding ActionBadgeBrush}" />
                     <TextBlock Text="{Binding ActionBadgeText}"
-                               Foreground="White"
+                               Foreground="{Binding ActionBadgeForegroundBrush}"
                                FontSize="12"
                                FontWeight="Bold"
                                VerticalAlignment="Center"
