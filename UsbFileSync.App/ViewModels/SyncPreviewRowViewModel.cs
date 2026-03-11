@@ -8,9 +8,12 @@ namespace UsbFileSync.App.ViewModels;
 
 public sealed class SyncPreviewRowViewModel : ObservableObject
 {
-    private const string RightChevronGeometry = "M0,14 L12,0 L108,0 L120,14 L108,28 L12,28 Z";
-    private const string LeftChevronGeometry = "M120,14 L108,0 L12,0 L0,14 L12,28 L108,28 Z";
+    private const string DiamondGeometry = "M60,0 L120,14 L60,28 L0,14 Z";
     private const string RectangleGeometry = "M0,0 L120,0 L120,28 L0,28 Z";
+    private const double SyncActionVisualWidth = 120d;
+
+    private static readonly Geometry DiamondGeometryShape = CreateFrozenGeometry(DiamondGeometry);
+    private static readonly Geometry RectangleGeometryShape = CreateFrozenGeometry(RectangleGeometry);
 
     private static readonly System.Windows.Media.Brush DefaultPathBrush = CreateFrozenBrush(32, 32, 32);
     private static readonly System.Windows.Media.Brush PendingBrush = CreateFrozenBrush(146, 146, 146);
@@ -184,11 +187,19 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
     {
         null => RectangleGeometry,
         SyncActionType.NoOp => RectangleGeometry,
-        _ when IsSourceAction => LeftChevronGeometry,
-        _ => RightChevronGeometry,
+        _ => DiamondGeometry,
+    };
+
+    public Geometry SyncActionGeometry => _actionType switch
+    {
+        null => RectangleGeometryShape,
+        SyncActionType.NoOp => RectangleGeometryShape,
+        _ => DiamondGeometryShape,
     };
 
     public double SyncActionProgressScale => Math.Clamp(ProgressValue / 100d, 0d, 1d);
+
+    public double SyncActionFillWidth => SyncActionProgressScale * SyncActionVisualWidth;
 
     public System.Windows.Media.Brush SyncActionBrush => StatusBrush;
 
@@ -240,6 +251,7 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
             {
                 RaisePropertyChanged(nameof(ProgressText));
                 RaisePropertyChanged(nameof(SyncActionProgressScale));
+                RaisePropertyChanged(nameof(SyncActionFillWidth));
             }
         }
     }
@@ -398,6 +410,13 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
         var brush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(red, green, blue));
         brush.Freeze();
         return brush;
+    }
+
+    private static Geometry CreateFrozenGeometry(string data)
+    {
+        var geometry = Geometry.Parse(data);
+        geometry.Freeze();
+        return geometry;
     }
 
     private static System.Windows.Media.Brush GetAccessibleForegroundBrush(System.Windows.Media.Brush backgroundBrush)

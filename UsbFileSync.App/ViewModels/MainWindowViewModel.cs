@@ -559,7 +559,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         await RunBusyOperationAsync(async () =>
         {
             var configuration = CreateConfiguration();
-            if (PlannedActions.Count == 0 && AllFiles.Count == 0)
+            if (PlannedActions.Count == 0)
             {
                 var initialActions = await _syncService.AnalyzeChangesAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(true);
                 var initialPreview = await _syncService.BuildPreviewAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(true);
@@ -630,11 +630,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             });
 
             var result = await _syncService.ExecutePlannedAsync(configuration, actions, progress, cancellationTokenSource.Token).ConfigureAwait(true);
-            var refreshedActions = await _syncService.AnalyzeChangesAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(true);
-            var refreshedPreview = await _syncService.BuildPreviewAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(true);
-            ReplaceActions(refreshedActions);
-            ReplacePreview(refreshedPreview);
-            ReplaceQueue(GetSelectedActions());
             var verifiedCopyCount = configuration.VerifyChecksums
                 ? actions.Count(action => action.Type is
                     SyncActionType.CopyToDestination or
@@ -656,6 +651,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
             CurrentTransferDetails = QueueSummary;
             AddLog("Sync", StatusMessage);
+            PlannedActions.Clear();
+            ReplaceQueue(Array.Empty<SyncAction>());
         }, cancellationTokenSource.Token).ConfigureAwait(true);
 
         if (ReferenceEquals(_syncCancellationTokenSource, cancellationTokenSource))

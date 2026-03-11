@@ -205,6 +205,7 @@ public sealed class SyncPreviewRowViewModelTests
         Assert.Equal("Transferring", row.ProgressStateText);
         Assert.Equal("42%", row.ProgressText);
         Assert.EndsWith("/s", row.TransferSpeedText);
+        Assert.Equal(50.4, row.SyncActionFillWidth);
 
         row.MarkPaused();
         Assert.Equal("Paused", row.ProgressStateText);
@@ -216,6 +217,7 @@ public sealed class SyncPreviewRowViewModelTests
         Assert.Equal("Done", row.ProgressStateText);
         Assert.Equal("Done", row.TransferSpeedText);
         Assert.Equal("Added", row.SyncActionText);
+        Assert.Equal(120, row.SyncActionFillWidth);
     }
 
     [Theory]

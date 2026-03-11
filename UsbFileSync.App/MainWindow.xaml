@@ -384,32 +384,26 @@
             <Viewbox HorizontalAlignment="Left"
                      Stretch="Uniform"
                      StretchDirection="DownOnly">
-                <Grid Width="120" Height="28">
-                    <Path Data="{Binding SyncActionShapeData}"
-                          Fill="{Binding SyncActionTrackFillBrush}"
+                <Grid Width="120" Height="28" Clip="{Binding SyncActionGeometry}">
+                    <Rectangle Fill="{Binding SyncActionTrackFillBrush}" />
+                    <Rectangle Width="{Binding SyncActionFillWidth}"
+                               Fill="{Binding SyncActionBrush}"
+                               HorizontalAlignment="Left">
+                        <Rectangle.Style>
+                            <Style TargetType="Rectangle">
+                                <Setter Property="HorizontalAlignment" Value="Left" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsSourceAction}" Value="True">
+                                        <Setter Property="HorizontalAlignment" Value="Right" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Rectangle.Style>
+                    </Rectangle>
+                    <Path Data="{Binding SyncActionGeometry}"
                           Stroke="#D7D7D7"
-                          StrokeThickness="1" />
-                    <Grid Clip="{Binding SyncActionShapeData}">
-                        <Border Background="{Binding SyncActionBrush}">
-                            <Border.Style>
-                                <Style TargetType="Border">
-                                    <Setter Property="HorizontalAlignment" Value="Left" />
-                                    <Setter Property="RenderTransformOrigin" Value="0,0.5" />
-                                    <Setter Property="RenderTransform">
-                                        <Setter.Value>
-                                            <ScaleTransform ScaleX="{Binding SyncActionProgressScale}" />
-                                        </Setter.Value>
-                                    </Setter>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsSourceAction}" Value="True">
-                                            <Setter Property="HorizontalAlignment" Value="Right" />
-                                            <Setter Property="RenderTransformOrigin" Value="1,0.5" />
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Border.Style>
-                        </Border>
-                    </Grid>
+                          StrokeThickness="1"
+                          Fill="Transparent" />
                     <TextBlock Text="{Binding SyncActionText}"
                                FontSize="12"
                                FontWeight="Bold"
