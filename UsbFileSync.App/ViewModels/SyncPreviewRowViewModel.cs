@@ -8,11 +8,13 @@ namespace UsbFileSync.App.ViewModels;
 
 public sealed class SyncPreviewRowViewModel : ObservableObject
 {
-    private const string DiamondGeometry = "M60,0 L120,14 L60,28 L0,14 Z";
+    private const string RightChevronGeometry = "M0,14 L12,0 L108,0 L120,14 L108,28 L12,28 Z";
+    private const string LeftChevronGeometry = "M120,14 L108,0 L12,0 L0,14 L12,28 L108,28 Z";
     private const string RectangleGeometry = "M0,0 L120,0 L120,28 L0,28 Z";
     private const double SyncActionVisualWidth = 120d;
 
-    private static readonly Geometry DiamondGeometryShape = CreateFrozenGeometry(DiamondGeometry);
+    private static readonly Geometry RightChevronGeometryShape = CreateFrozenGeometry(RightChevronGeometry);
+    private static readonly Geometry LeftChevronGeometryShape = CreateFrozenGeometry(LeftChevronGeometry);
     private static readonly Geometry RectangleGeometryShape = CreateFrozenGeometry(RectangleGeometry);
 
     private static readonly System.Windows.Media.Brush DefaultPathBrush = CreateFrozenBrush(32, 32, 32);
@@ -187,8 +189,11 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
     {
         null => RectangleGeometryShape,
         SyncActionType.NoOp => RectangleGeometryShape,
-        _ => DiamondGeometryShape,
+        _ when IsSourceAction => LeftChevronGeometryShape,
+        _ => RightChevronGeometryShape,
     };
+
+    public string SyncActionPathData => SyncActionGeometry.ToString(CultureInfo.InvariantCulture);
 
     public double SyncActionProgressScale => Math.Clamp(ProgressValue / 100d, 0d, 1d);
 

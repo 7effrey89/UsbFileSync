@@ -184,6 +184,46 @@ public sealed class SyncPreviewRowViewModelTests
     }
 
     [Fact]
+    public void SyncActionChevronMatchesDirection()
+    {
+        var destinationRow = new SyncPreviewRowViewModel(new SyncPreviewItem(
+            RelativePath: "to-destination.txt",
+            IsDirectory: false,
+            SourceFullPath: @"F:\incoming.txt",
+            SourceLength: null,
+            SourceLastWriteTimeUtc: null,
+            DestinationFullPath: @"E:\incoming.txt",
+            DestinationLength: 20,
+            DestinationLastWriteTimeUtc: DateTime.UtcNow,
+            Direction: "->",
+            Status: "New File",
+            Category: SyncPreviewCategory.NewFiles,
+            PlannedActionType: SyncActionType.CopyToDestination), new StubFileIconProvider(null));
+
+        Assert.False(destinationRow.IsSourceAction);
+        Assert.True(destinationRow.IsDestinationAction);
+        Assert.Equal("M0,14 L12,0 L108,0 L120,14 L108,28 L12,28 Z", destinationRow.SyncActionPathData);
+
+        var sourceRow = new SyncPreviewRowViewModel(new SyncPreviewItem(
+            RelativePath: "to-source.txt",
+            IsDirectory: false,
+            SourceFullPath: @"F:\incoming.txt",
+            SourceLength: null,
+            SourceLastWriteTimeUtc: null,
+            DestinationFullPath: @"E:\incoming.txt",
+            DestinationLength: 20,
+            DestinationLastWriteTimeUtc: DateTime.UtcNow,
+            Direction: "<-",
+            Status: "New File",
+            Category: SyncPreviewCategory.NewFiles,
+            PlannedActionType: SyncActionType.CopyToSource), new StubFileIconProvider(null));
+
+        Assert.True(sourceRow.IsSourceAction);
+        Assert.False(sourceRow.IsDestinationAction);
+        Assert.Equal("M120,14 L108,0 L12,0 L0,14 L12,28 L108,28 Z", sourceRow.SyncActionPathData);
+    }
+
+    [Fact]
     public void ProgressMethodsUpdateDisplayedState()
     {
         var row = new SyncPreviewRowViewModel(new SyncPreviewItem(
