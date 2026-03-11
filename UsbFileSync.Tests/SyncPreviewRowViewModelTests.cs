@@ -41,6 +41,7 @@ public sealed class SyncPreviewRowViewModelTests
         AssertBrushColor(row.DestinationPathBrush, 18, 140, 68);
         AssertBrushColor(row.SyncActionTrackFillBrush, 198, 239, 206);
         AssertBrushColor(row.SyncActionBrush, 78, 167, 46);
+        AssertBrushColor(row.SyncActionTipBrush, 56, 118, 29);
         AssertBrushColor(row.SyncActionTextBrush, 0, 97, 0);
         AssertTransparentBrush(row.SyncActionStrokeBrush);
         Assert.Equal("Pending", row.TransferSpeedText);
@@ -119,6 +120,7 @@ public sealed class SyncPreviewRowViewModelTests
         AssertTransparentBrush(row.SyncActionBrush);
         AssertTransparentBrush(row.SyncActionTrackFillBrush);
         AssertTransparentBrush(row.SyncActionStrokeBrush);
+        AssertTransparentBrush(row.SyncActionTipBrush);
         Assert.Equal("On hold", row.TransferSpeedText);
         Assert.Equal("Done", row.ProgressStateText);
     }
@@ -242,6 +244,7 @@ public sealed class SyncPreviewRowViewModelTests
         Assert.False(destinationRow.IsSourceAction);
         Assert.True(destinationRow.IsDestinationAction);
         Assert.Equal("M0,2L108,2 120,14 108,26 0,26 12,14z", destinationRow.SyncActionPathData);
+        Assert.Equal("M108,2L120,14 108,26", destinationRow.SyncActionTipBorderPathData);
 
         var sourceRow = new SyncPreviewRowViewModel(new SyncPreviewItem(
             RelativePath: "to-source.txt",
@@ -260,6 +263,7 @@ public sealed class SyncPreviewRowViewModelTests
         Assert.True(sourceRow.IsSourceAction);
         Assert.False(sourceRow.IsDestinationAction);
         Assert.Equal("M120,2L12,2 0,14 12,26 120,26 108,14z", sourceRow.SyncActionPathData);
+        Assert.Equal("M12,2L0,14 12,26", sourceRow.SyncActionTipBorderPathData);
     }
 
     [Fact]
@@ -299,6 +303,7 @@ public sealed class SyncPreviewRowViewModelTests
         Assert.Equal("Added", row.SyncActionText);
         Assert.Equal("ADDED", row.SyncActionDisplayText);
         AssertBrushColor(row.SyncActionBrush, 78, 167, 46);
+        AssertBrushColor(row.SyncActionTipBrush, 56, 118, 29);
         AssertWhiteBrush(row.SyncActionTextBrush);
         Assert.Equal(120, row.SyncActionFillWidth);
     }

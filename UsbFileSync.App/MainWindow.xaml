@@ -479,6 +479,13 @@
                           Stroke="{Binding SyncActionStrokeBrush}"
                           StrokeThickness="1"
                           Fill="Transparent" />
+                      <Path Data="{Binding SyncActionTipBorderGeometry}"
+                          Stroke="{Binding SyncActionTipBrush}"
+                          StrokeThickness="2"
+                          StrokeStartLineCap="Round"
+                          StrokeEndLineCap="Round"
+                          StrokeLineJoin="Round"
+                          Fill="Transparent" />
                     <TextBlock Text="{Binding SyncActionDisplayText}"
                                FontSize="12"
                                FontWeight="Bold"
