@@ -1,5 +1,8 @@
 using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Services;
+using System.Security.Cryptography;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace UsbFileSync.Tests;
 
@@ -103,6 +106,27 @@ public sealed class SyncServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task AnalyzeChangesAsync_OneWayIgnoresEquivalentTwoSecondTimestampDrift()
+    {
+        var source = CreateDirectory("source");
+        var destination = CreateDirectory("destination");
+        var sourceTimestamp = new DateTime(2024, 7, 26, 15, 16, 40, DateTimeKind.Utc);
+        var destinationTimestamp = sourceTimestamp.AddSeconds(-2);
+        WriteFile(source, "shared.txt", "same content", sourceTimestamp);
+        WriteFile(destination, "shared.txt", "same content", destinationTimestamp);
+
+        var service = new SyncService();
+        var actions = await service.AnalyzeChangesAsync(new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.OneWay,
+        });
+
+        Assert.Empty(actions);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_AppliesPlannedOperations()
     {
         var source = CreateDirectory("source");
@@ -172,6 +196,7 @@ public sealed class SyncServiceTests : IDisposable
         var source = CreateDirectory("source");
         var destination = CreateDirectory("destination");
         WriteFile(source, "user.txt", "payload", new DateTime(2024, 4, 1, 0, 0, 0, DateTimeKind.Utc));
+        WriteFile(source, Path.Combine(".sync-metadata", "file-index.json"), "{}", new DateTime(2024, 4, 1, 0, 0, 0, DateTimeKind.Utc));
         WriteFile(source, Path.Combine("System Volume Information", "IndexerVolumeGuid"), "metadata", new DateTime(2024, 4, 1, 0, 0, 0, DateTimeKind.Utc));
 
         var service = new SyncService();
@@ -185,6 +210,154 @@ public sealed class SyncServiceTests : IDisposable
         var action = Assert.Single(actions);
         Assert.Equal(SyncActionType.CopyToDestination, action.Type);
         Assert.Equal("user.txt", action.RelativePath);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_TwoWayPersistsMetadataAndPropagatesTrackedDeletion()
+    {
+        var source = CreateDirectory("source");
+        var destination = CreateDirectory("destination");
+        WriteFile(source, "shared.txt", "same", new DateTime(2024, 6, 1, 0, 0, 0, DateTimeKind.Utc));
+        WriteFile(destination, "shared.txt", "same", new DateTime(2024, 6, 1, 0, 0, 0, DateTimeKind.Utc));
+
+        var service = new SyncService();
+        var configuration = new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.TwoWay,
+        };
+
+        var initialResult = await service.ExecuteAsync(configuration);
+
+        Assert.Equal(0, initialResult.AppliedOperations);
+
+        using var sourceMetadata = await LoadMetadataAsync(source);
+        using var destinationMetadata = await LoadMetadataAsync(destination);
+        var sourceRootId = sourceMetadata.RootElement.GetProperty("RootId").GetString();
+        var destinationRootId = destinationMetadata.RootElement.GetProperty("RootId").GetString();
+        Assert.Equal(source, sourceMetadata.RootElement.GetProperty("RootName").GetString());
+        Assert.Equal(destination, destinationMetadata.RootElement.GetProperty("RootName").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(sourceRootId));
+        Assert.False(string.IsNullOrWhiteSpace(destinationRootId));
+
+        var synchronizedEntry = sourceMetadata.RootElement
+            .GetProperty("PeerStates")
+            .GetProperty(destinationRootId!)
+            .GetProperty("Entries")
+            .GetProperty("shared.txt");
+        Assert.Equal(destination, sourceMetadata.RootElement
+            .GetProperty("PeerStates")
+            .GetProperty(destinationRootId!)
+            .GetProperty("PeerRootName")
+            .GetString());
+        Assert.Equal(source, destinationMetadata.RootElement
+            .GetProperty("PeerStates")
+            .GetProperty(sourceRootId!)
+            .GetProperty("PeerRootName")
+            .GetString());
+        Assert.False(synchronizedEntry.GetProperty("IsDeleted").GetBoolean());
+        Assert.False(string.IsNullOrWhiteSpace(synchronizedEntry.GetProperty("LastSyncedByRootId").GetString()));
+        Assert.False(string.IsNullOrWhiteSpace(synchronizedEntry.GetProperty("LastSyncedByRootName").GetString()));
+
+        File.Delete(Path.Combine(destination, "shared.txt"));
+
+        var actions = await service.AnalyzeChangesAsync(configuration);
+
+        var action = Assert.Single(actions);
+        Assert.Equal(SyncActionType.DeleteFromSource, action.Type);
+
+        await service.ExecutePlannedAsync(configuration, actions);
+
+        Assert.False(File.Exists(Path.Combine(source, "shared.txt")));
+        Assert.False(File.Exists(Path.Combine(destination, "shared.txt")));
+
+        using var updatedSourceMetadata = await LoadMetadataAsync(source);
+        var deletedEntry = updatedSourceMetadata.RootElement
+            .GetProperty("PeerStates")
+            .GetProperty(destinationRootId!)
+            .GetProperty("Entries")
+            .GetProperty("shared.txt");
+
+        Assert.True(deletedEntry.GetProperty("IsDeleted").GetBoolean());
+        Assert.Equal(destinationRootId, deletedEntry.GetProperty("LastSyncedByRootId").GetString());
+        Assert.Equal(destination, deletedEntry.GetProperty("LastSyncedByRootName").GetString());
+    }
+
+    [Fact]
+    public async Task AnalyzeChangesAsync_TwoWayIgnoresEquivalentTwoSecondTimestampDriftAfterMetadataBaseline()
+    {
+        var source = CreateDirectory("source");
+        var destination = CreateDirectory("destination");
+        var timestamp = new DateTime(2024, 6, 1, 0, 0, 0, DateTimeKind.Utc);
+        WriteFile(source, "shared.txt", "same", timestamp);
+        WriteFile(destination, "shared.txt", "same", timestamp);
+
+        var service = new SyncService();
+        var configuration = new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.TwoWay,
+        };
+
+        await service.ExecuteAsync(configuration);
+
+        File.SetLastWriteTimeUtc(Path.Combine(destination, "shared.txt"), timestamp.AddSeconds(-2));
+
+        var actions = await service.AnalyzeChangesAsync(configuration);
+
+        Assert.Empty(actions);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_OneWayPersistsMetadataThatTwoWayCanReuse()
+    {
+        var source = CreateDirectory("source");
+        var destination = CreateDirectory("destination");
+        WriteFile(source, "shared.txt", "same", new DateTime(2024, 6, 1, 0, 0, 0, DateTimeKind.Utc));
+
+        var service = new SyncService();
+
+        var oneWayConfiguration = new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.OneWay,
+        };
+
+        var result = await service.ExecuteAsync(oneWayConfiguration);
+
+        Assert.False(result.IsDryRun);
+        Assert.Equal(1, result.AppliedOperations);
+
+        using var sourceMetadata = await LoadMetadataAsync(source);
+        using var destinationMetadata = await LoadMetadataAsync(destination);
+        var sourceRootId = sourceMetadata.RootElement.GetProperty("RootId").GetString();
+        var destinationRootId = destinationMetadata.RootElement.GetProperty("RootId").GetString();
+        Assert.Equal(source, sourceMetadata.RootElement.GetProperty("RootName").GetString());
+        Assert.Equal(destination, destinationMetadata.RootElement.GetProperty("RootName").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(sourceRootId));
+        Assert.False(string.IsNullOrWhiteSpace(destinationRootId));
+        Assert.True(sourceMetadata.RootElement
+            .GetProperty("PeerStates")
+            .TryGetProperty(destinationRootId!, out var peerState));
+        Assert.Equal(destination, peerState.GetProperty("PeerRootName").GetString());
+        Assert.True(peerState.GetProperty("Entries").TryGetProperty("shared.txt", out var synchronizedEntry));
+        Assert.False(synchronizedEntry.GetProperty("IsDeleted").GetBoolean());
+        Assert.Equal(source, synchronizedEntry.GetProperty("LastSyncedByRootName").GetString());
+
+        File.Delete(Path.Combine(destination, "shared.txt"));
+
+        var twoWayActions = await service.AnalyzeChangesAsync(new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.TwoWay,
+        });
+
+        var action = Assert.Single(twoWayActions);
+        Assert.Equal(SyncActionType.DeleteFromSource, action.Type);
     }
 
     [Fact]
@@ -336,6 +509,166 @@ public sealed class SyncServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_WhenChecksumValidationIsEnabled_PersistsChecksumInMetadata()
+    {
+        var source = CreateDirectory("source");
+        var destination = CreateDirectory("destination");
+        const string content = "verified content";
+        WriteFile(source, "verified.bin", content, new DateTime(2024, 5, 6, 0, 0, 0, DateTimeKind.Utc));
+
+        var service = new SyncService();
+        await service.ExecuteAsync(new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.OneWay,
+            VerifyChecksums = true,
+        });
+
+        using var sourceMetadata = await LoadMetadataAsync(source);
+        using var destinationMetadata = await LoadMetadataAsync(destination);
+        var destinationRootId = destinationMetadata.RootElement.GetProperty("RootId").GetString();
+        var entry = sourceMetadata.RootElement
+            .GetProperty("PeerStates")
+            .GetProperty(destinationRootId!)
+            .GetProperty("Entries")
+            .GetProperty("verified.bin");
+
+        var expectedChecksum = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(content)));
+        Assert.Equal(expectedChecksum, entry.GetProperty("ChecksumSha256").GetString());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenFileChangesWithoutChecksumValidation_ClearsStoredChecksum()
+    {
+        var source = CreateDirectory("source");
+        var destination = CreateDirectory("destination");
+        WriteFile(source, "verified.bin", "first", new DateTime(2024, 5, 6, 0, 0, 0, DateTimeKind.Utc));
+
+        var service = new SyncService();
+        await service.ExecuteAsync(new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.OneWay,
+            VerifyChecksums = true,
+        });
+
+        WriteFile(source, "verified.bin", "second", new DateTime(2024, 5, 7, 0, 0, 0, DateTimeKind.Utc));
+
+        await service.ExecuteAsync(new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.OneWay,
+            VerifyChecksums = false,
+        });
+
+        using var sourceMetadata = await LoadMetadataAsync(source);
+        using var destinationMetadata = await LoadMetadataAsync(destination);
+        var destinationRootId = destinationMetadata.RootElement.GetProperty("RootId").GetString();
+        var entry = sourceMetadata.RootElement
+            .GetProperty("PeerStates")
+            .GetProperty(destinationRootId!)
+            .GetProperty("Entries")
+            .GetProperty("verified.bin");
+
+        Assert.False(entry.TryGetProperty("ChecksumSha256", out _));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenStoredChecksumIsReusable_UsesItForLaterChecksumValidation()
+    {
+        var source = CreateDirectory("source");
+        var destination = CreateDirectory("destination");
+        WriteFile(source, "verified.bin", "verified content", new DateTime(2024, 5, 6, 0, 0, 0, DateTimeKind.Utc));
+
+        var service = new SyncService();
+        var configuration = new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.OneWay,
+            VerifyChecksums = true,
+        };
+
+        await service.ExecuteAsync(configuration);
+
+        using var sourceMetadata = await LoadMetadataAsync(source);
+        using var destinationMetadata = await LoadMetadataAsync(destination);
+        var sourceRootId = sourceMetadata.RootElement.GetProperty("RootId").GetString()!;
+        var destinationRootId = destinationMetadata.RootElement.GetProperty("RootId").GetString()!;
+
+        await SetStoredChecksumAsync(source, destinationRootId, "verified.bin", new string('0', 64));
+        await SetStoredChecksumAsync(destination, sourceRootId, "verified.bin", new string('0', 64));
+
+        WriteFile(destination, "verified.bin", "stale destination content", new DateTime(2024, 5, 5, 0, 0, 0, DateTimeKind.Utc));
+
+        var exception = await Assert.ThrowsAsync<IOException>(() => service.ExecuteAsync(configuration));
+        Assert.Contains("Checksum validation failed", exception.Message);
+    }
+
+    [Fact]
+    public async Task ExecutePlannedAsync_OverwriteReplacesExistingDestinationFile()
+    {
+        var source = CreateDirectory("source");
+        var destination = CreateDirectory("destination");
+        WriteFile(source, "shared.txt", "new content", new DateTime(2024, 5, 6, 0, 0, 0, DateTimeKind.Utc));
+        WriteFile(destination, "shared.txt", "old content", new DateTime(2024, 5, 1, 0, 0, 0, DateTimeKind.Utc));
+
+        var service = new SyncService();
+        var result = await service.ExecutePlannedAsync(
+            new SyncConfiguration
+            {
+                SourcePath = source,
+                DestinationPath = destination,
+                Mode = SyncMode.OneWay,
+            },
+            [
+                new SyncAction(
+                    SyncActionType.OverwriteFileOnDestination,
+                    "shared.txt",
+                    Path.Combine(source, "shared.txt"),
+                    Path.Combine(destination, "shared.txt")),
+            ]);
+
+        Assert.False(result.IsDryRun);
+        Assert.Equal(1, result.AppliedOperations);
+        Assert.Equal("new content", await File.ReadAllTextAsync(Path.Combine(destination, "shared.txt")));
+    }
+
+    [Fact]
+    public async Task ExecutePlannedAsync_CopyPreservesSourceTimestampWithinFilesystemResolution()
+    {
+        var source = CreateDirectory("source");
+        var destination = CreateDirectory("destination");
+        var sourceTimestamp = new DateTime(2024, 7, 26, 15, 16, 40, DateTimeKind.Utc);
+        WriteFile(source, "shared.txt", "same content", sourceTimestamp);
+
+        var service = new SyncService();
+        await service.ExecutePlannedAsync(
+            new SyncConfiguration
+            {
+                SourcePath = source,
+                DestinationPath = destination,
+                Mode = SyncMode.OneWay,
+            },
+            [
+                new SyncAction(
+                    SyncActionType.CopyToDestination,
+                    "shared.txt",
+                    Path.Combine(source, "shared.txt"),
+                    Path.Combine(destination, "shared.txt")),
+            ]);
+
+        var destinationTimestamp = File.GetLastWriteTimeUtc(Path.Combine(destination, "shared.txt"));
+        var tolerance = TimeSpan.FromSeconds(2);
+        Assert.True(
+            (sourceTimestamp - destinationTimestamp).Duration() <= tolerance,
+            $"Expected destination timestamp {destinationTimestamp:o} to be within {tolerance} of source timestamp {sourceTimestamp:o}.");
+    }
+
+    [Fact]
     public async Task ExecutePlannedAsync_CancelledNewCopy_DoesNotLeavePartialDestinationFile()
     {
         var source = CreateDirectory("source");
@@ -432,6 +765,20 @@ public sealed class SyncServiceTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
         File.WriteAllText(fullPath, content);
         File.SetLastWriteTimeUtc(fullPath, timestamp);
+    }
+
+    private static async Task<JsonDocument> LoadMetadataAsync(string root)
+    {
+        var metadataPath = Path.Combine(root, ".sync-metadata", "file-index.json");
+        return JsonDocument.Parse(await File.ReadAllTextAsync(metadataPath));
+    }
+
+    private static async Task SetStoredChecksumAsync(string root, string peerRootId, string relativePath, string checksum)
+    {
+        var metadataPath = Path.Combine(root, ".sync-metadata", "file-index.json");
+        var document = JsonNode.Parse(await File.ReadAllTextAsync(metadataPath))!.AsObject();
+        document["PeerStates"]![peerRootId]!["Entries"]![relativePath]!["ChecksumSha256"] = checksum;
+        await File.WriteAllTextAsync(metadataPath, document.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
     }
 
     public void Dispose()

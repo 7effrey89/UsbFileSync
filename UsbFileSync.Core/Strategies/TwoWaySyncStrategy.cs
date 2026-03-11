@@ -5,11 +5,18 @@ namespace UsbFileSync.Core.Strategies;
 
 public sealed class TwoWaySyncStrategy : ISyncStrategy
 {
+    private readonly SyncMetadataStore _metadataStore = new();
+
     public Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(SyncConfiguration configuration, CancellationToken cancellationToken = default)
     {
         DirectorySnapshotBuilder.EnsureConfigurationIsValid(configuration);
         cancellationToken.ThrowIfCancellationRequested();
 
+        var sourceMetadata = _metadataStore.Load(configuration.SourcePath);
+        var destinationMetadata = _metadataStore.Load(configuration.DestinationPath);
+        var sourceRootId = _metadataStore.GetOrCreateRootId(sourceMetadata);
+        var destinationRootId = _metadataStore.GetOrCreateRootId(destinationMetadata);
+        var peerState = _metadataStore.GetSharedPeerState(sourceMetadata, destinationRootId, destinationMetadata, sourceRootId);
         var sourceFiles = DirectorySnapshotBuilder.Build(configuration.SourcePath);
         var destinationFiles = DirectorySnapshotBuilder.Build(configuration.DestinationPath);
         var sourceDirectories = DirectorySnapshotBuilder.BuildDirectories(configuration.SourcePath);
@@ -40,6 +47,7 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
 
         var allPaths = sourceFiles.Keys
             .Union(destinationFiles.Keys, StringComparer.OrdinalIgnoreCase)
+            .Union(peerState is null ? Array.Empty<string>() : peerState.Entries.Keys, StringComparer.OrdinalIgnoreCase)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -49,6 +57,8 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
 
             var hasSource = sourceFiles.TryGetValue(relativePath, out var sourceFile);
             var hasDestination = destinationFiles.TryGetValue(relativePath, out var destinationFile);
+            SyncFileIndexEntry? trackedEntry = null;
+            peerState?.Entries.TryGetValue(relativePath, out trackedEntry);
 
             if (hasSource && hasDestination)
             {
@@ -60,7 +70,26 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
                     continue;
                 }
 
-                if (currentSourceFile.LastWriteTimeUtc >= currentDestinationFile.LastWriteTimeUtc)
+                var sourceMatchesTracked = trackedEntry?.Matches(currentSourceFile) == true;
+                var destinationMatchesTracked = trackedEntry?.Matches(currentDestinationFile) == true;
+
+                if (sourceMatchesTracked && !destinationMatchesTracked)
+                {
+                    actions.Add(new SyncAction(
+                        SyncActionType.OverwriteFileOnSource,
+                        relativePath,
+                        currentSourceFile.FullPath,
+                        currentDestinationFile.FullPath));
+                }
+                else if (!sourceMatchesTracked && destinationMatchesTracked)
+                {
+                    actions.Add(new SyncAction(
+                        SyncActionType.OverwriteFileOnDestination,
+                        relativePath,
+                        currentSourceFile.FullPath,
+                        currentDestinationFile.FullPath));
+                }
+                else if (currentSourceFile.LastWriteTimeUtc >= currentDestinationFile.LastWriteTimeUtc)
                 {
                     actions.Add(new SyncAction(
                         SyncActionType.OverwriteFileOnDestination,
@@ -82,19 +111,27 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
 
             if (hasSource)
             {
-                actions.Add(new SyncAction(
-                    SyncActionType.CopyToDestination,
+                var currentSourceFile = sourceFile!;
+                actions.Add(CreateSingleSidedAction(
                     relativePath,
-                    sourceFile!.FullPath,
-                    Path.Combine(configuration.DestinationPath, relativePath)));
+                    currentSourceFile,
+                    trackedEntry,
+                    copyActionType: SyncActionType.CopyToDestination,
+                    deleteActionType: SyncActionType.DeleteFromSource,
+                    existingFullPath: currentSourceFile.FullPath,
+                    missingFullPath: Path.Combine(configuration.DestinationPath, relativePath)));
             }
             else if (hasDestination)
             {
-                actions.Add(new SyncAction(
-                    SyncActionType.CopyToSource,
+                var currentDestinationFile = destinationFile!;
+                actions.Add(CreateSingleSidedAction(
                     relativePath,
-                    Path.Combine(configuration.SourcePath, relativePath),
-                    destinationFile!.FullPath));
+                    currentDestinationFile,
+                    trackedEntry,
+                    copyActionType: SyncActionType.CopyToSource,
+                    deleteActionType: SyncActionType.DeleteFromDestination,
+                    existingFullPath: currentDestinationFile.FullPath,
+                    missingFullPath: Path.Combine(configuration.SourcePath, relativePath)));
             }
         }
 
@@ -102,6 +139,26 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
             .OrderBy(action => GetActionSortRank(action.Type))
             .ThenBy(action => action.RelativePath, StringComparer.OrdinalIgnoreCase)
             .ToList());
+    }
+
+    private static SyncAction CreateSingleSidedAction(
+        string relativePath,
+        FileSnapshot existingFile,
+        SyncFileIndexEntry? trackedEntry,
+        SyncActionType copyActionType,
+        SyncActionType deleteActionType,
+        string existingFullPath,
+        string missingFullPath)
+    {
+        var shouldDelete = trackedEntry is not null &&
+            !trackedEntry.IsDeleted &&
+            trackedEntry.Matches(existingFile);
+        var sourceFullPath = copyActionType == SyncActionType.CopyToDestination ? existingFullPath : missingFullPath;
+        var destinationFullPath = copyActionType == SyncActionType.CopyToDestination ? missingFullPath : existingFullPath;
+
+        return shouldDelete
+            ? new SyncAction(deleteActionType, relativePath, sourceFullPath, destinationFullPath)
+            : new SyncAction(copyActionType, relativePath, sourceFullPath, destinationFullPath);
     }
 
     private static int GetActionSortRank(SyncActionType actionType) => actionType switch
@@ -112,6 +169,8 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
         SyncActionType.CopyToSource => 1,
         SyncActionType.OverwriteFileOnDestination => 2,
         SyncActionType.OverwriteFileOnSource => 2,
-        _ => 3,
+        SyncActionType.DeleteFromDestination => 3,
+        SyncActionType.DeleteFromSource => 3,
+        _ => 4,
     };
 }

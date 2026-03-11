@@ -18,6 +18,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private readonly ISyncSettingsStore? _settingsStore;
     private readonly IFolderPickerService _folderPickerService;
     private readonly IFileLauncherService _fileLauncherService;
+    private readonly IDriveDisplayNameService _driveDisplayNameService;
     private readonly Dictionary<string, SyncPreviewRowViewModel> _previewRowsByRelativePath = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _persistConfigurationCancellationTokenSource;
     private CancellationTokenSource? _syncCancellationTokenSource;
@@ -38,9 +39,12 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _isLoadingSavedConfiguration;
     private double _progressValue;
     private string _statusMessage = "Configure the source and destination drives to begin.";
+    private bool _isStatusSuccess;
+    private bool _isSourcePathFocused;
+    private bool _isDestinationPathFocused;
 
     public MainWindowViewModel()
-        : this(new SyncService(), CreateDefaultSettingsStore(), new WindowsFolderPickerService(), new WindowsFileLauncherService())
+        : this(new SyncService(), CreateDefaultSettingsStore(), new WindowsFolderPickerService(), new WindowsFileLauncherService(), new WindowsDriveDisplayNameService())
     {
     }
 
@@ -48,12 +52,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         SyncService syncService,
         ISyncSettingsStore? settingsStore = null,
         IFolderPickerService? folderPickerService = null,
-        IFileLauncherService? fileLauncherService = null)
+        IFileLauncherService? fileLauncherService = null,
+        IDriveDisplayNameService? driveDisplayNameService = null)
     {
         _syncService = syncService;
         _settingsStore = settingsStore;
         _folderPickerService = folderPickerService ?? new WindowsFolderPickerService();
         _fileLauncherService = fileLauncherService ?? new WindowsFileLauncherService();
+        _driveDisplayNameService = driveDisplayNameService ?? new WindowsDriveDisplayNameService();
         AvailableModes = Enum.GetValues<SyncMode>();
         PlannedActions = new ObservableCollection<SyncAction>();
         NewFiles = new ObservableCollection<SyncPreviewRowViewModel>();
@@ -122,6 +128,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             if (SetProperty(ref _sourcePath, value))
             {
+                RaisePropertyChanged(nameof(SourcePathDisplayText));
                 HandleConfigurationChanged();
             }
         }
@@ -134,10 +141,19 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             if (SetProperty(ref _destinationPath, value))
             {
+                RaisePropertyChanged(nameof(DestinationPathDisplayText));
                 HandleConfigurationChanged();
             }
         }
     }
+
+    public string SourcePathDisplayText => _isSourcePathFocused
+        ? SourcePath
+        : _driveDisplayNameService.FormatPathForDisplay(SourcePath);
+
+    public string DestinationPathDisplayText => _isDestinationPathFocused
+        ? DestinationPath
+        : _driveDisplayNameService.FormatPathForDisplay(DestinationPath);
 
     public SyncMode SelectedMode
     {
@@ -146,6 +162,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             if (SetProperty(ref _selectedMode, value))
             {
+                RaisePropertyChanged(nameof(IsDetectMovesAvailable));
                 RaisePropertyChanged(nameof(DirectionIndicator));
                 RaisePropertyChanged(nameof(LeftDirectionIndicator));
                 RaisePropertyChanged(nameof(RightDirectionIndicator));
@@ -185,6 +202,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         SyncMode.TwoWay => "Changes on this side are also reconciled back to the source location.",
         _ => "This side receives created folders, new files, and overwrite updates.",
     };
+
+    public bool IsDetectMovesAvailable => SelectedMode == SyncMode.OneWay;
 
     public bool DetectMoves
     {
@@ -258,7 +277,23 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public string StatusMessage
     {
         get => _statusMessage;
-        private set => SetProperty(ref _statusMessage, value);
+        private set
+        {
+            IsStatusSuccess = false;
+            SetProperty(ref _statusMessage, value);
+        }
+    }
+
+    public bool IsStatusSuccess
+    {
+        get => _isStatusSuccess;
+        private set => SetProperty(ref _isStatusSuccess, value);
+    }
+
+    private void SetStatusMessage(string message, bool isSuccess = false)
+    {
+        StatusMessage = message;
+        IsStatusSuccess = isSuccess;
     }
 
     public string CurrentTransferItem
@@ -462,10 +497,27 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             : $"Parallel copy count set to {ParallelCopyCount}.");
     }
 
+    public void SetSourcePathFocused(bool isFocused)
+    {
+        if (SetProperty(ref _isSourcePathFocused, isFocused))
+        {
+            RaisePropertyChanged(nameof(SourcePathDisplayText));
+        }
+    }
+
+    public void SetDestinationPathFocused(bool isFocused)
+    {
+        if (SetProperty(ref _isDestinationPathFocused, isFocused))
+        {
+            RaisePropertyChanged(nameof(DestinationPathDisplayText));
+        }
+    }
+
     private async Task AnalyzeAsync()
     {
-        if (!TryValidateConfiguration())
+        if (!TryValidateConfiguration(requireAccessibleDestinationPath: false))
         {
+            AddLog("Error", StatusMessage);
             return;
         }
 
@@ -494,8 +546,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private async Task StartSyncAsync()
     {
-        if (!TryValidateConfiguration())
+        if (!TryValidateConfiguration(requireAccessibleDestinationPath: true))
         {
+            AddLog("Error", StatusMessage);
             return;
         }
 
@@ -506,7 +559,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         await RunBusyOperationAsync(async () =>
         {
             var configuration = CreateConfiguration();
-            if (PlannedActions.Count == 0 && AllFiles.Count == 0)
+            if (PlannedActions.Count == 0)
             {
                 var initialActions = await _syncService.AnalyzeChangesAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(true);
                 var initialPreview = await _syncService.BuildPreviewAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(true);
@@ -515,7 +568,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 ReplaceQueue(GetSelectedActions());
             }
 
-            var actions = GetSelectedActions();
+            var actions = RemainingQueue
+                .Select(item => item.ActionModel)
+                .ToList();
 
             if (actions.Count == 0)
             {
@@ -524,7 +579,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                     : "Select at least one file or folder in the preview before synchronizing.";
                 AddLog("Sync", PlannedActions.Count == 0
                     ? "No queued operations to process."
-                    : "Synchronization skipped because no preview items were selected.");
+                    : "Synchronization skipped because no items to be synced were selected.");
                 CurrentTransferItem = "No active transfer.";
                 CurrentTransferDetails = "Queue is idle.";
                 CurrentTransferProgressValue = 0;
@@ -582,14 +637,18 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             });
 
             var result = await _syncService.ExecutePlannedAsync(configuration, actions, progress, autoParallelism, cancellationTokenSource.Token).ConfigureAwait(true);
-            var refreshedActions = await _syncService.AnalyzeChangesAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(true);
-            var refreshedPreview = await _syncService.BuildPreviewAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(true);
-            ReplaceActions(refreshedActions);
-            ReplacePreview(refreshedPreview);
-            ReplaceQueue(GetSelectedActions());
-            StatusMessage = result.IsDryRun
-                ? $"Dry run complete with {result.Actions.Count} planned action(s)."
-                : $"Synchronization complete. Applied {result.AppliedOperations} action(s).";
+            var verifiedCopyCount = configuration.VerifyChecksums
+                ? actions.Count(action => action.Type is
+                    SyncActionType.CopyToDestination or
+                    SyncActionType.CopyToSource or
+                    SyncActionType.OverwriteFileOnDestination or
+                    SyncActionType.OverwriteFileOnSource)
+                : 0;
+            SetStatusMessage(
+                result.IsDryRun
+                    ? $"Dry run complete with {result.Actions.Count} planned action(s)."
+                    : BuildCompletionMessage(result.AppliedOperations, configuration.VerifyChecksums, verifiedCopyCount),
+                isSuccess: true);
 
             if (!result.IsDryRun)
             {
@@ -599,6 +658,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
             CurrentTransferDetails = QueueSummary;
             AddLog("Sync", StatusMessage);
+            PlannedActions.Clear();
+            ReplaceQueue(Array.Empty<SyncAction>());
         }, cancellationTokenSource.Token).ConfigureAwait(true);
 
         if (ReferenceEquals(_syncCancellationTokenSource, cancellationTokenSource))
@@ -623,12 +684,23 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ScheduleConfigurationPersist();
     }
 
+    private static string BuildCompletionMessage(int appliedOperations, bool verifyChecksums, int verifiedCopyCount)
+    {
+        var message = $"Synchronization complete. Applied {appliedOperations} action(s).";
+        if (!verifyChecksums || verifiedCopyCount == 0)
+        {
+            return message;
+        }
+
+        return $"{message} Checksum verification passed for {verifiedCopyCount} copied file(s).";
+    }
+
     private bool IsConfigurationComplete() =>
         !string.IsNullOrWhiteSpace(SourcePath) &&
         !string.IsNullOrWhiteSpace(DestinationPath) &&
         !string.Equals(SourcePath, DestinationPath, StringComparison.OrdinalIgnoreCase);
 
-    private bool TryValidateConfiguration()
+    private bool TryValidateConfiguration(bool requireAccessibleDestinationPath)
     {
         if (string.IsNullOrWhiteSpace(SourcePath))
         {
@@ -648,7 +720,84 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             return false;
         }
 
+        if (!TryValidateSyncPath(SourcePath, "Source", requireExistingDirectory: true, out var sourceValidationMessage))
+        {
+            StatusMessage = sourceValidationMessage;
+            return false;
+        }
+
+        if (requireAccessibleDestinationPath && !TryValidateSyncPath(DestinationPath, "Destination", requireExistingDirectory: false, out var destinationValidationMessage))
+        {
+            StatusMessage = destinationValidationMessage;
+            return false;
+        }
+
         return true;
+    }
+
+    private static bool TryValidateSyncPath(string path, string label, bool requireExistingDirectory, out string validationMessage)
+    {
+        try
+        {
+            var fullPath = Path.GetFullPath(path);
+
+            if (requireExistingDirectory && !Directory.Exists(fullPath))
+            {
+                validationMessage = $"{label} path does not exist.";
+                return false;
+            }
+
+            if (!requireExistingDirectory && !HasAccessibleExistingAncestor(fullPath))
+            {
+                validationMessage = $"{label} path does not exist or is not accessible.";
+                return false;
+            }
+
+            validationMessage = string.Empty;
+            return true;
+        }
+        catch (Exception) when (path is not null)
+        {
+            validationMessage = $"{label} path is invalid.";
+            return false;
+        }
+    }
+
+    private static bool HasAccessibleExistingAncestor(string fullPath)
+    {
+        try
+        {
+            var current = fullPath;
+            while (!string.IsNullOrWhiteSpace(current))
+            {
+                if (Directory.Exists(current))
+                {
+                    return true;
+                }
+
+                var parent = Path.GetDirectoryName(current);
+                if (string.Equals(parent, current, StringComparison.OrdinalIgnoreCase))
+                {
+                    break;
+                }
+
+                current = parent ?? string.Empty;
+            }
+
+            return false;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
     }
 
     private void LoadSavedConfiguration()
@@ -674,9 +823,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             DryRun = savedConfiguration.DryRun;
             VerifyChecksums = savedConfiguration.VerifyChecksums;
             ParallelCopyCount = savedConfiguration.ParallelCopyCount;
-            StatusMessage = IsConfigurationComplete()
-                ? "Restored the previous sync configuration."
-                : "Configure the source and destination drives to begin.";
+            SetStatusMessage(
+                IsConfigurationComplete()
+                    ? "Restored the previous sync configuration."
+                    : "Configure the source and destination drives to begin.",
+                isSuccess: IsConfigurationComplete());
         }
         catch (IOException exception)
         {
@@ -808,6 +959,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         catch (Exception exception)
         {
             StatusMessage = exception.Message;
+            AddLog("Error", exception.Message);
         }
         finally
         {
