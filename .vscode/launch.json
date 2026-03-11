@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Launch UsbFileSync App",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build UsbFileSync solution",
+      "program": "${workspaceFolder}/UsbFileSync.App/bin/Debug/net8.0-windows/UsbFileSync.App.exe",
+      "cwd": "${workspaceFolder}/UsbFileSync.App",
+      "stopAtEntry": false,
+      "console": "internalConsole"
+    }
+  ]
+}

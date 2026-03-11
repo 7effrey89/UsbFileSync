@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Collections.Concurrent;
 using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Strategies;
 
@@ -8,16 +9,23 @@ public sealed class SyncService
 {
     private readonly ISyncStrategy _oneWayStrategy;
     private readonly ISyncStrategy _twoWayStrategy;
+    private readonly SyncMetadataStore _metadataStore;
 
     public SyncService()
-        : this(new OneWaySyncStrategy(), new TwoWaySyncStrategy())
+        : this(new OneWaySyncStrategy(), new TwoWaySyncStrategy(), new SyncMetadataStore())
     {
     }
 
     public SyncService(ISyncStrategy oneWayStrategy, ISyncStrategy twoWayStrategy)
+        : this(oneWayStrategy, twoWayStrategy, new SyncMetadataStore())
+    {
+    }
+
+    private SyncService(ISyncStrategy oneWayStrategy, ISyncStrategy twoWayStrategy, SyncMetadataStore metadataStore)
     {
         _oneWayStrategy = oneWayStrategy;
         _twoWayStrategy = twoWayStrategy;
+        _metadataStore = metadataStore;
     }
 
     public Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(SyncConfiguration configuration, CancellationToken cancellationToken = default) =>
@@ -55,6 +63,11 @@ public sealed class SyncService
         }
 
         var appliedOperations = 0;
+        var verifiedChecksumsByRelativePath = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var trackedChecksumEntriesByRelativePath = configuration.VerifyChecksums
+            ? LoadTrackedChecksumEntries(configuration)
+            : new Dictionary<string, SyncFileIndexEntry>(StringComparer.OrdinalIgnoreCase);
+
         for (var index = 0; index < actions.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -71,6 +84,8 @@ public sealed class SyncService
                 appliedOperations += await ExecuteCopyBatchAsync(
                     configuration,
                     copyBatch,
+                    trackedChecksumEntriesByRelativePath,
+                    verifiedChecksumsByRelativePath,
                     progress,
                     appliedOperations,
                     actions.Count,
@@ -82,6 +97,11 @@ public sealed class SyncService
             var action = actions[index];
             ApplySequentialAsync(configuration, action, progress, appliedOperations, actions.Count, cancellationToken);
             appliedOperations++;
+        }
+
+        if (configuration.Mode is SyncMode.OneWay or SyncMode.TwoWay)
+        {
+            PersistSyncMetadata(configuration, actions, verifiedChecksumsByRelativePath);
         }
 
         return new SyncResult(actions, appliedOperations, false);
@@ -181,6 +201,8 @@ public sealed class SyncService
     private static async Task<int> ExecuteCopyBatchAsync(
         SyncConfiguration configuration,
         IReadOnlyList<SyncAction> actions,
+        IReadOnlyDictionary<string, SyncFileIndexEntry> trackedChecksumEntriesByRelativePath,
+        IDictionary<string, string> verifiedChecksumsByRelativePath,
         IProgress<SyncProgress>? progress,
         int completedOperations,
         int totalActions,
@@ -189,38 +211,55 @@ public sealed class SyncService
         var parallelCopyCount = NormalizeParallelCopyCount(configuration.ParallelCopyCount, actions.Count);
         var semaphore = new SemaphoreSlim(parallelCopyCount, parallelCopyCount);
         var completedInBatch = 0;
+        var verifiedChecksums = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         var tasks = actions.Select(async action =>
         {
             await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                var reusableSourceChecksum = TryGetReusableSourceChecksum(action, trackedChecksumEntriesByRelativePath);
+
                 switch (action.Type)
                 {
                     case SyncActionType.CopyToDestination:
                     case SyncActionType.OverwriteFileOnDestination:
-                        await CopyAsync(
+                    {
+                        var verifiedChecksum = await CopyAsync(
                             action.SourceFullPath!,
                             action.DestinationFullPath!,
                             configuration.VerifyChecksums,
+                            reusableSourceChecksum,
                             progress,
                             () => completedOperations + Volatile.Read(ref completedInBatch),
                             totalActions,
                             action.RelativePath,
                             cancellationToken).ConfigureAwait(false);
+                        if (!string.IsNullOrWhiteSpace(verifiedChecksum))
+                        {
+                            verifiedChecksums[action.RelativePath] = verifiedChecksum;
+                        }
                         break;
+                    }
                     case SyncActionType.CopyToSource:
                     case SyncActionType.OverwriteFileOnSource:
-                        await CopyAsync(
+                    {
+                        var verifiedChecksum = await CopyAsync(
                             action.DestinationFullPath!,
                             action.SourceFullPath!,
                             configuration.VerifyChecksums,
+                            reusableSourceChecksum,
                             progress,
                             () => completedOperations + Volatile.Read(ref completedInBatch),
                             totalActions,
                             action.RelativePath,
                             cancellationToken).ConfigureAwait(false);
+                        if (!string.IsNullOrWhiteSpace(verifiedChecksum))
+                        {
+                            verifiedChecksums[action.RelativePath] = verifiedChecksum;
+                        }
                         break;
+                    }
                 }
 
                 var batchCompleted = Interlocked.Increment(ref completedInBatch);
@@ -237,6 +276,12 @@ public sealed class SyncService
         }).ToArray();
 
         await Task.WhenAll(tasks).ConfigureAwait(false);
+
+        foreach (var pair in verifiedChecksums)
+        {
+            verifiedChecksumsByRelativePath[pair.Key] = pair.Value;
+        }
+
         return completedInBatch;
     }
 
@@ -288,10 +333,11 @@ public sealed class SyncService
         }
     }
 
-    private static async Task CopyAsync(
+    private static async Task<string?> CopyAsync(
         string sourcePath,
         string destinationPath,
         bool verifyChecksums,
+        string? reusableSourceChecksum,
         IProgress<SyncProgress>? progress,
         Func<int> getCompletedOperations,
         int totalActions,
@@ -312,16 +358,31 @@ public sealed class SyncService
         const int bufferSize = 1024 * 128;
         var buffer = new byte[bufferSize];
         long transferredBytes = 0;
+        IncrementalHash? sourceHash = null;
+        IncrementalHash? destinationHash = null;
+        string? copiedChecksum = null;
 
         try
         {
+            if (verifyChecksums)
+            {
+                if (string.IsNullOrWhiteSpace(reusableSourceChecksum))
+                {
+                    sourceHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                }
+
+                destinationHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            }
+
             await using (var sourceStream = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, useAsync: true))
             await using (var destinationStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize, useAsync: true))
             {
                 int bytesRead;
                 while ((bytesRead = await sourceStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
                 {
+                    sourceHash?.AppendData(buffer, 0, bytesRead);
                     await destinationStream.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken).ConfigureAwait(false);
+                    destinationHash?.AppendData(buffer, 0, bytesRead);
                     transferredBytes += bytesRead;
                     var progressPercentage = totalBytes == 0
                         ? 100
@@ -334,35 +395,36 @@ public sealed class SyncService
 
             if (verifyChecksums)
             {
-                await ValidateCopiedFileChecksumsAsync(sourcePath, tempPath, cancellationToken).ConfigureAwait(false);
+                var expectedSourceChecksum = string.IsNullOrWhiteSpace(reusableSourceChecksum)
+                    ? Convert.ToHexString(sourceHash!.GetHashAndReset())
+                    : reusableSourceChecksum;
+                copiedChecksum = Convert.ToHexString(destinationHash!.GetHashAndReset());
+
+                ValidateCopiedFileChecksums(expectedSourceChecksum, copiedChecksum, sourcePath);
             }
 
             CommitTemporaryCopy(tempPath, destinationPath);
             File.SetLastWriteTimeUtc(destinationPath, File.GetLastWriteTimeUtc(sourcePath));
+            return copiedChecksum;
         }
         catch
         {
             Delete(tempPath);
             throw;
         }
-    }
-
-    private static async Task ValidateCopiedFileChecksumsAsync(string sourcePath, string copiedPath, CancellationToken cancellationToken)
-    {
-        var sourceHash = await ComputeChecksumAsync(sourcePath, cancellationToken).ConfigureAwait(false);
-        var copiedHash = await ComputeChecksumAsync(copiedPath, cancellationToken).ConfigureAwait(false);
-
-        if (!sourceHash.SequenceEqual(copiedHash))
+        finally
         {
-            throw new IOException($"Checksum validation failed for '{Path.GetFileName(sourcePath)}'.");
+            sourceHash?.Dispose();
+            destinationHash?.Dispose();
         }
     }
 
-    private static async Task<byte[]> ComputeChecksumAsync(string path, CancellationToken cancellationToken)
+    private static void ValidateCopiedFileChecksums(string expectedSourceChecksum, string copiedChecksum, string sourcePath)
     {
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 128, useAsync: true);
-        using var sha256 = SHA256.Create();
-        return await sha256.ComputeHashAsync(stream, cancellationToken).ConfigureAwait(false);
+        if (!string.Equals(expectedSourceChecksum, copiedChecksum, StringComparison.Ordinal))
+        {
+            throw new IOException($"Checksum validation failed for '{Path.GetFileName(sourcePath)}'.");
+        }
     }
 
     private static string CreateTemporaryCopyPath(string destinationPath)
@@ -374,13 +436,15 @@ public sealed class SyncService
 
     private static void CommitTemporaryCopy(string temporaryPath, string destinationPath)
     {
-        if (File.Exists(destinationPath))
+        try
         {
-            File.Replace(temporaryPath, destinationPath, null, ignoreMetadataErrors: true);
-            return;
+            File.Move(temporaryPath, destinationPath, overwrite: true);
         }
-
-        File.Move(temporaryPath, destinationPath);
+        catch (IOException) when (File.Exists(destinationPath))
+        {
+            File.Delete(destinationPath);
+            File.Move(temporaryPath, destinationPath);
+        }
     }
 
     private static void Delete(string path)
@@ -424,5 +488,231 @@ public sealed class SyncService
         {
             File.Move(sourcePath, destinationPath);
         }
+    }
+
+    private void PersistSyncMetadata(
+        SyncConfiguration configuration,
+        IReadOnlyList<SyncAction> actions,
+        IReadOnlyDictionary<string, string> verifiedChecksumsByRelativePath)
+    {
+        var sourceMetadata = _metadataStore.Load(configuration.SourcePath);
+        var destinationMetadata = _metadataStore.Load(configuration.DestinationPath);
+        var sourceRootId = _metadataStore.GetOrCreateRootId(sourceMetadata);
+        var destinationRootId = _metadataStore.GetOrCreateRootId(destinationMetadata);
+        var sourceRootName = _metadataStore.GetRootDisplayName(configuration.SourcePath);
+        var destinationRootName = _metadataStore.GetRootDisplayName(configuration.DestinationPath);
+        sourceMetadata.RootName = sourceRootName;
+        destinationMetadata.RootName = destinationRootName;
+        var existingPeerState = _metadataStore.GetSharedPeerState(sourceMetadata, destinationRootId, destinationMetadata, sourceRootId);
+        var currentPeerState = BuildCurrentPeerState(
+            configuration,
+            actions,
+            existingPeerState,
+            verifiedChecksumsByRelativePath,
+            sourceRootId,
+            destinationRootId,
+            sourceRootName,
+            destinationRootName);
+
+        sourceMetadata.PeerStates[destinationRootId] = Clone(currentPeerState, destinationRootName);
+        destinationMetadata.PeerStates[sourceRootId] = Clone(currentPeerState, sourceRootName);
+
+        _metadataStore.Save(configuration.SourcePath, sourceMetadata);
+        _metadataStore.Save(configuration.DestinationPath, destinationMetadata);
+    }
+
+    private static SyncPeerState BuildCurrentPeerState(
+        SyncConfiguration configuration,
+        IReadOnlyList<SyncAction> actions,
+        SyncPeerState? existingPeerState,
+        IReadOnlyDictionary<string, string> verifiedChecksumsByRelativePath,
+        string sourceRootId,
+        string destinationRootId,
+        string sourceRootName,
+        string destinationRootName)
+    {
+        var currentSourceFiles = DirectorySnapshotBuilder.Build(configuration.SourcePath);
+        var currentDestinationFiles = DirectorySnapshotBuilder.Build(configuration.DestinationPath);
+        var entries = existingPeerState?.Entries.ToDictionary(
+            pair => pair.Key,
+            pair => Clone(pair.Value),
+            StringComparer.OrdinalIgnoreCase) ?? new Dictionary<string, SyncFileIndexEntry>(StringComparer.OrdinalIgnoreCase);
+        var actionsByRelativePath = actions
+            .GroupBy(action => action.RelativePath, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var allPaths = currentSourceFiles.Keys
+            .Union(currentDestinationFiles.Keys, StringComparer.OrdinalIgnoreCase)
+            .Union(entries.Keys, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var recordedAtUtc = DateTime.UtcNow;
+
+        foreach (var relativePath in allPaths)
+        {
+            var hasSource = currentSourceFiles.TryGetValue(relativePath, out var sourceFile);
+            var hasDestination = currentDestinationFiles.TryGetValue(relativePath, out var destinationFile);
+            actionsByRelativePath.TryGetValue(relativePath, out var action);
+            entries.TryGetValue(relativePath, out var existingEntry);
+
+            if (hasSource && hasDestination && sourceFile!.Matches(destinationFile!))
+            {
+                entries[relativePath] = new SyncFileIndexEntry
+                {
+                    RelativePath = relativePath,
+                    Length = sourceFile.Length,
+                    LastWriteTimeUtc = sourceFile.LastWriteTimeUtc,
+                    LastSyncedByRootId = ResolveLastSyncedByRootId(action, existingEntry, sourceRootId, destinationRootId),
+                    LastSyncedByRootName = ResolveLastSyncedByRootName(action, existingEntry, sourceRootId, destinationRootId, sourceRootName, destinationRootName),
+                    ChecksumSha256 = ResolveChecksum(relativePath, existingEntry, sourceFile, verifiedChecksumsByRelativePath),
+                };
+                continue;
+            }
+
+            if (!hasSource && !hasDestination)
+            {
+                if (action is SyncAction { Type: SyncActionType.DeleteFromDestination or SyncActionType.DeleteFromSource })
+                {
+                    entries[relativePath] = new SyncFileIndexEntry
+                    {
+                        RelativePath = relativePath,
+                        IsDeleted = true,
+                        DeletedAtUtc = recordedAtUtc,
+                        LastSyncedByRootId = action.Type == SyncActionType.DeleteFromDestination ? sourceRootId : destinationRootId,
+                        LastSyncedByRootName = action.Type == SyncActionType.DeleteFromDestination ? sourceRootName : destinationRootName,
+                    };
+                }
+                else if (existingEntry is not null)
+                {
+                    entries[relativePath] = new SyncFileIndexEntry
+                    {
+                        RelativePath = relativePath,
+                        IsDeleted = true,
+                        DeletedAtUtc = existingEntry.DeletedAtUtc ?? recordedAtUtc,
+                        LastSyncedByRootId = string.IsNullOrWhiteSpace(existingEntry.LastSyncedByRootId) ? sourceRootId : existingEntry.LastSyncedByRootId,
+                        LastSyncedByRootName = ResolveLastSyncedByRootName(null, existingEntry, sourceRootId, destinationRootId, sourceRootName, destinationRootName),
+                    };
+                }
+            }
+        }
+
+        return new SyncPeerState
+        {
+            PeerRootName = existingPeerState?.PeerRootName ?? string.Empty,
+            RecordedAtUtc = recordedAtUtc,
+            Entries = entries,
+        };
+    }
+
+    private static string ResolveLastSyncedByRootId(
+        SyncAction? action,
+        SyncFileIndexEntry? existingEntry,
+        string sourceRootId,
+        string destinationRootId) => action?.Type switch
+    {
+        SyncActionType.CopyToDestination => sourceRootId,
+        SyncActionType.OverwriteFileOnDestination => sourceRootId,
+        SyncActionType.CopyToSource => destinationRootId,
+        SyncActionType.OverwriteFileOnSource => destinationRootId,
+        _ => existingEntry is null || string.IsNullOrWhiteSpace(existingEntry.LastSyncedByRootId)
+            ? sourceRootId
+            : existingEntry.LastSyncedByRootId,
+    };
+
+    private static string ResolveLastSyncedByRootName(
+        SyncAction? action,
+        SyncFileIndexEntry? existingEntry,
+        string sourceRootId,
+        string destinationRootId,
+        string sourceRootName,
+        string destinationRootName) => action?.Type switch
+    {
+        SyncActionType.CopyToDestination => sourceRootName,
+        SyncActionType.OverwriteFileOnDestination => sourceRootName,
+        SyncActionType.CopyToSource => destinationRootName,
+        SyncActionType.OverwriteFileOnSource => destinationRootName,
+        SyncActionType.DeleteFromDestination => sourceRootName,
+        SyncActionType.DeleteFromSource => destinationRootName,
+        _ when existingEntry is not null && !string.IsNullOrWhiteSpace(existingEntry.LastSyncedByRootName) => existingEntry.LastSyncedByRootName,
+        _ when existingEntry?.LastSyncedByRootId == destinationRootId => destinationRootName,
+        _ => sourceRootName,
+    };
+
+    private static SyncPeerState Clone(SyncPeerState peerState, string peerRootName) => new()
+    {
+        PeerRootName = peerRootName,
+        RecordedAtUtc = peerState.RecordedAtUtc,
+        Entries = peerState.Entries.ToDictionary(
+            pair => pair.Key,
+            pair => Clone(pair.Value),
+            StringComparer.OrdinalIgnoreCase),
+    };
+
+    private static SyncFileIndexEntry Clone(SyncFileIndexEntry entry) => new()
+    {
+        RelativePath = entry.RelativePath,
+        Length = entry.Length,
+        LastWriteTimeUtc = entry.LastWriteTimeUtc,
+        IsDeleted = entry.IsDeleted,
+        DeletedAtUtc = entry.DeletedAtUtc,
+        LastSyncedByRootId = entry.LastSyncedByRootId,
+        LastSyncedByRootName = entry.LastSyncedByRootName,
+        ChecksumSha256 = entry.ChecksumSha256,
+    };
+
+    private Dictionary<string, SyncFileIndexEntry> LoadTrackedChecksumEntries(SyncConfiguration configuration)
+    {
+        var sourceMetadata = _metadataStore.Load(configuration.SourcePath);
+        var destinationMetadata = _metadataStore.Load(configuration.DestinationPath);
+        var sourceRootId = _metadataStore.GetOrCreateRootId(sourceMetadata);
+        var destinationRootId = _metadataStore.GetOrCreateRootId(destinationMetadata);
+        var existingPeerState = _metadataStore.GetSharedPeerState(sourceMetadata, destinationRootId, destinationMetadata, sourceRootId);
+        if (existingPeerState is null)
+        {
+            return new Dictionary<string, SyncFileIndexEntry>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        return existingPeerState.Entries
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Value.ChecksumSha256))
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string? TryGetReusableSourceChecksum(
+        SyncAction action,
+        IReadOnlyDictionary<string, SyncFileIndexEntry> trackedChecksumEntriesByRelativePath)
+    {
+        if (!trackedChecksumEntriesByRelativePath.TryGetValue(action.RelativePath, out var trackedEntry) ||
+            string.IsNullOrWhiteSpace(trackedEntry.ChecksumSha256))
+        {
+            return null;
+        }
+
+        var sourcePath = action.Type is SyncActionType.CopyToDestination or SyncActionType.OverwriteFileOnDestination
+            ? action.SourceFullPath
+            : action.DestinationFullPath;
+        if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
+        {
+            return null;
+        }
+
+        var sourceInfo = new FileInfo(sourcePath);
+        var sourceSnapshot = new FileSnapshot(action.RelativePath, sourcePath, sourceInfo.Length, sourceInfo.LastWriteTimeUtc);
+        return trackedEntry.Matches(sourceSnapshot)
+            ? trackedEntry.ChecksumSha256
+            : null;
+    }
+
+    private static string? ResolveChecksum(
+        string relativePath,
+        SyncFileIndexEntry? existingEntry,
+        FileSnapshot currentFile,
+        IReadOnlyDictionary<string, string> verifiedChecksumsByRelativePath)
+    {
+        if (verifiedChecksumsByRelativePath.TryGetValue(relativePath, out var verifiedChecksum))
+        {
+            return verifiedChecksum;
+        }
+
+        return existingEntry?.Matches(currentFile) == true
+            ? existingEntry.ChecksumSha256
+            : null;
     }
 }

@@ -7,6 +7,7 @@ internal static class DirectorySnapshotBuilder
     private static readonly HashSet<string> ExcludedRootDirectories = new(StringComparer.OrdinalIgnoreCase)
     {
         "$RECYCLE.BIN",
+        SyncMetadataStore.MetadataDirectoryName,
         "System Volume Information",
     };
 

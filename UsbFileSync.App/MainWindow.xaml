@@ -121,8 +121,12 @@
             <Setter Property="BorderBrush" Value="#E5E5E5" />
             <Setter Property="Foreground" Value="#3B3B3B" />
             <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Padding" Value="8,0,8,0" />
+            <Setter Property="Padding" Value="0,0,8,0" />
             <Setter Property="HorizontalContentAlignment" Value="Left" />
+        </Style>
+        <Style x:Key="PreviewSelectionColumnHeaderStyle" TargetType="DataGridColumnHeader" BasedOn="{StaticResource {x:Type DataGridColumnHeader}}">
+            <Setter Property="Padding" Value="8,0,8,0" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
         </Style>
         <Style TargetType="Expander">
             <Setter Property="Margin" Value="0,0,0,12" />
@@ -396,7 +400,13 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
 
-                            <TextBox Grid.Column="0" Text="{Binding SourcePath, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox x:Name="SourcePathTextBox"
+                                     Grid.Column="0"
+                                     IsReadOnly="True"
+                                     Text="{Binding SourcePathDisplayText, Mode=OneWay}"
+                                     ToolTip="{Binding SourcePath}"
+                                     GotKeyboardFocus="OnSourcePathTextBoxGotKeyboardFocus"
+                                     LostKeyboardFocus="OnSourcePathTextBoxLostKeyboardFocus" />
                             <Button Grid.Column="1" Margin="10,8,0,0" Padding="14,7" Command="{Binding BrowseSourcePathCommand}" Content="Browse..." />
                         </Grid>
                         <TextBlock Margin="0,10,0,0" Foreground="{StaticResource SubtleTextBrush}" Text="{Binding SourceLocationDescription}" TextWrapping="Wrap" />
@@ -451,8 +461,9 @@
                             <CheckBox Grid.Column="0"
                                       VerticalAlignment="Center"
                                       Content="Detect moves"
+                                      IsEnabled="{Binding IsDetectMovesAvailable}"
                                       IsChecked="{Binding DetectMoves}"
-                                      ToolTip="Treat matching delete-and-create changes as a rename or move when the file content appears to be the same." />
+                                      ToolTip="One-way mode only. Treat matching delete-and-create changes as a rename or move when the file content appears to be the same." />
                             <CheckBox Grid.Column="1"
                                       VerticalAlignment="Center"
                                       Content="Dry run"
@@ -491,7 +502,13 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
 
-                            <TextBox Grid.Column="0" Text="{Binding DestinationPath, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox x:Name="DestinationPathTextBox"
+                                     Grid.Column="0"
+                                     IsReadOnly="True"
+                                     Text="{Binding DestinationPathDisplayText, Mode=OneWay}"
+                                     ToolTip="{Binding DestinationPath}"
+                                     GotKeyboardFocus="OnDestinationPathTextBoxGotKeyboardFocus"
+                                     LostKeyboardFocus="OnDestinationPathTextBoxLostKeyboardFocus" />
                             <Button Grid.Column="1" Margin="10,8,0,0" Padding="14,7" Command="{Binding BrowseDestinationPathCommand}" Content="Browse..." />
                         </Grid>
                         <TextBlock Margin="0,10,0,0" Foreground="{StaticResource SubtleTextBrush}" Text="{Binding DestinationLocationDescription}" TextWrapping="Wrap" />
@@ -525,7 +542,7 @@
                                 </TabItem.Header>
                                 <DataGrid ItemsSource="{Binding NewFiles}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" MinHeight="220">
                                     <DataGrid.Columns>
-                                        <DataGridTemplateColumn Width="36" CellTemplate="{StaticResource PreviewSelectionCellTemplate}">
+                                        <DataGridTemplateColumn Width="36" CellTemplate="{StaticResource PreviewSelectionCellTemplate}" HeaderStyle="{StaticResource PreviewSelectionColumnHeaderStyle}">
                                             <DataGridTemplateColumn.HeaderTemplate>
                                                 <DataTemplate>
                                                     <CheckBox IsThreeState="True"
@@ -555,7 +572,7 @@
                                 </TabItem.Header>
                                 <DataGrid ItemsSource="{Binding ChangedFiles}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" MinHeight="220">
                                     <DataGrid.Columns>
-                                        <DataGridTemplateColumn Width="36" CellTemplate="{StaticResource PreviewSelectionCellTemplate}">
+                                        <DataGridTemplateColumn Width="36" CellTemplate="{StaticResource PreviewSelectionCellTemplate}" HeaderStyle="{StaticResource PreviewSelectionColumnHeaderStyle}">
                                             <DataGridTemplateColumn.HeaderTemplate>
                                                 <DataTemplate>
                                                     <CheckBox IsThreeState="True"
@@ -585,7 +602,7 @@
                                 </TabItem.Header>
                                 <DataGrid ItemsSource="{Binding DeletedFiles}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" MinHeight="220">
                                     <DataGrid.Columns>
-                                        <DataGridTemplateColumn Width="36" CellTemplate="{StaticResource PreviewSelectionCellTemplate}">
+                                        <DataGridTemplateColumn Width="36" CellTemplate="{StaticResource PreviewSelectionCellTemplate}" HeaderStyle="{StaticResource PreviewSelectionColumnHeaderStyle}">
                                             <DataGridTemplateColumn.HeaderTemplate>
                                                 <DataTemplate>
                                                     <CheckBox IsThreeState="True"
@@ -615,7 +632,7 @@
                                 </TabItem.Header>
                                 <DataGrid ItemsSource="{Binding UnchangedFiles}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" MinHeight="220">
                                     <DataGrid.Columns>
-                                        <DataGridTemplateColumn Width="36" CellTemplate="{StaticResource PreviewSelectionCellTemplate}">
+                                        <DataGridTemplateColumn Width="36" CellTemplate="{StaticResource PreviewSelectionCellTemplate}" HeaderStyle="{StaticResource PreviewSelectionColumnHeaderStyle}">
                                             <DataGridTemplateColumn.HeaderTemplate>
                                                 <DataTemplate>
                                                     <CheckBox IsThreeState="True"
@@ -645,7 +662,7 @@
                                 </TabItem.Header>
                                 <DataGrid ItemsSource="{Binding AllFiles}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" MinHeight="220">
                                     <DataGrid.Columns>
-                                        <DataGridTemplateColumn Width="36" CellTemplate="{StaticResource PreviewSelectionCellTemplate}">
+                                        <DataGridTemplateColumn Width="36" CellTemplate="{StaticResource PreviewSelectionCellTemplate}" HeaderStyle="{StaticResource PreviewSelectionColumnHeaderStyle}">
                                             <DataGridTemplateColumn.HeaderTemplate>
                                                 <DataTemplate>
                                                     <CheckBox IsThreeState="True"
@@ -740,6 +757,36 @@
                     </Border>
                 </Grid>
             </Grid>
+
+            <Border Grid.Row="2"
+                    Margin="0,16,0,0"
+                    Padding="14,10">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource CardBorderStyle}">
+                        <Setter Property="Background" Value="#FFF7E6" />
+                        <Setter Property="BorderBrush" Value="#E6C98F" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsStatusSuccess}" Value="True">
+                                <Setter Property="Background" Value="#E8F5E9" />
+                                <Setter Property="BorderBrush" Value="#96D4A0" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <TextBlock Text="{Binding StatusMessage}"
+                           TextWrapping="Wrap">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="#5F4200" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsStatusSuccess}" Value="True">
+                                    <Setter Property="Foreground" Value="#1E5E2E" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </Border>
         </Grid>
     </DockPanel>
 </Window>
