@@ -51,7 +51,17 @@ public sealed class SyncService
         cancellationToken.ThrowIfCancellationRequested();
 
         var actions = await AnalyzeChangesAsync(configuration, cancellationToken).ConfigureAwait(false);
-        return BuildPreview(configuration, actions);
+        return BuildPreview(configuration, actions, cancellationToken);
+    }
+
+    public IReadOnlyList<SyncPreviewItem> BuildPreview(
+        SyncConfiguration configuration,
+        IReadOnlyList<SyncAction> actions,
+        CancellationToken cancellationToken = default)
+    {
+        DirectorySnapshotBuilder.EnsureConfigurationIsValid(configuration);
+        cancellationToken.ThrowIfCancellationRequested();
+        return BuildPreviewCore(configuration, actions, cancellationToken);
     }
 
     public async Task<SyncResult> ExecuteAsync(
@@ -129,7 +139,10 @@ public sealed class SyncService
         _ => throw new NotSupportedException($"Unsupported sync mode: {configuration.Mode}"),
     };
 
-    private static IReadOnlyList<SyncPreviewItem> BuildPreview(SyncConfiguration configuration, IReadOnlyList<SyncAction> actions)
+    private static IReadOnlyList<SyncPreviewItem> BuildPreviewCore(
+        SyncConfiguration configuration,
+        IReadOnlyList<SyncAction> actions,
+        CancellationToken cancellationToken)
     {
         var sourceFiles = DirectorySnapshotBuilder.Build(configuration.SourcePath);
         var destinationFiles = DirectorySnapshotBuilder.Build(configuration.DestinationPath);
@@ -150,6 +163,8 @@ public sealed class SyncService
         return allRelativePaths
             .Select(relativePath =>
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 var hasSourceDirectory = sourceDirectories.Contains(relativePath);
                 var hasDestinationDirectory = destinationDirectories.Contains(relativePath);
                 var hasSourceFile = sourceFiles.TryGetValue(relativePath, out var sourceFile);

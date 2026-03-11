@@ -387,6 +387,29 @@ public sealed class SyncServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task BuildPreview_UsesProvidedActionsWithoutReanalyzing()
+    {
+        var source = CreateDirectory("source");
+        var destination = CreateDirectory("destination");
+        WriteFile(source, "fresh.txt", "new", new DateTime(2024, 5, 3, 0, 0, 0, DateTimeKind.Utc));
+
+        var service = new SyncService();
+        var configuration = new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.OneWay,
+        };
+
+        var actions = await service.AnalyzeChangesAsync(configuration);
+        File.Copy(Path.Combine(source, "fresh.txt"), Path.Combine(destination, "fresh.txt"));
+
+        var preview = service.BuildPreview(configuration, actions);
+
+        Assert.Contains(preview, item => item.RelativePath == "fresh.txt" && item.Category == SyncPreviewCategory.NewFiles && item.Status == "New File");
+    }
+
+    [Fact]
     public async Task ExecutePlannedAsync_UsesProvidedActionOrder()
     {
         var source = CreateDirectory("source");

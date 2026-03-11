@@ -1,15 +1,25 @@
 using System.Globalization;
+using System.Collections.ObjectModel;
 using System.Windows;
+using UsbFileSync.App.Services;
+using UsbFileSync.App.ViewModels;
 
 namespace UsbFileSync.App;
 
 public partial class SettingsDialog : Window
 {
-    public SettingsDialog(int parallelCopyCount)
+    public SettingsDialog(int parallelCopyCount, IReadOnlyDictionary<string, string>? previewProviderMappings = null)
     {
         InitializeComponent();
         ParallelCopyCount = Math.Max(0, parallelCopyCount);
         ParallelCopyCountTextBox.Text = ParallelCopyCount.ToString(CultureInfo.InvariantCulture);
+        ProviderOptions = Enum.GetValues<PreviewProviderKind>();
+        PreviewProviderMappingItems = CreateMappingItems(previewProviderMappings);
+        PreviewProviderMappingsDataGrid.ItemsSource = PreviewProviderMappingItems;
+        if (PreviewProviderMappingsDataGrid.Columns[1] is System.Windows.Controls.DataGridComboBoxColumn comboColumn)
+        {
+            comboColumn.ItemsSource = ProviderOptions;
+        }
         Loaded += (_, _) =>
         {
             ParallelCopyCountTextBox.Focus();
@@ -18,6 +28,10 @@ public partial class SettingsDialog : Window
     }
 
     public int ParallelCopyCount { get; private set; }
+
+    public ObservableCollection<PreviewProviderMappingViewModel> PreviewProviderMappingItems { get; }
+
+    public Array ProviderOptions { get; }
 
     private void OnSaveClicked(object sender, RoutedEventArgs e)
     {
@@ -31,7 +45,48 @@ public partial class SettingsDialog : Window
         }
 
         ParallelCopyCount = value;
+        if (!TryCreateSerializableMappings(PreviewProviderMappingItems, out var mappings, out var errorMessage))
+        {
+            System.Windows.MessageBox.Show(this, errorMessage, "Invalid preview mapping", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        _previewProviderMappings = mappings;
         DialogResult = true;
+    }
+
+    public IReadOnlyDictionary<string, string> PreviewProviderMappings => _previewProviderMappings;
+
+    private Dictionary<string, string> _previewProviderMappings = PreviewProviderDefaults.CreateSerializableMapping();
+
+    private void OnAddMappingClicked(object sender, RoutedEventArgs e)
+    {
+        var item = new PreviewProviderMappingViewModel
+        {
+            Extension = ".ext",
+            ProviderKind = PreviewProviderKind.Unsupported,
+        };
+
+        PreviewProviderMappingItems.Add(item);
+        PreviewProviderMappingsDataGrid.SelectedItem = item;
+        PreviewProviderMappingsDataGrid.ScrollIntoView(item);
+    }
+
+    private void OnRemoveMappingClicked(object sender, RoutedEventArgs e)
+    {
+        if (PreviewProviderMappingsDataGrid.SelectedItem is PreviewProviderMappingViewModel mapping)
+        {
+            PreviewProviderMappingItems.Remove(mapping);
+        }
+    }
+
+    private void OnRestoreDefaultsClicked(object sender, RoutedEventArgs e)
+    {
+        PreviewProviderMappingItems.Clear();
+        foreach (var item in CreateMappingItems(PreviewProviderDefaults.CreateSerializableMapping()))
+        {
+            PreviewProviderMappingItems.Add(item);
+        }
     }
 
     public static bool TryParseParallelCopyCount(string? text, out int value)
@@ -44,5 +99,57 @@ public partial class SettingsDialog : Window
 
         value = 0;
         return false;
+    }
+
+    public static bool TryCreateSerializableMappings(
+        IEnumerable<PreviewProviderMappingViewModel> mappings,
+        out Dictionary<string, string> serializedMappings,
+        out string errorMessage)
+    {
+        serializedMappings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var mapping in mappings)
+        {
+            var normalizedExtension = PreviewProviderDefaults.NormalizeExtension(mapping.Extension);
+            if (string.IsNullOrWhiteSpace(normalizedExtension) || normalizedExtension == ".")
+            {
+                errorMessage = "Each preview mapping needs a valid file extension such as .txt or .pdf.";
+                return false;
+            }
+
+            if (serializedMappings.ContainsKey(normalizedExtension))
+            {
+                errorMessage = $"The extension {normalizedExtension} is listed more than once.";
+                return false;
+            }
+
+            serializedMappings[normalizedExtension] = mapping.ProviderKind.ToString();
+        }
+
+        errorMessage = string.Empty;
+        return true;
+    }
+
+    private static ObservableCollection<PreviewProviderMappingViewModel> CreateMappingItems(IReadOnlyDictionary<string, string>? previewProviderMappings)
+    {
+        var items = new ObservableCollection<PreviewProviderMappingViewModel>();
+        var mappings = previewProviderMappings?.Count > 0
+            ? previewProviderMappings
+            : PreviewProviderDefaults.CreateSerializableMapping();
+
+        foreach (var pair in mappings.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            if (!Enum.TryParse<PreviewProviderKind>(pair.Value, ignoreCase: true, out var providerKind))
+            {
+                continue;
+            }
+
+            items.Add(new PreviewProviderMappingViewModel
+            {
+                Extension = pair.Key,
+                ProviderKind = providerKind,
+            });
+        }
+
+        return items;
     }
 }

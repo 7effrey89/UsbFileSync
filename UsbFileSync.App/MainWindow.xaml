@@ -14,6 +14,7 @@
         Background="#F3F3F3"
         FontFamily="Segoe UI">
     <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
         <SolidColorBrush x:Key="WindowBackgroundBrush" Color="#F3F3F3" />
         <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FFFFFF" />
         <SolidColorBrush x:Key="CardBorderBrush" Color="#E5E5E5" />
@@ -717,7 +718,8 @@
                             <TextBlock Margin="0,6,0,0" Text="Use the tabs to filter the preview table by new, changed, deleted, unchanged, or all items." Foreground="{StaticResource SubtleTextBrush}" />
                         </StackPanel>
 
-                        <TabControl x:Name="PreviewTabControl" Grid.Row="1">
+                        <Grid Grid.Row="1">
+                            <TabControl x:Name="PreviewTabControl">
                             <TabItem>
                                 <TabItem.Header>
                                     <StackPanel Orientation="Horizontal">
@@ -918,7 +920,8 @@
                                     </DataGrid.Columns>
                                 </DataGrid>
                             </TabItem>
-                        </TabControl>
+                            </TabControl>
+                        </Grid>
                     </Grid>
                 </Border>
 
@@ -1036,6 +1039,37 @@
                         </Style>
                     </TextBlock.Style>
                 </TextBlock>
+            </Border>
+
+            <Border Grid.RowSpan="3"
+                    Background="#CCFFFFFF"
+                    Visibility="{Binding IsBusy, Converter={StaticResource BooleanToVisibilityConverter}}"
+                    Panel.ZIndex="20">
+                <Border HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Width="340"
+                        Padding="30,24"
+                        Background="#FFFFFF"
+                        BorderBrush="#D9E4EE"
+                        BorderThickness="1"
+                        CornerRadius="8">
+                    <StackPanel>
+                        <ProgressBar Height="8"
+                                     IsIndeterminate="True"
+                                     Style="{StaticResource RoundedProgressBarStyle}" />
+                        <TextBlock Margin="0,16,0,0"
+                                   HorizontalAlignment="Center"
+                                   Text="Loading preview..."
+                                   FontSize="18"
+                                   FontWeight="SemiBold"
+                                   Foreground="{StaticResource HeaderTextBrush}" />
+                        <TextBlock Margin="0,8,0,0"
+                                   HorizontalAlignment="Center"
+                                   TextAlignment="Center"
+                                   Text="Scanning files and building the synchronization preview table."
+                                   Foreground="{StaticResource SubtleTextBrush}" />
+                    </StackPanel>
+                </Border>
             </Border>
         </Grid>
     </DockPanel>

@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Windows.Data;
+using System.Windows.Threading;
 using UsbFileSync.App.Commands;
 using UsbFileSync.App.Services;
 using UsbFileSync.Core.Models;
@@ -51,6 +52,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _detectMoves = true;
     private bool _dryRun = true;
     private bool _verifyChecksums;
+    private Dictionary<string, string> _previewProviderMappings = PreviewProviderDefaults.CreateSerializableMapping();
     private bool _isBusy;
     private bool _isSyncRunning;
     private bool _isLoadingSavedConfiguration;
@@ -546,6 +548,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         DryRun = DryRun,
         VerifyChecksums = VerifyChecksums,
         ParallelCopyCount = ParallelCopyCount,
+        PreviewProviderMappings = new Dictionary<string, string>(_previewProviderMappings, StringComparer.OrdinalIgnoreCase),
     };
 
     public void UpdateParallelCopyCount(int parallelCopyCount)
@@ -554,6 +557,16 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         AddLog("Settings", ParallelCopyCount == 0
             ? "Parallel copy count set to auto."
             : $"Parallel copy count set to {ParallelCopyCount}.");
+    }
+
+    public IReadOnlyDictionary<string, string> GetPreviewProviderMappings() =>
+        new Dictionary<string, string>(_previewProviderMappings, StringComparer.OrdinalIgnoreCase);
+
+    public void UpdatePreviewProviderMappings(IReadOnlyDictionary<string, string> mappings)
+    {
+        _previewProviderMappings = new Dictionary<string, string>(mappings, StringComparer.OrdinalIgnoreCase);
+        HandleConfigurationChanged();
+        AddLog("Settings", $"Preview provider mappings updated for {_previewProviderMappings.Count} file extensions.");
     }
 
     public void SelectAllInTab(PreviewTabKind tabKind)
@@ -614,11 +627,17 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         await RunBusyOperationAsync(async () =>
         {
             var configuration = CreateConfiguration();
-            var actionsTask = _syncService.AnalyzeChangesAsync(configuration);
-            var previewTask = _syncService.BuildPreviewAsync(configuration);
-            await Task.WhenAll(actionsTask, previewTask).ConfigureAwait(true);
-            var actions = actionsTask.Result;
-            var preview = previewTask.Result;
+            await EnsureBusyOverlayCanRenderAsync().ConfigureAwait(true);
+
+            var analysisResult = await Task.Run(async () =>
+            {
+                var actions = await _syncService.AnalyzeChangesAsync(configuration).ConfigureAwait(false);
+                var preview = _syncService.BuildPreview(configuration, actions);
+                return new AnalyzePreviewResult(actions, preview);
+            }).ConfigureAwait(true);
+
+            var actions = analysisResult.Actions;
+            var preview = analysisResult.Preview;
 
             ReplaceActions(actions);
             ReplacePreview(preview);
@@ -651,8 +670,17 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             var configuration = CreateConfiguration();
             if (PlannedActions.Count == 0)
             {
-                var initialActions = await _syncService.AnalyzeChangesAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(true);
-                var initialPreview = await _syncService.BuildPreviewAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(true);
+                await EnsureBusyOverlayCanRenderAsync().ConfigureAwait(true);
+
+                var initialAnalysis = await Task.Run(async () =>
+                {
+                    var initialActions = await _syncService.AnalyzeChangesAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(false);
+                    var initialPreview = _syncService.BuildPreview(configuration, initialActions, cancellationTokenSource.Token);
+                    return new AnalyzePreviewResult(initialActions, initialPreview);
+                }, cancellationTokenSource.Token).ConfigureAwait(true);
+
+                var initialActions = initialAnalysis.Actions;
+                var initialPreview = initialAnalysis.Preview;
                 ReplaceActions(initialActions);
                 ReplacePreview(initialPreview);
                 ReplaceQueue(GetSelectedActions());
@@ -922,6 +950,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             DryRun = savedConfiguration.DryRun;
             VerifyChecksums = savedConfiguration.VerifyChecksums;
             ParallelCopyCount = savedConfiguration.ParallelCopyCount;
+            _previewProviderMappings = savedConfiguration.PreviewProviderMappings?.Count > 0
+                ? new Dictionary<string, string>(savedConfiguration.PreviewProviderMappings, StringComparer.OrdinalIgnoreCase)
+                : PreviewProviderDefaults.CreateSerializableMapping();
             SetStatusMessage(
                 IsConfigurationComplete()
                     ? "Restored the previous sync configuration."
@@ -1065,6 +1096,21 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             IsBusy = false;
         }
     }
+
+    private static async Task EnsureBusyOverlayCanRenderAsync()
+    {
+        if (System.Windows.Application.Current is null)
+        {
+            await Task.Yield();
+            return;
+        }
+
+        await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+    }
+
+    private sealed record AnalyzePreviewResult(
+        IReadOnlyList<SyncAction> Actions,
+        IReadOnlyList<SyncPreviewItem> Preview);
 
     private void ReplaceActions(IEnumerable<SyncAction> actions)
     {

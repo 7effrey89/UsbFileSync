@@ -23,6 +23,17 @@ UsbFileSync is a Windows desktop file synchronization tool built with WPF and .N
 - Windows shell file icons in the preview so items match Explorer more closely.
 - Clickable source and destination preview paths that open Explorer and select the file when possible, plus a right-click menu with `Open file` and `Open file folder` actions.
 - A `Show comparison` action on the source preview item context menu that opens a side-by-side source/destination comparison dialog with metadata and file previews.
+- Embedded PDF preview in the comparison dialog using WebView2, plus an embedded media player for common audio and video formats when the local Windows codecs support them.
+- Preview provider mappings in `Application Settings` so you can assign file extensions to the `Text`, `Image`, `PDF`, `Media`, or `Unsupported` preview providers.
+
+### Using Show Comparison
+
+1. Click `Analyze` to build the synchronization preview.
+2. In the preview table, right-click the source item name for the row you want to inspect.
+3. Select `Show comparison`.
+4. Review the side-by-side source and destination panes, including metadata, file previews, and clickable full paths.
+
+![Show comparison preview](docs/images/Screenshot%202026-03-11%20234859.png)
 
 ## Safety Behavior
 

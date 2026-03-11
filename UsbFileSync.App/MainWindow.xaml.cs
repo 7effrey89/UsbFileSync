@@ -22,7 +22,7 @@ public partial class MainWindow : Window
 
     private void OnOpenSettingsClicked(object sender, RoutedEventArgs e)
     {
-        var dialog = new SettingsDialog(_viewModel.ParallelCopyCount)
+        var dialog = new SettingsDialog(_viewModel.ParallelCopyCount, _viewModel.GetPreviewProviderMappings())
         {
             Owner = this,
         };
@@ -30,6 +30,7 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() == true)
         {
             _viewModel.UpdateParallelCopyCount(dialog.ParallelCopyCount);
+            _viewModel.UpdatePreviewProviderMappings(dialog.PreviewProviderMappings);
         }
     }
 
@@ -99,7 +100,7 @@ public partial class MainWindow : Window
 
         try
         {
-            var dialog = new FileComparisonDialog(row)
+            var dialog = new FileComparisonDialog(row, _viewModel.GetPreviewProviderMappings())
             {
                 Owner = this,
             };

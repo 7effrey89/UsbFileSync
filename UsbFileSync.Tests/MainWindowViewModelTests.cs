@@ -636,13 +636,13 @@ public sealed class MainWindowViewModelTests
     [Fact]
     public void FileComparisonPaneViewModel_Create_UsesEmptyPreviewWhenPathMissing()
     {
-        var pane = FileComparisonPaneViewModel.Create("Destination", string.Empty, string.Empty, string.Empty);
+        var pane = FileComparisonPaneViewModel.Create("Destination", string.Empty, string.Empty, string.Empty, new FilePreviewService());
 
         Assert.Equal(string.Empty, pane.FileName);
         Assert.False(pane.HasFile);
         Assert.False(pane.HasPath);
         Assert.True(pane.HasTextPreview);
-        Assert.Equal("No file", pane.PreviewText);
+        Assert.Equal("No File", pane.PreviewText);
         Assert.False(pane.HasImagePreview);
     }
 
@@ -652,7 +652,7 @@ public sealed class MainWindowViewModelTests
         using var workspace = new SyncTestWorkspace();
         workspace.WriteSourceFile("preview.txt", "hello comparison");
 
-        var pane = FileComparisonPaneViewModel.Create("Source", Path.Combine(workspace.SourcePath, "preview.txt"), "16 B", "2026-03-11 10:00:00");
+        var pane = FileComparisonPaneViewModel.Create("Source", Path.Combine(workspace.SourcePath, "preview.txt"), "16 B", "2026-03-11 10:00:00", new FilePreviewService());
 
         Assert.True(pane.HasPath);
         Assert.True(pane.HasTextPreview);
@@ -666,11 +666,37 @@ public sealed class MainWindowViewModelTests
         using var workspace = new SyncTestWorkspace();
         workspace.WriteSourceFile("archive.bin", "binary-ish");
 
-        var pane = FileComparisonPaneViewModel.Create("Source", Path.Combine(workspace.SourcePath, "archive.bin"), "10 B", "2026-03-11 10:00:00");
+        var pane = FileComparisonPaneViewModel.Create("Source", Path.Combine(workspace.SourcePath, "archive.bin"), "10 B", "2026-03-11 10:00:00", new FilePreviewService());
 
         Assert.True(pane.HasFile);
         Assert.Equal("Preview for item type not supported", pane.PreviewText);
         Assert.False(pane.HasImagePreview);
+    }
+
+    [Fact]
+    public void FileComparisonPaneViewModel_Create_UsesPdfPreviewForPdfFiles()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("guide.pdf", "placeholder");
+
+        var pane = FileComparisonPaneViewModel.Create("Source", Path.Combine(workspace.SourcePath, "guide.pdf"), "1 KB", "2026-03-11 10:00:00", new FilePreviewService());
+
+        Assert.True(pane.HasFile);
+        Assert.True(pane.HasPdfPreview);
+        Assert.False(pane.HasMediaPreview);
+    }
+
+    [Fact]
+    public void FileComparisonPaneViewModel_Create_UsesMediaPreviewForMediaFiles()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("clip.mp4", "placeholder");
+
+        var pane = FileComparisonPaneViewModel.Create("Source", Path.Combine(workspace.SourcePath, "clip.mp4"), "1 KB", "2026-03-11 10:00:00", new FilePreviewService());
+
+        Assert.True(pane.HasFile);
+        Assert.True(pane.HasMediaPreview);
+        Assert.False(pane.HasPdfPreview);
     }
 
     private static async Task WaitForAsync(Func<bool> condition)

@@ -15,4 +15,6 @@ public sealed class SyncConfiguration
     public bool VerifyChecksums { get; init; }
 
     public int ParallelCopyCount { get; init; } = 1;
+
+    public Dictionary<string, string> PreviewProviderMappings { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 }
