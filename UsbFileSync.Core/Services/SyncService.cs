@@ -6,6 +6,18 @@ namespace UsbFileSync.Core.Services;
 
 public sealed class SyncService
 {
+    private const long OneMegabyte = 1024L * 1024;
+    private const long FourMegabytes = 4 * OneMegabyte;
+    private const long SixteenMegabytes = 16 * OneMegabyte;
+    private const long ThirtyTwoMegabytes = 32 * OneMegabyte;
+    private const long SixtyFourMegabytes = 64 * OneMegabyte;
+    private const long OneHundredTwentyEightMegabytes = 128 * OneMegabyte;
+    private const long TwoHundredFiftySixMegabytes = 256 * OneMegabyte;
+    private const int MinimumAutoParallelismLimit = 4;
+    private const int MaximumAutoParallelismLimit = 32;
+    private const int FastCopyThresholdMilliseconds = 250;
+    private const int SlowCopyThresholdMilliseconds = 4000;
+
     private readonly ISyncStrategy _oneWayStrategy;
     private readonly ISyncStrategy _twoWayStrategy;
 
@@ -288,16 +300,16 @@ public sealed class SyncService
         }
 
         var averageSize = remainingItems.Average(item => (double)item.TotalBytes);
-        var smallFileRatio = remainingItems.Count(item => item.TotalBytes <= 1 * 1024 * 1024) / (double)remainingItems.Count;
-        var largeFileRatio = remainingItems.Count(item => item.TotalBytes >= 128L * 1024 * 1024) / (double)remainingItems.Count;
+        var smallFileRatio = remainingItems.Count(item => item.TotalBytes <= OneMegabyte) / (double)remainingItems.Count;
+        var largeFileRatio = remainingItems.Count(item => item.TotalBytes >= OneHundredTwentyEightMegabytes) / (double)remainingItems.Count;
 
         var estimatedParallelism = averageSize switch
         {
-            >= 256L * 1024 * 1024 => 2,
-            >= 64L * 1024 * 1024 => 4,
-            >= 16L * 1024 * 1024 => 6,
-            >= 4L * 1024 * 1024 => 8,
-            >= 1L * 1024 * 1024 => 12,
+            >= TwoHundredFiftySixMegabytes => 2,
+            >= SixtyFourMegabytes => 4,
+            >= SixteenMegabytes => 6,
+            >= FourMegabytes => 8,
+            >= OneMegabyte => 12,
             _ => 16,
         };
 
@@ -314,17 +326,17 @@ public sealed class SyncService
         if (completedSamples.Count >= 2)
         {
             var averageDuration = completedSamples.Average(sample => sample.Duration.TotalMilliseconds);
-            if (averageDuration < 250 && averageSize <= 1 * 1024 * 1024)
+            if (averageDuration < FastCopyThresholdMilliseconds && averageSize <= OneMegabyte)
             {
                 estimatedParallelism += 2;
             }
-            else if (averageDuration > 4000 && averageSize >= 32L * 1024 * 1024)
+            else if (averageDuration > SlowCopyThresholdMilliseconds && averageSize >= ThirtyTwoMegabytes)
             {
                 estimatedParallelism = Math.Max(2, estimatedParallelism - 2);
             }
         }
 
-        var autoParallelismLimit = Math.Clamp(Environment.ProcessorCount * 2, 4, 32);
+        var autoParallelismLimit = Math.Clamp(Environment.ProcessorCount * 2, MinimumAutoParallelismLimit, MaximumAutoParallelismLimit);
         return Math.Clamp(estimatedParallelism, 1, Math.Min(autoParallelismLimit, remainingItems.Count));
     }
 
