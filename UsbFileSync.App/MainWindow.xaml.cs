@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Threading;
 using UsbFileSync.App.ViewModels;
 
@@ -87,6 +88,33 @@ public partial class MainWindow : Window
         };
 
         dialog.ShowDialog();
+    }
+
+    private void OnShowComparisonClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: SyncPreviewRowViewModel row })
+        {
+            return;
+        }
+
+        try
+        {
+            var dialog = new FileComparisonDialog(row)
+            {
+                Owner = this,
+            };
+
+            dialog.ShowDialog();
+        }
+        catch (Exception exception)
+        {
+            System.Windows.MessageBox.Show(
+                this,
+                $"Could not open the comparison view.\n\n{exception.Message}",
+                "Comparison unavailable",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Warning);
+        }
     }
 
     private void OnSourcePathTextBoxGotKeyboardFocus(object sender, RoutedEventArgs e)

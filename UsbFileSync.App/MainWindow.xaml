@@ -339,6 +339,10 @@
                         <MenuItem Header="Open file folder"
                                   Command="{Binding PlacementTarget.Tag.OpenPreviewContainingFolderCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                   CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                        <Separator />
+                        <MenuItem Header="Show comparison"
+                                  Tag="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                  Click="OnShowComparisonClicked" />
                     </ContextMenu>
                 </Button.ContextMenu>
                 <Button.Tag>

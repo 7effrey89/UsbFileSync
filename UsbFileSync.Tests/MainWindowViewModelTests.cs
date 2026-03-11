@@ -633,6 +633,46 @@ public sealed class MainWindowViewModelTests
         Assert.Single(viewModel.RemainingQueue);
     }
 
+    [Fact]
+    public void FileComparisonPaneViewModel_Create_UsesEmptyPreviewWhenPathMissing()
+    {
+        var pane = FileComparisonPaneViewModel.Create("Destination", string.Empty, string.Empty, string.Empty);
+
+        Assert.Equal(string.Empty, pane.FileName);
+        Assert.False(pane.HasFile);
+        Assert.False(pane.HasPath);
+        Assert.True(pane.HasTextPreview);
+        Assert.Equal("No file", pane.PreviewText);
+        Assert.False(pane.HasImagePreview);
+    }
+
+    [Fact]
+    public void FileComparisonPaneViewModel_Create_LoadsTextPreviewForTextFiles()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("preview.txt", "hello comparison");
+
+        var pane = FileComparisonPaneViewModel.Create("Source", Path.Combine(workspace.SourcePath, "preview.txt"), "16 B", "2026-03-11 10:00:00");
+
+        Assert.True(pane.HasPath);
+        Assert.True(pane.HasTextPreview);
+        Assert.Contains("hello comparison", pane.PreviewText);
+        Assert.False(pane.HasImagePreview);
+    }
+
+    [Fact]
+    public void FileComparisonPaneViewModel_Create_UsesMessageForUnsupportedFileTypes()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("archive.bin", "binary-ish");
+
+        var pane = FileComparisonPaneViewModel.Create("Source", Path.Combine(workspace.SourcePath, "archive.bin"), "10 B", "2026-03-11 10:00:00");
+
+        Assert.True(pane.HasFile);
+        Assert.Equal("Preview for item type not supported", pane.PreviewText);
+        Assert.False(pane.HasImagePreview);
+    }
+
     private static async Task WaitForAsync(Func<bool> condition)
     {
         var deadline = DateTime.UtcNow.AddSeconds(3);
