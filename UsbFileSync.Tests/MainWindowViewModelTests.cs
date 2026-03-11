@@ -9,6 +9,19 @@ namespace UsbFileSync.Tests;
 public sealed class MainWindowViewModelTests
 {
     [Fact]
+    public void ShouldLogCopyStart_LogsEachItemOnlyOnceAcrossInterleavedProgress()
+    {
+        var loggedTransferItems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        Assert.True(MainWindowViewModel.ShouldLogCopyStart(loggedTransferItems, new SyncProgress(0, 3, "a.bin", 0, 100, 0)));
+        Assert.True(MainWindowViewModel.ShouldLogCopyStart(loggedTransferItems, new SyncProgress(0, 3, "b.bin", 0, 100, 0)));
+        Assert.False(MainWindowViewModel.ShouldLogCopyStart(loggedTransferItems, new SyncProgress(0, 3, "a.bin", 50, 100, 50)));
+        Assert.True(MainWindowViewModel.ShouldLogCopyStart(loggedTransferItems, new SyncProgress(1, 3, "c.bin", 0, 100, 0)));
+        Assert.False(MainWindowViewModel.ShouldLogCopyStart(loggedTransferItems, new SyncProgress(2, 3, "b.bin", 100, 100, 100)));
+        Assert.False(MainWindowViewModel.ShouldLogCopyStart(loggedTransferItems, new SyncProgress(3, 3, "done.bin", 100, 100, 100)));
+    }
+
+    [Fact]
     public void BrowseSourcePathCommand_UsesFolderPickerSelection()
     {
         var folderPicker = new StubFolderPickerService("F:\\Primary");

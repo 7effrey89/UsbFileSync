@@ -594,7 +594,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             CurrentTransferProgressValue = 0;
             AddLog("Sync", $"Synchronization started with {actions.Count} queued operation(s).");
 
-            string? activeTransferItem = null;
+            var loggedTransferItems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var progress = new Progress<SyncProgress>(update =>
             {
                 while (_completedQueuedActions < update.CompletedOperations && _completedQueuedActions < _queuedActions.Count)
@@ -611,9 +611,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                     _completedQueuedActions++;
                 }
 
-                if (!string.Equals(activeTransferItem, update.CurrentItem, StringComparison.OrdinalIgnoreCase) && update.CompletedOperations < update.TotalOperations)
+                if (ShouldLogCopyStart(loggedTransferItems, update))
                 {
-                    activeTransferItem = update.CurrentItem;
                     AddLog("Copy", $"Processing {update.CurrentItem}");
                 }
 
@@ -669,6 +668,13 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         IsSyncRunning = false;
+    }
+
+    internal static bool ShouldLogCopyStart(ISet<string> loggedTransferItems, SyncProgress update)
+    {
+        return update.CompletedOperations < update.TotalOperations
+            && !string.IsNullOrWhiteSpace(update.CurrentItem)
+            && loggedTransferItems.Add(update.CurrentItem);
     }
 
     private void HandleConfigurationChanged()
