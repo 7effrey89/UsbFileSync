@@ -211,6 +211,7 @@ public sealed class SyncPreviewRowViewModelTests
         Assert.Equal("Paused", row.ProgressStateText);
         Assert.Equal("Paused", row.TransferSpeedText);
         Assert.Equal("Add", row.SyncActionText);
+        Assert.Equal(50.4, row.SyncActionFillWidth);
 
         row.MarkCompleted();
         Assert.Equal(100, row.ProgressValue);

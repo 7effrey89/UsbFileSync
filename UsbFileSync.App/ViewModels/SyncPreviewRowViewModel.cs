@@ -183,13 +183,6 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
         _ => false,
     };
 
-    public string SyncActionShapeData => _actionType switch
-    {
-        null => RectangleGeometry,
-        SyncActionType.NoOp => RectangleGeometry,
-        _ => DiamondGeometry,
-    };
-
     public Geometry SyncActionGeometry => _actionType switch
     {
         null => RectangleGeometryShape,
