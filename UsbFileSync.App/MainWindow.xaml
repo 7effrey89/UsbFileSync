@@ -253,6 +253,7 @@
                     Padding="0"
                     HorizontalAlignment="Left"
                     Cursor="Hand"
+                    IsEnabled="{Binding HasSourcePath}"
                     Command="{Binding DataContext.OpenPreviewItemCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                     CommandParameter="{Binding}">
                 <Button.ContextMenu>
@@ -302,6 +303,7 @@
                                VerticalAlignment="Center"
                                TextTrimming="CharacterEllipsis"
                                FontWeight="SemiBold"
+                               Cursor="Hand"
                                TextDecorations="Underline"
                                Foreground="{Binding SourcePathBrush}" />
                     <TextBlock Margin="8,0,0,0"
@@ -329,6 +331,7 @@
                     Padding="0"
                     HorizontalAlignment="Left"
                     Cursor="Hand"
+                    IsEnabled="{Binding HasDestinationPath}"
                     Command="{Binding DataContext.OpenDestinationPreviewItemCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                     CommandParameter="{Binding}">
                 <Button.ContextMenu>
@@ -349,6 +352,7 @@
                                VerticalAlignment="Center"
                                TextTrimming="CharacterEllipsis"
                                FontWeight="SemiBold"
+                               Cursor="Hand"
                                TextDecorations="Underline"
                                Foreground="{Binding DestinationPathBrush}" />
                     <TextBlock Margin="8,0,0,0"

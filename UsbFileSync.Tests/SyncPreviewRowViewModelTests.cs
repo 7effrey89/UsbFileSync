@@ -26,6 +26,7 @@ public sealed class SyncPreviewRowViewModelTests
             PlannedActionType: SyncActionType.CopyToDestination), iconProvider);
 
         Assert.Equal(@"F:\folder\file.txt", row.Name);
+        Assert.Equal(@"F:\folder\file.txt", row.OpenPath);
         Assert.Equal(@"F:\folder\file.txt", iconProvider.RequestedPath);
         Assert.False(iconProvider.RequestedIsDirectory);
         Assert.Null(row.IconSource);
@@ -63,15 +64,20 @@ public sealed class SyncPreviewRowViewModelTests
             PlannedActionType: SyncActionType.DeleteDirectoryFromDestination), iconProvider);
 
         Assert.Equal(@"E:\folder", row.Name);
+        Assert.Equal(@"E:\folder", row.OpenPath);
         Assert.Equal(@"E:\folder", iconProvider.RequestedPath);
         Assert.True(iconProvider.RequestedIsDirectory);
         Assert.Same(iconProvider.IconToReturn, row.IconSource);
         Assert.Equal("\uE8B7", row.IconGlyph);
+        Assert.False(row.HasSourcePath);
+        Assert.True(row.HasDestinationPath);
         Assert.Equal("×", row.StatusGlyph);
         Assert.Equal("Delete", row.SyncActionText);
         Assert.Equal(string.Empty, row.SourceStatusGlyph);
         Assert.Equal("×", row.DestinationStatusGlyph);
         AssertBrushColor(row.DestinationPathBrush, 196, 43, 28);
+        Assert.False(row.IsSourceAction);
+        Assert.True(row.IsDestinationAction);
         Assert.Equal("Pending", row.TransferSpeedText);
         Assert.Equal(0, row.ProgressValue);
         Assert.Equal("Queued", row.ProgressStateText);
@@ -148,6 +154,8 @@ public sealed class SyncPreviewRowViewModelTests
         Assert.Equal("Move", row.SyncActionText);
         Assert.Equal(string.Empty, row.SourceStatusGlyph);
         Assert.Equal("⇄", row.DestinationStatusGlyph);
+        Assert.False(row.IsSourceAction);
+        Assert.True(row.IsDestinationAction);
     }
 
     [Fact]
@@ -208,6 +216,42 @@ public sealed class SyncPreviewRowViewModelTests
         Assert.Equal("Done", row.ProgressStateText);
         Assert.Equal("Done", row.TransferSpeedText);
         Assert.Equal("Added", row.SyncActionText);
+    }
+
+    [Theory]
+    [InlineData(SyncActionType.CreateDirectoryOnDestination, "Add", "Added")]
+    [InlineData(SyncActionType.CreateDirectoryOnSource, "Add", "Added")]
+    [InlineData(SyncActionType.CopyToDestination, "Add", "Added")]
+    [InlineData(SyncActionType.CopyToSource, "Add", "Added")]
+    [InlineData(SyncActionType.OverwriteFileOnDestination, "Overwrite", "Overwritten")]
+    [InlineData(SyncActionType.OverwriteFileOnSource, "Overwrite", "Overwritten")]
+    [InlineData(SyncActionType.DeleteDirectoryFromDestination, "Delete", "Deleted")]
+    [InlineData(SyncActionType.DeleteDirectoryFromSource, "Delete", "Deleted")]
+    [InlineData(SyncActionType.DeleteFromDestination, "Delete", "Deleted")]
+    [InlineData(SyncActionType.DeleteFromSource, "Delete", "Deleted")]
+    [InlineData(SyncActionType.MoveOnDestination, "Move", "Moved")]
+    [InlineData(SyncActionType.NoOp, "Unchanged", "Unchanged")]
+    public void SyncActionText_UsesExpectedPendingAndCompletedLabels(SyncActionType actionType, string pendingText, string completedText)
+    {
+        var row = new SyncPreviewRowViewModel(new SyncPreviewItem(
+            RelativePath: "item.txt",
+            IsDirectory: false,
+            SourceFullPath: @"F:\item.txt",
+            SourceLength: 10,
+            SourceLastWriteTimeUtc: DateTime.UtcNow,
+            DestinationFullPath: @"E:\item.txt",
+            DestinationLength: 10,
+            DestinationLastWriteTimeUtc: DateTime.UtcNow,
+            Direction: "->",
+            Status: actionType is SyncActionType.NoOp ? "Unchanged" : "Modified",
+            Category: actionType is SyncActionType.NoOp ? SyncPreviewCategory.UnchangedFiles : SyncPreviewCategory.ChangedFiles,
+            PlannedActionType: actionType), new StubFileIconProvider(null));
+
+        Assert.Equal(pendingText, row.SyncActionText);
+
+        row.MarkCompleted();
+
+        Assert.Equal(completedText, row.SyncActionText);
     }
 
     private static void AssertBrushColor(Brush brush, byte red, byte green, byte blue)

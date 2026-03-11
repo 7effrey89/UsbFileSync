@@ -58,7 +58,7 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
 
     public string Name { get; }
 
-    public string OpenPath => SourcePath;
+    public string OpenPath => Name;
 
     public string OpenDestinationPath => DestinationPath;
 
@@ -90,6 +90,8 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
 
     public string SourcePath { get; }
 
+    public bool HasSourcePath => !string.IsNullOrWhiteSpace(SourcePath);
+
     public string SourceSize { get; }
 
     public string SourceModified { get; }
@@ -97,6 +99,8 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
     public string Direction { get; }
 
     public string DestinationPath { get; }
+
+    public bool HasDestinationPath => !string.IsNullOrWhiteSpace(DestinationPath);
 
     public string DestinationSize { get; }
 
@@ -106,9 +110,16 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
 
     public string Action { get; }
 
-    public string SyncActionText => _progressState == PreviewTransferState.Completed
-        ? GetCompletedActionText()
-        : GetBaseActionText();
+    public string SyncActionText
+    {
+        get
+        {
+            var actionText = GetActionTextPair();
+            return _progressState == PreviewTransferState.Completed
+                ? actionText.Completed
+                : actionText.Pending;
+        }
+    }
 
     public string ActionBadgeText => _actionType switch
     {
@@ -314,40 +325,22 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
         }
     }
 
-    private string GetBaseActionText() => _actionType switch
+    private (string Pending, string Completed) GetActionTextPair() => _actionType switch
     {
-        SyncActionType.CreateDirectoryOnDestination => "Add",
-        SyncActionType.CreateDirectoryOnSource => "Add",
-        SyncActionType.CopyToDestination => "Add",
-        SyncActionType.CopyToSource => "Add",
-        SyncActionType.OverwriteFileOnDestination => "Overwrite",
-        SyncActionType.OverwriteFileOnSource => "Overwrite",
-        SyncActionType.MoveOnDestination => "Move",
-        SyncActionType.DeleteDirectoryFromDestination => "Delete",
-        SyncActionType.DeleteDirectoryFromSource => "Delete",
-        SyncActionType.DeleteFromDestination => "Delete",
-        SyncActionType.DeleteFromSource => "Delete",
-        SyncActionType.NoOp => "Unchanged",
-        null => "Unchanged",
-        _ => Action,
-    };
-
-    private string GetCompletedActionText() => _actionType switch
-    {
-        SyncActionType.CreateDirectoryOnDestination => "Added",
-        SyncActionType.CreateDirectoryOnSource => "Added",
-        SyncActionType.CopyToDestination => "Added",
-        SyncActionType.CopyToSource => "Added",
-        SyncActionType.OverwriteFileOnDestination => "Overwritten",
-        SyncActionType.OverwriteFileOnSource => "Overwritten",
-        SyncActionType.MoveOnDestination => "Moved",
-        SyncActionType.DeleteDirectoryFromDestination => "Deleted",
-        SyncActionType.DeleteDirectoryFromSource => "Deleted",
-        SyncActionType.DeleteFromDestination => "Deleted",
-        SyncActionType.DeleteFromSource => "Deleted",
-        SyncActionType.NoOp => "Unchanged",
-        null => "Unchanged",
-        _ => Action,
+        SyncActionType.CreateDirectoryOnDestination => ("Add", "Added"),
+        SyncActionType.CreateDirectoryOnSource => ("Add", "Added"),
+        SyncActionType.CopyToDestination => ("Add", "Added"),
+        SyncActionType.CopyToSource => ("Add", "Added"),
+        SyncActionType.OverwriteFileOnDestination => ("Overwrite", "Overwritten"),
+        SyncActionType.OverwriteFileOnSource => ("Overwrite", "Overwritten"),
+        SyncActionType.MoveOnDestination => ("Move", "Moved"),
+        SyncActionType.DeleteDirectoryFromDestination => ("Delete", "Deleted"),
+        SyncActionType.DeleteDirectoryFromSource => ("Delete", "Deleted"),
+        SyncActionType.DeleteFromDestination => ("Delete", "Deleted"),
+        SyncActionType.DeleteFromSource => ("Delete", "Deleted"),
+        SyncActionType.NoOp => ("Unchanged", "Unchanged"),
+        null => ("Unchanged", "Unchanged"),
+        _ => (Action, Action),
     };
 
     private static string GetDisplayPath(SyncPreviewItem item)
