@@ -8,15 +8,17 @@ namespace UsbFileSync.App.ViewModels;
 
 public sealed class SyncPreviewRowViewModel : ObservableObject
 {
-    private static readonly System.Windows.Media.Brush PendingBrush = System.Windows.Media.Brushes.DarkGray;
-    private static readonly System.Windows.Media.Brush InProgressBrush = System.Windows.Media.Brushes.DarkOrange;
-    private static readonly System.Windows.Media.Brush CompletedBrush = System.Windows.Media.Brushes.ForestGreen;
-    private static readonly System.Windows.Media.Brush PausedBrush = System.Windows.Media.Brushes.Goldenrod;
+    private static readonly System.Windows.Media.Brush PendingBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(146, 146, 146));
+    private static readonly System.Windows.Media.Brush InProgressBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(15, 108, 189));
+    private static readonly System.Windows.Media.Brush CompletedBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(24, 142, 76));
+    private static readonly System.Windows.Media.Brush PausedBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(214, 140, 0));
     private static readonly System.Windows.Media.Brush NewStatusBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(18, 140, 68));
     private static readonly System.Windows.Media.Brush DeletedStatusBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(196, 43, 28));
     private static readonly System.Windows.Media.Brush ModifiedStatusBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(184, 125, 0));
+    private static readonly System.Windows.Media.Brush RenamedStatusBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(15, 108, 189));
     private static readonly System.Windows.Media.Brush UnchangedStatusBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(98, 98, 98));
 
+    private readonly SyncActionType? _actionType;
     private readonly bool _hasPlannedAction;
     private bool _isSelected;
     private double _progressValue;
@@ -40,6 +42,7 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
         DestinationSize = item.IsDirectory ? "Folder" : FormatSize(item.DestinationLength);
         DestinationModified = FormatTimestamp(item.DestinationLastWriteTimeUtc);
         Status = item.Status;
+        _actionType = item.PlannedActionType;
         Action = item.PlannedActionType?.ToString() ?? "NoAction";
         _hasPlannedAction = item.PlannedActionType.HasValue;
         _progressValue = _hasPlannedAction ? 0 : 100;
@@ -97,11 +100,48 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
 
     public string Action { get; }
 
+    public string ActionBadgeText => _actionType switch
+    {
+        SyncActionType.CreateDirectoryOnDestination => "ADD",
+        SyncActionType.CreateDirectoryOnSource => "ADD",
+        SyncActionType.CopyToDestination => "ADD",
+        SyncActionType.CopyToSource => "ADD",
+        SyncActionType.OverwriteFileOnDestination => "OVERWRITE",
+        SyncActionType.OverwriteFileOnSource => "OVERWRITE",
+        SyncActionType.MoveOnDestination => "MOVE",
+        SyncActionType.DeleteDirectoryFromDestination => "DELETE",
+        SyncActionType.DeleteDirectoryFromSource => "DELETE",
+        SyncActionType.DeleteFromDestination => "DELETE",
+        SyncActionType.DeleteFromSource => "DELETE",
+        SyncActionType.NoOp => "UNCHANGED",
+        null => "UNCHANGED",
+        _ => Action.ToUpperInvariant(),
+    };
+
+    public System.Windows.Media.Brush ActionBadgeBrush => _actionType switch
+    {
+        SyncActionType.CreateDirectoryOnDestination => NewStatusBrush,
+        SyncActionType.CreateDirectoryOnSource => NewStatusBrush,
+        SyncActionType.CopyToDestination => NewStatusBrush,
+        SyncActionType.CopyToSource => NewStatusBrush,
+        SyncActionType.OverwriteFileOnDestination => ModifiedStatusBrush,
+        SyncActionType.OverwriteFileOnSource => ModifiedStatusBrush,
+        SyncActionType.MoveOnDestination => RenamedStatusBrush,
+        SyncActionType.DeleteDirectoryFromDestination => DeletedStatusBrush,
+        SyncActionType.DeleteDirectoryFromSource => DeletedStatusBrush,
+        SyncActionType.DeleteFromDestination => DeletedStatusBrush,
+        SyncActionType.DeleteFromSource => DeletedStatusBrush,
+        SyncActionType.NoOp => UnchangedStatusBrush,
+        null => UnchangedStatusBrush,
+        _ => UnchangedStatusBrush,
+    };
+
     public string StatusGlyph => Status switch
     {
         "New File" => "+",
         "Deleted" => "×",
         "Modified" => "✎",
+        "Renamed" => "⇄",
         "Unchanged" => "▮▮",
         _ => "•",
     };
@@ -111,9 +151,12 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
         "New File" => NewStatusBrush,
         "Deleted" => DeletedStatusBrush,
         "Modified" => ModifiedStatusBrush,
+        "Renamed" => RenamedStatusBrush,
         "Unchanged" => UnchangedStatusBrush,
         _ => UnchangedStatusBrush,
     };
+
+    public System.Windows.Media.Brush PathBrush => StatusBrush;
 
     public string TransferSpeedText
     {

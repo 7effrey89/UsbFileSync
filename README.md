@@ -110,6 +110,8 @@ The main window includes:
 - Filter tabs for `New Files`, `Changed`, `Deleted`, `Unchanged`, and `All`.
 - Shared selection checkboxes across filtered tabs, including select-all checkboxes in each preview header.
 - Action, status, progress, transfer speed, source metadata, and destination metadata columns, with the same column set available across all preview tabs.
+- Color-coded preview paths and action badges so add/overwrite/delete/unchanged items are easier to scan at a glance.
+- Rounded sync progress bars with state badges in both the preview rows and the remaining queue panel.
 - A bottom dashboard with `Remaining queue` and `Activity log`.
 - Resizable layout for the preview and bottom dashboard.
 - Adjustable width split between the queue and the activity log.

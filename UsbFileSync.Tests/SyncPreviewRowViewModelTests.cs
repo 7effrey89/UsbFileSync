@@ -31,6 +31,7 @@ public sealed class SyncPreviewRowViewModelTests
         Assert.Null(row.IconSource);
         Assert.Equal("\uE8A5", row.IconGlyph);
         Assert.Equal("+", row.StatusGlyph);
+        Assert.Equal("ADD", row.ActionBadgeText);
         Assert.Equal("Pending", row.TransferSpeedText);
         Assert.Equal(0, row.ProgressValue);
         Assert.Equal("Queued", row.ProgressStateText);
@@ -60,6 +61,7 @@ public sealed class SyncPreviewRowViewModelTests
         Assert.Same(iconProvider.IconToReturn, row.IconSource);
         Assert.Equal("\uE8B7", row.IconGlyph);
         Assert.Equal("×", row.StatusGlyph);
+        Assert.Equal("DELETE", row.ActionBadgeText);
         Assert.Equal("Pending", row.TransferSpeedText);
         Assert.Equal(0, row.ProgressValue);
         Assert.Equal("Queued", row.ProgressStateText);
@@ -84,6 +86,7 @@ public sealed class SyncPreviewRowViewModelTests
 
         Assert.Equal(100, row.ProgressValue);
         Assert.Equal("▮▮", row.StatusGlyph);
+        Assert.Equal("UNCHANGED", row.ActionBadgeText);
         Assert.Equal("On hold", row.TransferSpeedText);
         Assert.Equal("Done", row.ProgressStateText);
     }
@@ -106,6 +109,28 @@ public sealed class SyncPreviewRowViewModelTests
             PlannedActionType: SyncActionType.OverwriteFileOnDestination), new StubFileIconProvider(null));
 
         Assert.Equal("✎", row.StatusGlyph);
+        Assert.Equal("OVERWRITE", row.ActionBadgeText);
+    }
+
+    [Fact]
+    public void RenamedItemsUseMoveBadgeAndGlyph()
+    {
+        var row = new SyncPreviewRowViewModel(new SyncPreviewItem(
+            RelativePath: "renamed.txt",
+            IsDirectory: false,
+            SourceFullPath: @"F:\renamed.txt",
+            SourceLength: 20,
+            SourceLastWriteTimeUtc: DateTime.UtcNow,
+            DestinationFullPath: @"E:\other-name.txt",
+            DestinationLength: 20,
+            DestinationLastWriteTimeUtc: DateTime.UtcNow,
+            Direction: "->",
+            Status: "Renamed",
+            Category: SyncPreviewCategory.ChangedFiles,
+            PlannedActionType: SyncActionType.MoveOnDestination), new StubFileIconProvider(null));
+
+        Assert.Equal("⇄", row.StatusGlyph);
+        Assert.Equal("MOVE", row.ActionBadgeText);
     }
 
     [Fact]
