@@ -37,16 +37,18 @@ public sealed class SyncService
     public async Task<SyncResult> ExecuteAsync(
         SyncConfiguration configuration,
         IProgress<SyncProgress>? progress = null,
+        IProgress<int>? autoParallelism = null,
         CancellationToken cancellationToken = default)
     {
         var actions = await AnalyzeChangesAsync(configuration, cancellationToken).ConfigureAwait(false);
-        return await ExecutePlannedAsync(configuration, actions, progress, cancellationToken).ConfigureAwait(false);
+        return await ExecutePlannedAsync(configuration, actions, progress, autoParallelism, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<SyncResult> ExecutePlannedAsync(
         SyncConfiguration configuration,
         IReadOnlyList<SyncAction> actions,
         IProgress<SyncProgress>? progress = null,
+        IProgress<int>? autoParallelism = null,
         CancellationToken cancellationToken = default)
     {
         if (configuration.DryRun)
@@ -72,6 +74,7 @@ public sealed class SyncService
                     configuration,
                     copyBatch,
                     progress,
+                    autoParallelism,
                     appliedOperations,
                     actions.Count,
                     cancellationToken).ConfigureAwait(false);
@@ -168,13 +171,8 @@ public sealed class SyncService
         SyncActionType.OverwriteFileOnDestination or
         SyncActionType.OverwriteFileOnSource;
 
-    private static int NormalizeParallelCopyCount(int parallelCopyCount, int actionCount)
+    private static int NormalizeParallelCopyCount(int parallelCopyCount)
     {
-        if (parallelCopyCount == 0)
-        {
-            return Math.Max(1, actionCount);
-        }
-
         return Math.Max(1, parallelCopyCount);
     }
 
@@ -182,62 +180,152 @@ public sealed class SyncService
         SyncConfiguration configuration,
         IReadOnlyList<SyncAction> actions,
         IProgress<SyncProgress>? progress,
+        IProgress<int>? autoParallelism,
         int completedOperations,
         int totalActions,
         CancellationToken cancellationToken)
     {
-        var parallelCopyCount = NormalizeParallelCopyCount(configuration.ParallelCopyCount, actions.Count);
-        var semaphore = new SemaphoreSlim(parallelCopyCount, parallelCopyCount);
-        var completedInBatch = 0;
-
-        var tasks = actions.Select(async action =>
-        {
-            await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
+        var workItems = actions
+            .Select(action =>
             {
-                switch (action.Type)
-                {
-                    case SyncActionType.CopyToDestination:
-                    case SyncActionType.OverwriteFileOnDestination:
-                        await CopyAsync(
-                            action.SourceFullPath!,
-                            action.DestinationFullPath!,
-                            configuration.VerifyChecksums,
-                            progress,
-                            () => completedOperations + Volatile.Read(ref completedInBatch),
-                            totalActions,
-                            action.RelativePath,
-                            cancellationToken).ConfigureAwait(false);
-                        break;
-                    case SyncActionType.CopyToSource:
-                    case SyncActionType.OverwriteFileOnSource:
-                        await CopyAsync(
-                            action.DestinationFullPath!,
-                            action.SourceFullPath!,
-                            configuration.VerifyChecksums,
-                            progress,
-                            () => completedOperations + Volatile.Read(ref completedInBatch),
-                            totalActions,
-                            action.RelativePath,
-                            cancellationToken).ConfigureAwait(false);
-                        break;
-                }
-
-                var batchCompleted = Interlocked.Increment(ref completedInBatch);
                 var sourcePath = action.Type is SyncActionType.CopyToDestination or SyncActionType.OverwriteFileOnDestination
                     ? action.SourceFullPath!
                     : action.DestinationFullPath!;
-                var totalBytes = new FileInfo(sourcePath).Length;
-                progress?.Report(new SyncProgress(completedOperations + batchCompleted, totalActions, action.RelativePath, totalBytes, totalBytes, 100));
-            }
-            finally
-            {
-                semaphore.Release();
-            }
-        }).ToArray();
 
-        await Task.WhenAll(tasks).ConfigureAwait(false);
+                return new CopyWorkItem(action, sourcePath, new FileInfo(sourcePath).Length);
+            })
+            .ToArray();
+
+        var isAutoParallelism = configuration.ParallelCopyCount == 0;
+        var completedInBatch = 0;
+        var completedSamples = new List<CopyExecutionSample>();
+        var runningTasks = new List<Task<CopyExecutionSample>>();
+        var nextWorkItemIndex = 0;
+        var targetParallelism = isAutoParallelism
+            ? EstimateAutoParallelism(workItems, completedSamples)
+            : NormalizeParallelCopyCount(configuration.ParallelCopyCount);
+
+        if (isAutoParallelism)
+        {
+            autoParallelism?.Report(targetParallelism);
+        }
+
+        while (nextWorkItemIndex < workItems.Length || runningTasks.Count > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            while (nextWorkItemIndex < workItems.Length && runningTasks.Count < targetParallelism)
+            {
+                var workItem = workItems[nextWorkItemIndex++];
+                runningTasks.Add(CopyWorkItemAsync(
+                    workItem,
+                    configuration.VerifyChecksums,
+                    progress,
+                    () => completedOperations + Volatile.Read(ref completedInBatch),
+                    totalActions,
+                    cancellationToken));
+            }
+
+            if (runningTasks.Count == 0)
+            {
+                continue;
+            }
+
+            var completedTask = await Task.WhenAny(runningTasks).ConfigureAwait(false);
+            runningTasks.Remove(completedTask);
+
+            var sample = await completedTask.ConfigureAwait(false);
+            completedSamples.Add(sample);
+
+            var batchCompleted = Interlocked.Increment(ref completedInBatch);
+            progress?.Report(new SyncProgress(completedOperations + batchCompleted, totalActions, sample.Action.RelativePath, sample.TotalBytes, sample.TotalBytes, 100));
+
+            if (isAutoParallelism)
+            {
+                var adjustedParallelism = EstimateAutoParallelism(workItems[nextWorkItemIndex..], completedSamples);
+                if (adjustedParallelism != targetParallelism)
+                {
+                    targetParallelism = adjustedParallelism;
+                    autoParallelism?.Report(targetParallelism);
+                }
+            }
+        }
+
         return completedInBatch;
+    }
+
+    private static async Task<CopyExecutionSample> CopyWorkItemAsync(
+        CopyWorkItem workItem,
+        bool verifyChecksums,
+        IProgress<SyncProgress>? progress,
+        Func<int> getCompletedOperations,
+        int totalActions,
+        CancellationToken cancellationToken)
+    {
+        var startedAt = DateTime.UtcNow;
+        await CopyAsync(
+            workItem.SourcePath,
+            workItem.Action.Type is SyncActionType.CopyToDestination or SyncActionType.OverwriteFileOnDestination
+                ? workItem.Action.DestinationFullPath!
+                : workItem.Action.SourceFullPath!,
+            verifyChecksums,
+            progress,
+            getCompletedOperations,
+            totalActions,
+            workItem.Action.RelativePath,
+            cancellationToken).ConfigureAwait(false);
+
+        return new CopyExecutionSample(workItem.Action, workItem.TotalBytes, DateTime.UtcNow - startedAt);
+    }
+
+    private static int EstimateAutoParallelism(
+        IReadOnlyList<CopyWorkItem> remainingItems,
+        IReadOnlyList<CopyExecutionSample> completedSamples)
+    {
+        if (remainingItems.Count == 0)
+        {
+            return 1;
+        }
+
+        var averageSize = remainingItems.Average(item => (double)item.TotalBytes);
+        var smallFileRatio = remainingItems.Count(item => item.TotalBytes <= 1 * 1024 * 1024) / (double)remainingItems.Count;
+        var largeFileRatio = remainingItems.Count(item => item.TotalBytes >= 128L * 1024 * 1024) / (double)remainingItems.Count;
+
+        var estimatedParallelism = averageSize switch
+        {
+            >= 256L * 1024 * 1024 => 2,
+            >= 64L * 1024 * 1024 => 4,
+            >= 16L * 1024 * 1024 => 6,
+            >= 4L * 1024 * 1024 => 8,
+            >= 1L * 1024 * 1024 => 12,
+            _ => 16,
+        };
+
+        if (smallFileRatio >= 0.75)
+        {
+            estimatedParallelism += 4;
+        }
+
+        if (largeFileRatio >= 0.5)
+        {
+            estimatedParallelism = Math.Min(estimatedParallelism, 4);
+        }
+
+        if (completedSamples.Count >= 2)
+        {
+            var averageDuration = completedSamples.Average(sample => sample.Duration.TotalMilliseconds);
+            if (averageDuration < 250 && averageSize <= 1 * 1024 * 1024)
+            {
+                estimatedParallelism += 2;
+            }
+            else if (averageDuration > 4000 && averageSize >= 32L * 1024 * 1024)
+            {
+                estimatedParallelism = Math.Max(2, estimatedParallelism - 2);
+            }
+        }
+
+        var autoParallelismLimit = Math.Clamp(Environment.ProcessorCount * 2, 4, 32);
+        return Math.Clamp(estimatedParallelism, 1, Math.Min(autoParallelismLimit, remainingItems.Count));
     }
 
     private static void ApplySequentialAsync(
@@ -425,4 +513,8 @@ public sealed class SyncService
             File.Move(sourcePath, destinationPath);
         }
     }
+
+    private sealed record CopyWorkItem(SyncAction Action, string SourcePath, long TotalBytes);
+
+    private sealed record CopyExecutionSample(SyncAction Action, long TotalBytes, TimeSpan Duration);
 }

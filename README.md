@@ -73,7 +73,7 @@ The main window includes:
 The settings dialog currently supports:
 
 - `Parallel copies`: number of file copy operations allowed to run at the same time.
-- `0` means unlimited parallel copy operations for the current copy batch.
+- `0` enables auto mode, which estimates a starting parallelism and adjusts it during the copy batch.
 
 The main sync settings area also supports:
 

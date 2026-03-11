@@ -458,7 +458,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         ParallelCopyCount = parallelCopyCount;
         AddLog("Settings", ParallelCopyCount == 0
-            ? "Parallel copy count set to unlimited."
+            ? "Parallel copy count set to auto."
             : $"Parallel copy count set to {ParallelCopyCount}.");
     }
 
@@ -573,8 +573,15 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                     : Math.Round(((double)update.CompletedOperations + (update.CurrentItemProgressPercentage / 100d)) / update.TotalOperations * 100, 0);
                 StatusMessage = $"Processing {update.CurrentItem} ({update.CompletedOperations}/{update.TotalOperations}).";
             });
+            var autoParallelism = new Progress<int>(effectiveParallelism =>
+            {
+                if (ParallelCopyCount == 0)
+                {
+                    AddLog("Copy", $"Auto parallel copy count adjusted to {effectiveParallelism}.");
+                }
+            });
 
-            var result = await _syncService.ExecutePlannedAsync(configuration, actions, progress, cancellationTokenSource.Token).ConfigureAwait(true);
+            var result = await _syncService.ExecutePlannedAsync(configuration, actions, progress, autoParallelism, cancellationTokenSource.Token).ConfigureAwait(true);
             var refreshedActions = await _syncService.AnalyzeChangesAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(true);
             var refreshedPreview = await _syncService.BuildPreviewAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(true);
             ReplaceActions(refreshedActions);

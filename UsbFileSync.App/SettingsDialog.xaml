@@ -23,7 +23,7 @@
                      HorizontalAlignment="Left"
                      VerticalContentAlignment="Center" />
             <TextBlock Margin="0,8,0,0"
-                       Text="Enter 0 for unlimited parallel copy operations."
+                       Text="Enter 0 to let UsbFileSync automatically adjust parallel copy operations while syncing."
                        TextWrapping="Wrap"
                        Foreground="#616161" />
         </StackPanel>

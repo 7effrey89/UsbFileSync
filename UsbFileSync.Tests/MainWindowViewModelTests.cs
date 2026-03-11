@@ -106,13 +106,14 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
-    public void UpdateParallelCopyCount_AllowsUnlimitedValue()
+    public void UpdateParallelCopyCount_AllowsAutoValue_AndLogsAutoMode()
     {
         using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null));
 
         viewModel.UpdateParallelCopyCount(0);
 
         Assert.Equal(0, viewModel.ParallelCopyCount);
+        Assert.Equal("Parallel copy count set to auto.", viewModel.ActivityLog[0].Message);
     }
 
     [Fact]

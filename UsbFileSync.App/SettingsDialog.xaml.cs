@@ -23,7 +23,7 @@ public partial class SettingsDialog : Window
     {
         if (!TryParseParallelCopyCount(ParallelCopyCountTextBox.Text, out var value))
         {
-            System.Windows.MessageBox.Show(this, "Enter a whole number that is 0 or greater. Use 0 for unlimited parallel copies.", "Invalid parallel copies value", MessageBoxButton.OK, MessageBoxImage.Warning);
+            System.Windows.MessageBox.Show(this, "Enter a whole number that is 0 or greater. Use 0 for automatic parallel copy tuning.", "Invalid parallel copies value", MessageBoxButton.OK, MessageBoxImage.Warning);
             ParallelCopyCountTextBox.Focus();
             ParallelCopyCountTextBox.SelectAll();
             return;
