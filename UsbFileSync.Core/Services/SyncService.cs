@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Collections.Concurrent;
 using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Strategies;
 
@@ -803,7 +804,6 @@ public sealed class SyncService
             ? existingEntry.ChecksumSha256
             : null;
     }
-
     private sealed record CopyWorkItem(
         SyncAction Action,
         string SourcePath,
