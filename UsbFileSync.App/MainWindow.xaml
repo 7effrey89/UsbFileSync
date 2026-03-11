@@ -475,10 +475,10 @@
                           Stroke="{Binding SyncActionStrokeBrush}"
                           StrokeThickness="1"
                           Fill="Transparent" />
-                    <TextBlock Text="{Binding SyncActionText}"
+                    <TextBlock Text="{Binding SyncActionDisplayText}"
                                FontSize="12"
                                FontWeight="Bold"
-                               Foreground="#202020"
+                               Foreground="{Binding SyncActionTextBrush}"
                                VerticalAlignment="Center"
                                HorizontalAlignment="Center" />
                 </Grid>
