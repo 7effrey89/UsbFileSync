@@ -34,10 +34,16 @@ public sealed class SyncPreviewRowViewModelTests
         Assert.Equal("+", row.StatusGlyph);
         Assert.Equal("CopyToDestination", row.Action);
         Assert.Equal("Add", row.SyncActionText);
+        Assert.Equal("ADD", row.SyncActionDisplayText);
         Assert.Equal(string.Empty, row.SourceStatusGlyph);
         Assert.Equal("+", row.DestinationStatusGlyph);
         AssertBrushColor(row.SourcePathBrush, 32, 32, 32);
         AssertBrushColor(row.DestinationPathBrush, 18, 140, 68);
+        AssertBrushColor(row.SyncActionTrackFillBrush, 198, 239, 206);
+        AssertBrushColor(row.SyncActionBrush, 78, 167, 46);
+        AssertBrushColor(row.SyncActionTipBrush, 56, 118, 29);
+        AssertBrushColor(row.SyncActionTextBrush, 0, 97, 0);
+        AssertTransparentBrush(row.SyncActionStrokeBrush);
         Assert.Equal("Pending", row.TransferSpeedText);
         Assert.Equal(0, row.ProgressValue);
         Assert.Equal("Queued", row.ProgressStateText);
@@ -65,6 +71,7 @@ public sealed class SyncPreviewRowViewModelTests
 
         Assert.Equal(@"E:\folder", row.Name);
         Assert.Equal(@"E:\folder", row.OpenPath);
+        Assert.Equal("Folder", row.FileType);
         Assert.Equal(@"E:\folder", iconProvider.RequestedPath);
         Assert.True(iconProvider.RequestedIsDirectory);
         Assert.Same(iconProvider.IconToReturn, row.IconSource);
@@ -76,6 +83,8 @@ public sealed class SyncPreviewRowViewModelTests
         Assert.Equal(string.Empty, row.SourceStatusGlyph);
         Assert.Equal("×", row.DestinationStatusGlyph);
         AssertBrushColor(row.DestinationPathBrush, 196, 43, 28);
+        AssertBrushColor(row.SyncActionTrackFillBrush, 246, 206, 206);
+        AssertBrushColor(row.SyncActionBrush, 192, 0, 0);
         Assert.False(row.IsSourceAction);
         Assert.True(row.IsDestinationAction);
         Assert.Equal("Pending", row.TransferSpeedText);
@@ -101,6 +110,7 @@ public sealed class SyncPreviewRowViewModelTests
             PlannedActionType: null), new StubFileIconProvider(null));
 
         Assert.Equal(100, row.ProgressValue);
+        Assert.Equal("TXT", row.FileType);
         Assert.Equal("||", row.StatusGlyph);
         Assert.Equal("Unchanged", row.SyncActionText);
         Assert.Equal("||", row.SourceStatusGlyph);
@@ -112,6 +122,7 @@ public sealed class SyncPreviewRowViewModelTests
         AssertTransparentBrush(row.SyncActionBrush);
         AssertTransparentBrush(row.SyncActionTrackFillBrush);
         AssertTransparentBrush(row.SyncActionStrokeBrush);
+        AssertTransparentBrush(row.SyncActionTipBrush);
         Assert.Equal("On hold", row.TransferSpeedText);
         Assert.Equal("Done", row.ProgressStateText);
     }
@@ -138,6 +149,31 @@ public sealed class SyncPreviewRowViewModelTests
         Assert.Equal(string.Empty, row.SourceStatusGlyph);
         Assert.Equal("✎", row.DestinationStatusGlyph);
         AssertBrushColor(row.DestinationPathBrush, 184, 125, 0);
+        AssertBrushColor(row.SyncActionTrackFillBrush, 249, 232, 158);
+        AssertBrushColor(row.SyncActionBrush, 240, 198, 78);
+    }
+
+    [Fact]
+    public void OverwrittenItemsUseBlackTextWhenCompleted()
+    {
+        var row = new SyncPreviewRowViewModel(new SyncPreviewItem(
+            RelativePath: "overwrite.txt",
+            IsDirectory: false,
+            SourceFullPath: @"F:\overwrite.txt",
+            SourceLength: 20,
+            SourceLastWriteTimeUtc: DateTime.UtcNow,
+            DestinationFullPath: @"E:\overwrite.txt",
+            DestinationLength: 10,
+            DestinationLastWriteTimeUtc: DateTime.UtcNow,
+            Direction: "->",
+            Status: "Modified",
+            Category: SyncPreviewCategory.ChangedFiles,
+            PlannedActionType: SyncActionType.OverwriteFileOnDestination), new StubFileIconProvider(null));
+
+        row.MarkCompleted();
+
+        AssertBrushColor(row.SyncActionBrush, 255, 192, 0);
+        AssertBlackBrush(row.SyncActionTextBrush);
     }
 
     [Fact]
@@ -209,7 +245,8 @@ public sealed class SyncPreviewRowViewModelTests
 
         Assert.False(destinationRow.IsSourceAction);
         Assert.True(destinationRow.IsDestinationAction);
-        Assert.Equal("M0,2L96,2 120,14 96,26 0,26 24,14z", destinationRow.SyncActionPathData);
+        Assert.Equal("M0,2L108,2 120,14 108,26 0,26 12,14z", destinationRow.SyncActionPathData);
+        Assert.Equal("M108,2L120,14 108,26", destinationRow.SyncActionTipBorderPathData);
 
         var sourceRow = new SyncPreviewRowViewModel(new SyncPreviewItem(
             RelativePath: "to-source.txt",
@@ -227,7 +264,8 @@ public sealed class SyncPreviewRowViewModelTests
 
         Assert.True(sourceRow.IsSourceAction);
         Assert.False(sourceRow.IsDestinationAction);
-        Assert.Equal("M120,2L24,2 0,14 24,26 120,26 96,14z", sourceRow.SyncActionPathData);
+        Assert.Equal("M120,2L12,2 0,14 12,26 120,26 108,14z", sourceRow.SyncActionPathData);
+        Assert.Equal("M12,2L0,14 12,26", sourceRow.SyncActionTipBorderPathData);
     }
 
     [Fact]
@@ -265,7 +303,34 @@ public sealed class SyncPreviewRowViewModelTests
         Assert.Equal("Done", row.ProgressStateText);
         Assert.Equal("Done", row.TransferSpeedText);
         Assert.Equal("Added", row.SyncActionText);
+        Assert.Equal("ADDED", row.SyncActionDisplayText);
+        AssertBrushColor(row.SyncActionBrush, 78, 167, 46);
+        AssertBrushColor(row.SyncActionTipBrush, 56, 118, 29);
+        AssertWhiteBrush(row.SyncActionTextBrush);
         Assert.Equal(120, row.SyncActionFillWidth);
+    }
+
+    [Fact]
+    public void DeletedItemsUseWhiteTextWhenCompleted()
+    {
+        var row = new SyncPreviewRowViewModel(new SyncPreviewItem(
+            RelativePath: "deleted.txt",
+            IsDirectory: false,
+            SourceFullPath: @"F:\deleted.txt",
+            SourceLength: 20,
+            SourceLastWriteTimeUtc: DateTime.UtcNow,
+            DestinationFullPath: @"E:\deleted.txt",
+            DestinationLength: 20,
+            DestinationLastWriteTimeUtc: DateTime.UtcNow,
+            Direction: "->",
+            Status: "Deleted",
+            Category: SyncPreviewCategory.DeletedFiles,
+            PlannedActionType: SyncActionType.DeleteFromDestination), new StubFileIconProvider(null));
+
+        row.MarkCompleted();
+
+        AssertBrushColor(row.SyncActionBrush, 192, 0, 0);
+        AssertWhiteBrush(row.SyncActionTextBrush);
     }
 
     [Theory]
@@ -314,6 +379,18 @@ public sealed class SyncPreviewRowViewModelTests
     {
         var solidColorBrush = Assert.IsType<SolidColorBrush>(brush);
         Assert.Equal(Color.FromArgb(0, 0, 0, 0), solidColorBrush.Color);
+    }
+
+    private static void AssertWhiteBrush(Brush brush)
+    {
+        var solidColorBrush = Assert.IsType<SolidColorBrush>(brush);
+        Assert.Equal(Color.FromRgb(255, 255, 255), solidColorBrush.Color);
+    }
+
+    private static void AssertBlackBrush(Brush brush)
+    {
+        var solidColorBrush = Assert.IsType<SolidColorBrush>(brush);
+        Assert.Equal(Color.FromRgb(0, 0, 0), solidColorBrush.Color);
     }
 
     private sealed class StubFileIconProvider(ImageSource? iconToReturn) : IFileIconProvider

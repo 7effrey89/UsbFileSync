@@ -387,6 +387,29 @@ public sealed class SyncServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task BuildPreview_UsesProvidedActionsWithoutReanalyzing()
+    {
+        var source = CreateDirectory("source");
+        var destination = CreateDirectory("destination");
+        WriteFile(source, "fresh.txt", "new", new DateTime(2024, 5, 3, 0, 0, 0, DateTimeKind.Utc));
+
+        var service = new SyncService();
+        var configuration = new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.OneWay,
+        };
+
+        var actions = await service.AnalyzeChangesAsync(configuration);
+        File.Copy(Path.Combine(source, "fresh.txt"), Path.Combine(destination, "fresh.txt"));
+
+        var preview = service.BuildPreview(configuration, actions);
+
+        Assert.Contains(preview, item => item.RelativePath == "fresh.txt" && item.Category == SyncPreviewCategory.NewFiles && item.Status == "New File");
+    }
+
+    [Fact]
     public async Task ExecutePlannedAsync_UsesProvidedActionOrder()
     {
         var source = CreateDirectory("source");
@@ -436,7 +459,7 @@ public sealed class SyncServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteAsync_CopiesFiles_WhenParallelCopyCountIsUnlimited()
+    public async Task ExecuteAsync_CopiesFiles_WhenParallelCopyCountIsAuto()
     {
         var source = CreateDirectory("source");
         var destination = CreateDirectory("destination");
@@ -455,6 +478,36 @@ public sealed class SyncServiceTests : IDisposable
         Assert.Equal(2, result.AppliedOperations);
         Assert.True(File.Exists(Path.Combine(destination, "a.txt")));
         Assert.True(File.Exists(Path.Combine(destination, "b.txt")));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ReportsAdaptiveAutoParallelism_WhenParallelCopyCountIsAuto()
+    {
+        var source = CreateDirectory("source");
+        var destination = CreateDirectory("destination");
+        var timestamp = new DateTime(2024, 5, 6, 0, 0, 0, DateTimeKind.Utc);
+        WriteFile(source, "small-a.txt", "a", timestamp);
+        WriteFile(source, "small-b.txt", "b", timestamp);
+        WriteFile(source, "small-c.txt", "c", timestamp);
+        WriteFile(source, "large.bin", new string('x', 8 * 1024 * 1024), timestamp);
+
+        var reportedParallelism = new List<int>();
+        var service = new SyncService();
+        var result = await service.ExecuteAsync(
+            new SyncConfiguration
+            {
+                SourcePath = source,
+                DestinationPath = destination,
+                Mode = SyncMode.OneWay,
+                ParallelCopyCount = 0,
+            },
+            autoParallelism: new CallbackProgress<int>(value => reportedParallelism.Add(value)));
+
+        Assert.Equal(4, result.AppliedOperations);
+        Assert.True(File.Exists(Path.Combine(destination, "large.bin")));
+        Assert.Contains(reportedParallelism, value => value > 1);
+        Assert.Contains(1, reportedParallelism);
+        Assert.True(reportedParallelism.Distinct().Count() > 1);
     }
 
     [Fact]
@@ -673,7 +726,7 @@ public sealed class SyncServiceTests : IDisposable
             },
             actions,
             progress,
-            cancellationTokenSource.Token));
+            cancellationToken: cancellationTokenSource.Token));
 
         Assert.False(File.Exists(Path.Combine(destination, "large.bin")));
         Assert.Empty(Directory.GetFiles(destination, "*.usfcopy.tmp", SearchOption.TopDirectoryOnly));
@@ -715,7 +768,7 @@ public sealed class SyncServiceTests : IDisposable
             },
             actions,
             progress,
-            cancellationTokenSource.Token));
+            cancellationToken: cancellationTokenSource.Token));
 
         Assert.True(File.Exists(Path.Combine(destination, "large.bin")));
         Assert.Equal("original destination content", await File.ReadAllTextAsync(Path.Combine(destination, "large.bin")));
@@ -757,5 +810,10 @@ public sealed class SyncServiceTests : IDisposable
         {
             Directory.Delete(_rootPath, recursive: true);
         }
+    }
+
+    private sealed class CallbackProgress<T>(Action<T> onReport) : IProgress<T>
+    {
+        public void Report(T value) => onReport(value);
     }
 }

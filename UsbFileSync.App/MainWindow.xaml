@@ -14,6 +14,7 @@
         Background="#F3F3F3"
         FontFamily="Segoe UI">
     <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
         <SolidColorBrush x:Key="WindowBackgroundBrush" Color="#F3F3F3" />
         <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FFFFFF" />
         <SolidColorBrush x:Key="CardBorderBrush" Color="#E5E5E5" />
@@ -199,6 +200,10 @@
         <Style x:Key="CenteredDataGridTextStyle" TargetType="TextBlock">
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
+        <Style x:Key="ActivityLogTextStyle" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Foreground" Value="{Binding ForegroundBrush}" />
+        </Style>
         <Style x:Key="RoundedProgressBarStyle" TargetType="ProgressBar">
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Background" Value="#ECEFF1" />
@@ -335,6 +340,10 @@
                         <MenuItem Header="Open file folder"
                                   Command="{Binding PlacementTarget.Tag.OpenPreviewContainingFolderCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                   CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                        <Separator />
+                        <MenuItem Header="Show comparison"
+                                  Tag="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                  Click="OnShowComparisonClicked" />
                     </ContextMenu>
                 </Button.ContextMenu>
                 <Button.Tag>
@@ -475,10 +484,17 @@
                           Stroke="{Binding SyncActionStrokeBrush}"
                           StrokeThickness="1"
                           Fill="Transparent" />
-                    <TextBlock Text="{Binding SyncActionText}"
+                      <Path Data="{Binding SyncActionTipBorderGeometry}"
+                          Stroke="{Binding SyncActionTipBrush}"
+                          StrokeThickness="2"
+                          StrokeStartLineCap="Round"
+                          StrokeEndLineCap="Round"
+                          StrokeLineJoin="Round"
+                          Fill="Transparent" />
+                    <TextBlock Text="{Binding SyncActionDisplayText}"
                                FontSize="12"
                                FontWeight="Bold"
-                               Foreground="#202020"
+                               Foreground="{Binding SyncActionTextBrush}"
                                VerticalAlignment="Center"
                                HorizontalAlignment="Center" />
                 </Grid>
@@ -514,14 +530,25 @@
 
     <DockPanel>
         <Menu DockPanel.Dock="Top" Background="#FFFFFF" BorderBrush="#E6E6E6" BorderThickness="0,0,0,1">
-            <MenuItem Header="_File" />
-            <MenuItem Header="_Edit" />
-            <MenuItem Header="_View" />
-            <MenuItem Header="_Job" />
+            <MenuItem Header="_File">
+                <MenuItem Header="E_xit" Click="OnExitClicked" />
+            </MenuItem>
+            <MenuItem Header="_Edit">
+                <MenuItem Header="Select All In Tab" Click="OnSelectAllInTabClicked" />
+                <MenuItem Header="Select By Pattern..." Click="OnSelectByPatternClicked" />
+                <Separator />
+                <MenuItem Header="Invert Selection" Click="OnInvertSelectionClicked" />
+            </MenuItem>
+            <MenuItem Header="_View">
+                <MenuItem x:Name="ToggleInfoBoxesMenuItem" Header="Toggle Info Boxes" IsCheckable="True" IsChecked="True" Click="OnToggleInfoBoxesClicked" />
+                <MenuItem Header="Reset Layout" Click="OnResetLayoutClicked" />
+            </MenuItem>
             <MenuItem Header="_Settings">
                 <MenuItem Header="Application Settings..." Click="OnOpenSettingsClicked" />
             </MenuItem>
-            <MenuItem Header="_Help" />
+            <MenuItem Header="_Help">
+                <MenuItem Header="About UsbFileSync..." Click="OnOpenAboutClicked" />
+            </MenuItem>
         </Menu>
 
         <Grid Margin="20">
@@ -533,9 +560,9 @@
 
             <Grid Grid.Row="0" Margin="0,0,0,16">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="1.35*" />
-                    <ColumnDefinition Width="360" />
-                    <ColumnDefinition Width="1.35*" />
+                    <ColumnDefinition x:Name="SourceLocationColumnDefinition" Width="1.35*" />
+                    <ColumnDefinition x:Name="SyncSettingsColumnDefinition" Width="360" />
+                    <ColumnDefinition x:Name="DestinationLocationColumnDefinition" Width="1.35*" />
                 </Grid.ColumnDefinitions>
 
                 <Border Grid.Column="0" Style="{StaticResource CardBorderStyle}" Padding="18" Margin="0,0,12,0">
@@ -674,9 +701,9 @@
 
             <Grid Grid.Row="1">
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="*" MinHeight="280" />
-                    <RowDefinition Height="12" />
-                    <RowDefinition Height="220" MinHeight="170" />
+                    <RowDefinition x:Name="PreviewPaneRowDefinition" Height="*" MinHeight="280" />
+                    <RowDefinition x:Name="DashboardSplitterRowDefinition" Height="12" />
+                    <RowDefinition x:Name="DashboardRowDefinition" Height="220" MinHeight="170" />
                 </Grid.RowDefinitions>
 
                 <Border Grid.Row="0" Style="{StaticResource CardBorderStyle}" Padding="16" MinHeight="280">
@@ -691,7 +718,8 @@
                             <TextBlock Margin="0,6,0,0" Text="Use the tabs to filter the preview table by new, changed, deleted, unchanged, or all items." Foreground="{StaticResource SubtleTextBrush}" />
                         </StackPanel>
 
-                        <TabControl Grid.Row="1">
+                        <Grid Grid.Row="1">
+                            <TabControl x:Name="PreviewTabControl">
                             <TabItem>
                                 <TabItem.Header>
                                     <StackPanel Orientation="Horizontal">
@@ -723,6 +751,7 @@
                                         <DataGridTemplateColumn Header="Sync action" CellTemplate="{StaticResource PreviewProgressCellTemplate}" Width="140" />
                                         <DataGridTemplateColumn Header="Transfer speed" CellTemplate="{StaticResource PreviewTransferSpeedCellTemplate}" Width="110" />
                                         <DataGridTemplateColumn Header="Destination File" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
+                                        <DataGridTextColumn Header="File type" Binding="{Binding FileType}" Width="90" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Source size" Binding="{Binding SourceSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Destination size" Binding="{Binding DestinationSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Source Last Modified" Binding="{Binding SourceModified}" Width="150" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
@@ -763,6 +792,7 @@
                                         <DataGridTemplateColumn Header="Sync action" CellTemplate="{StaticResource PreviewProgressCellTemplate}" Width="140" />
                                         <DataGridTemplateColumn Header="Transfer speed" CellTemplate="{StaticResource PreviewTransferSpeedCellTemplate}" Width="110" />
                                         <DataGridTemplateColumn Header="Destination File" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
+                                        <DataGridTextColumn Header="File type" Binding="{Binding FileType}" Width="90" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Source size" Binding="{Binding SourceSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Destination size" Binding="{Binding DestinationSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Source Last Modified" Binding="{Binding SourceModified}" Width="150" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
@@ -803,6 +833,7 @@
                                         <DataGridTemplateColumn Header="Sync action" CellTemplate="{StaticResource PreviewProgressCellTemplate}" Width="140" />
                                         <DataGridTemplateColumn Header="Transfer speed" CellTemplate="{StaticResource PreviewTransferSpeedCellTemplate}" Width="110" />
                                         <DataGridTemplateColumn Header="Destination File" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
+                                        <DataGridTextColumn Header="File type" Binding="{Binding FileType}" Width="90" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Source size" Binding="{Binding SourceSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Destination size" Binding="{Binding DestinationSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Source Last Modified" Binding="{Binding SourceModified}" Width="150" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
@@ -843,6 +874,7 @@
                                         <DataGridTemplateColumn Header="Sync action" CellTemplate="{StaticResource PreviewProgressCellTemplate}" Width="140" />
                                         <DataGridTemplateColumn Header="Transfer speed" CellTemplate="{StaticResource PreviewTransferSpeedCellTemplate}" Width="110" />
                                         <DataGridTemplateColumn Header="Destination File" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
+                                        <DataGridTextColumn Header="File type" Binding="{Binding FileType}" Width="90" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Source size" Binding="{Binding SourceSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Destination size" Binding="{Binding DestinationSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Source Last Modified" Binding="{Binding SourceModified}" Width="150" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
@@ -883,6 +915,7 @@
                                         <DataGridTemplateColumn Header="Sync action" CellTemplate="{StaticResource PreviewProgressCellTemplate}" Width="140" />
                                         <DataGridTemplateColumn Header="Transfer speed" CellTemplate="{StaticResource PreviewTransferSpeedCellTemplate}" Width="110" />
                                         <DataGridTemplateColumn Header="Destination File" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
+                                        <DataGridTextColumn Header="File type" Binding="{Binding FileType}" Width="90" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Source size" Binding="{Binding SourceSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Destination size" Binding="{Binding DestinationSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Source Last Modified" Binding="{Binding SourceModified}" Width="150" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
@@ -892,11 +925,12 @@
                                     </DataGrid.Columns>
                                 </DataGrid>
                             </TabItem>
-                        </TabControl>
+                            </TabControl>
+                        </Grid>
                     </Grid>
                 </Border>
 
-                <GridSplitter Grid.Row="1"
+                <GridSplitter x:Name="PreviewDashboardGridSplitter" Grid.Row="1"
                           Height="2"
                           Margin="0,5,0,5"
                           HorizontalAlignment="Stretch"
@@ -906,11 +940,11 @@
                           ShowsPreview="True"
                               Background="{StaticResource CardBorderBrush}" />
 
-                <Grid Grid.Row="2">
+                <Grid x:Name="InfoBoxesGrid" Grid.Row="2">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" MinWidth="260" />
-                        <ColumnDefinition Width="12" />
-                        <ColumnDefinition Width="*" MinWidth="320" />
+                        <ColumnDefinition x:Name="QueueColumnDefinition" Width="*" MinWidth="260" />
+                        <ColumnDefinition x:Name="InfoBoxesSplitterColumnDefinition" Width="12" />
+                        <ColumnDefinition x:Name="ActivityColumnDefinition" Width="*" MinWidth="320" />
                     </Grid.ColumnDefinitions>
 
                     <Border Grid.Column="0" Style="{StaticResource CardBorderStyle}" Padding="16" Margin="0,0,6,0">
@@ -955,15 +989,26 @@
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
 
                             <TextBlock Grid.Row="0" Text="Activity log" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}" />
-                            <DataGrid Grid.Row="1" Margin="0,12,0,0" MinHeight="110" ScrollViewer.VerticalScrollBarVisibility="Auto" ItemsSource="{Binding ActivityLog}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True">
+                            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,10,0,0">
+                                <RadioButton Content="All"
+                                             Margin="0,0,14,0"
+                                             IsChecked="{Binding ShowAllActivityLog}" />
+                                <RadioButton Content="Warnings / Errors"
+                                             Margin="0,0,14,0"
+                                             IsChecked="{Binding ShowAlertsOnlyActivityLog}" />
+                                <RadioButton Content="Verbose"
+                                             IsChecked="{Binding ShowVerboseOnlyActivityLog}" />
+                            </StackPanel>
+                            <DataGrid Grid.Row="2" Margin="0,12,0,0" MinHeight="110" ScrollViewer.VerticalScrollBarVisibility="Auto" ItemsSource="{Binding ActivityLogView}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True">
                                 <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Time" Binding="{Binding Time}" Width="90" />
-                                    <DataGridTextColumn Header="State" Binding="{Binding State}" Width="90" />
-                                    <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="*" />
+                                    <DataGridTextColumn Header="Time" Binding="{Binding Time}" Width="90" ElementStyle="{StaticResource ActivityLogTextStyle}" />
+                                    <DataGridTextColumn Header="State" Binding="{Binding State}" Width="120" ElementStyle="{StaticResource ActivityLogTextStyle}" />
+                                    <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="*" ElementStyle="{StaticResource ActivityLogTextStyle}" />
                                 </DataGrid.Columns>
                             </DataGrid>
                         </Grid>
@@ -999,6 +1044,39 @@
                         </Style>
                     </TextBlock.Style>
                 </TextBlock>
+            </Border>
+
+            <Border Grid.RowSpan="3"
+                    Background="#CCFFFFFF"
+                    Visibility="{Binding IsBusy, Converter={StaticResource BooleanToVisibilityConverter}}"
+                    Panel.ZIndex="20">
+                <Border HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Width="420"
+                        Padding="30,24"
+                        Background="#FFFFFF"
+                        BorderBrush="#D9E4EE"
+                        BorderThickness="1"
+                        CornerRadius="8">
+                    <StackPanel>
+                        <ProgressBar Height="8"
+                                     IsIndeterminate="True"
+                                     Style="{StaticResource RoundedProgressBarStyle}" />
+                        <TextBlock Margin="0,16,0,0"
+                                   HorizontalAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   Text="Loading preview..."
+                                   FontSize="18"
+                                   FontWeight="SemiBold"
+                                   Foreground="{StaticResource HeaderTextBrush}" />
+                        <TextBlock Margin="0,8,0,0"
+                                   HorizontalAlignment="Center"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   Text="Building the synchronization preview."
+                                   Foreground="{StaticResource SubtleTextBrush}" />
+                    </StackPanel>
+                </Border>
             </Border>
         </Grid>
     </DockPanel>

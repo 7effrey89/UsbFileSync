@@ -8,13 +8,17 @@ namespace UsbFileSync.App.ViewModels;
 
 public sealed class SyncPreviewRowViewModel : ObservableObject
 {
-    private const string RightChevronGeometry = "M0,2 L96,2 L120,14 L96,26 L0,26 L24,14 Z";
-    private const string LeftChevronGeometry = "M120,2 L24,2 L0,14 L24,26 L120,26 L96,14 Z";
+    private const string RightChevronGeometry = "M0,2 L108,2 L120,14 L108,26 L0,26 L12,14 Z";
+    private const string LeftChevronGeometry = "M120,2 L12,2 L0,14 L12,26 L120,26 L108,14 Z";
+    private const string RightChevronTipBorderGeometry = "M108,2 L120,14 L108,26";
+    private const string LeftChevronTipBorderGeometry = "M12,2 L0,14 L12,26";
     private const string RectangleGeometry = "M0,0 L120,0 L120,28 L0,28 Z";
     private const double SyncActionVisualWidth = 120d;
 
     private static readonly Geometry RightChevronGeometryShape = CreateFrozenGeometry(RightChevronGeometry);
     private static readonly Geometry LeftChevronGeometryShape = CreateFrozenGeometry(LeftChevronGeometry);
+    private static readonly Geometry RightChevronTipBorderGeometryShape = CreateFrozenGeometry(RightChevronTipBorderGeometry);
+    private static readonly Geometry LeftChevronTipBorderGeometryShape = CreateFrozenGeometry(LeftChevronTipBorderGeometry);
     private static readonly Geometry RectangleGeometryShape = CreateFrozenGeometry(RectangleGeometry);
 
     private static readonly System.Windows.Media.Brush DefaultPathBrush = CreateFrozenBrush(32, 32, 32);
@@ -22,12 +26,26 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
     private static readonly System.Windows.Media.Brush InProgressBrush = CreateFrozenBrush(15, 108, 189);
     private static readonly System.Windows.Media.Brush CompletedBrush = CreateFrozenBrush(24, 142, 76);
     private static readonly System.Windows.Media.Brush PausedBrush = CreateFrozenBrush(214, 140, 0);
-    private static readonly System.Windows.Media.Brush SyncActionTrackBrush = CreateFrozenBrush(230, 230, 230);
+    private static readonly System.Windows.Media.Brush NeutralSyncActionTrackBrush = CreateFrozenBrush(230, 230, 230);
     private static readonly System.Windows.Media.Brush NewStatusBrush = CreateFrozenBrush(18, 140, 68);
     private static readonly System.Windows.Media.Brush DeletedStatusBrush = CreateFrozenBrush(196, 43, 28);
     private static readonly System.Windows.Media.Brush ModifiedStatusBrush = CreateFrozenBrush(184, 125, 0);
     private static readonly System.Windows.Media.Brush RenamedStatusBrush = CreateFrozenBrush(15, 108, 189);
     private static readonly System.Windows.Media.Brush UnchangedStatusBrush = CreateFrozenBrush(98, 98, 98);
+    private static readonly System.Windows.Media.Brush NewActionTrackBrush = CreateFrozenBrush(198, 239, 206);
+    private static readonly System.Windows.Media.Brush NewActionFillBrush = CreateFrozenBrush(78, 167, 46);
+    private static readonly System.Windows.Media.Brush NewActionTextBrush = CreateFrozenBrush(0, 97, 0);
+    private static readonly System.Windows.Media.Brush NewActionTipBrush = CreateFrozenBrush(56, 118, 29);
+    private static readonly System.Windows.Media.Brush ModifiedActionTrackBrush = CreateFrozenBrush(249, 232, 158);
+    private static readonly System.Windows.Media.Brush ModifiedActionFillBrush = CreateFrozenBrush(240, 198, 78);
+    private static readonly System.Windows.Media.Brush ModifiedActionCompletedFillBrush = CreateFrozenBrush(255, 192, 0);
+    private static readonly System.Windows.Media.Brush ModifiedActionTipBrush = CreateFrozenBrush(191, 144, 0);
+    private static readonly System.Windows.Media.Brush DeletedActionTrackBrush = CreateFrozenBrush(246, 206, 206);
+    private static readonly System.Windows.Media.Brush DeletedActionFillBrush = CreateFrozenBrush(192, 0, 0);
+    private static readonly System.Windows.Media.Brush DeletedActionTipBrush = CreateFrozenBrush(128, 0, 0);
+    private static readonly System.Windows.Media.Brush RenamedActionTrackBrush = CreateFrozenBrush(196, 225, 248);
+    private static readonly System.Windows.Media.Brush RenamedActionFillBrush = CreateFrozenBrush(121, 180, 230);
+    private static readonly System.Windows.Media.Brush RenamedActionTipBrush = CreateFrozenBrush(47, 117, 181);
     private static readonly System.Windows.Media.Brush TransparentBrush = CreateFrozenBrush(0, 0, 0, 0);
 
     private readonly SyncActionType? _actionType;
@@ -44,6 +62,7 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
         Category = item.Category;
         RelativePath = item.RelativePath;
         Kind = item.IsDirectory ? "Folder" : "File";
+        FileType = GetFileType(item);
         IconSource = (iconProvider ?? ShellFileIconProvider.Instance).GetIcon(Name, item.IsDirectory);
         IconGlyph = item.IsDirectory ? "\uE8B7" : "\uE8A5";
         SourcePath = item.SourceFullPath ?? string.Empty;
@@ -73,6 +92,8 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
     public SyncPreviewCategory Category { get; }
 
     public string Kind { get; }
+
+    public string FileType { get; }
 
     public ImageSource? IconSource { get; }
 
@@ -126,6 +147,8 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
                 : actionText.Pending;
         }
     }
+
+    public string SyncActionDisplayText => SyncActionText.ToUpperInvariant();
 
     public string ActionBadgeText => _actionType switch
     {
@@ -198,15 +221,47 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
 
     public string SyncActionPathData => SyncActionGeometry.ToString(CultureInfo.InvariantCulture);
 
+    public Geometry SyncActionTipBorderGeometry => _actionType switch
+    {
+        null => RectangleGeometryShape,
+        SyncActionType.NoOp => RectangleGeometryShape,
+        _ when IsSourceAction => LeftChevronTipBorderGeometryShape,
+        _ => RightChevronTipBorderGeometryShape,
+    };
+
+    public string SyncActionTipBorderPathData => SyncActionTipBorderGeometry.ToString(CultureInfo.InvariantCulture);
+
     public double SyncActionProgressScale => Math.Clamp(ProgressValue / 100d, 0d, 1d);
 
     public double SyncActionFillWidth => SyncActionProgressScale * SyncActionVisualWidth;
 
-    public System.Windows.Media.Brush SyncActionBrush => IsUnchangedAction ? TransparentBrush : StatusBrush;
+    public System.Windows.Media.Brush SyncActionBrush => IsUnchangedAction ? TransparentBrush : SyncActionFillBrush;
 
     public System.Windows.Media.Brush SyncActionTrackFillBrush => IsUnchangedAction ? TransparentBrush : SyncActionTrackBrush;
 
-    public System.Windows.Media.Brush SyncActionStrokeBrush => IsUnchangedAction ? TransparentBrush : StatusBrush;
+    public System.Windows.Media.Brush SyncActionStrokeBrush => TransparentBrush;
+
+    public System.Windows.Media.Brush SyncActionTipBrush => IsUnchangedAction ? TransparentBrush : SyncActionTipStrokeBrush;
+
+    public System.Windows.Media.Brush SyncActionTextBrush => _actionType switch
+    {
+        SyncActionType.CreateDirectoryOnDestination when _progressState == PreviewTransferState.Completed => System.Windows.Media.Brushes.White,
+        SyncActionType.CreateDirectoryOnSource when _progressState == PreviewTransferState.Completed => System.Windows.Media.Brushes.White,
+        SyncActionType.CopyToDestination when _progressState == PreviewTransferState.Completed => System.Windows.Media.Brushes.White,
+        SyncActionType.CopyToSource when _progressState == PreviewTransferState.Completed => System.Windows.Media.Brushes.White,
+        SyncActionType.OverwriteFileOnDestination when _progressState == PreviewTransferState.Completed => System.Windows.Media.Brushes.Black,
+        SyncActionType.OverwriteFileOnSource when _progressState == PreviewTransferState.Completed => System.Windows.Media.Brushes.Black,
+        SyncActionType.DeleteDirectoryFromDestination when _progressState == PreviewTransferState.Completed => System.Windows.Media.Brushes.White,
+        SyncActionType.DeleteDirectoryFromSource when _progressState == PreviewTransferState.Completed => System.Windows.Media.Brushes.White,
+        SyncActionType.DeleteFromDestination when _progressState == PreviewTransferState.Completed => System.Windows.Media.Brushes.White,
+        SyncActionType.DeleteFromSource when _progressState == PreviewTransferState.Completed => System.Windows.Media.Brushes.White,
+        SyncActionType.CreateDirectoryOnDestination => NewActionTextBrush,
+        SyncActionType.CreateDirectoryOnSource => NewActionTextBrush,
+        SyncActionType.CopyToDestination => NewActionTextBrush,
+        SyncActionType.CopyToSource => NewActionTextBrush,
+        _ when IsUnchangedAction => DefaultPathBrush,
+        _ => StatusBrush,
+    };
 
     public System.Windows.Media.Brush SourcePathBrush => IsSourceAction ? StatusBrush : DefaultPathBrush;
 
@@ -238,6 +293,56 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
         "Renamed" => RenamedStatusBrush,
         "Unchanged" => UnchangedStatusBrush,
         _ => UnchangedStatusBrush,
+    };
+
+    private System.Windows.Media.Brush SyncActionTrackBrush => _actionType switch
+    {
+        SyncActionType.CreateDirectoryOnDestination => NewActionTrackBrush,
+        SyncActionType.CreateDirectoryOnSource => NewActionTrackBrush,
+        SyncActionType.CopyToDestination => NewActionTrackBrush,
+        SyncActionType.CopyToSource => NewActionTrackBrush,
+        SyncActionType.OverwriteFileOnDestination => ModifiedActionTrackBrush,
+        SyncActionType.OverwriteFileOnSource => ModifiedActionTrackBrush,
+        SyncActionType.MoveOnDestination => RenamedActionTrackBrush,
+        SyncActionType.DeleteDirectoryFromDestination => DeletedActionTrackBrush,
+        SyncActionType.DeleteDirectoryFromSource => DeletedActionTrackBrush,
+        SyncActionType.DeleteFromDestination => DeletedActionTrackBrush,
+        SyncActionType.DeleteFromSource => DeletedActionTrackBrush,
+        _ => NeutralSyncActionTrackBrush,
+    };
+
+    private System.Windows.Media.Brush SyncActionFillBrush => _actionType switch
+    {
+        SyncActionType.CreateDirectoryOnDestination => NewActionFillBrush,
+        SyncActionType.CreateDirectoryOnSource => NewActionFillBrush,
+        SyncActionType.CopyToDestination => NewActionFillBrush,
+        SyncActionType.CopyToSource => NewActionFillBrush,
+        SyncActionType.OverwriteFileOnDestination when _progressState == PreviewTransferState.Completed => ModifiedActionCompletedFillBrush,
+        SyncActionType.OverwriteFileOnSource when _progressState == PreviewTransferState.Completed => ModifiedActionCompletedFillBrush,
+        SyncActionType.OverwriteFileOnDestination => ModifiedActionFillBrush,
+        SyncActionType.OverwriteFileOnSource => ModifiedActionFillBrush,
+        SyncActionType.MoveOnDestination => RenamedActionFillBrush,
+        SyncActionType.DeleteDirectoryFromDestination => DeletedActionFillBrush,
+        SyncActionType.DeleteDirectoryFromSource => DeletedActionFillBrush,
+        SyncActionType.DeleteFromDestination => DeletedActionFillBrush,
+        SyncActionType.DeleteFromSource => DeletedActionFillBrush,
+        _ => TransparentBrush,
+    };
+
+    private System.Windows.Media.Brush SyncActionTipStrokeBrush => _actionType switch
+    {
+        SyncActionType.CreateDirectoryOnDestination => NewActionTipBrush,
+        SyncActionType.CreateDirectoryOnSource => NewActionTipBrush,
+        SyncActionType.CopyToDestination => NewActionTipBrush,
+        SyncActionType.CopyToSource => NewActionTipBrush,
+        SyncActionType.OverwriteFileOnDestination => ModifiedActionTipBrush,
+        SyncActionType.OverwriteFileOnSource => ModifiedActionTipBrush,
+        SyncActionType.MoveOnDestination => RenamedActionTipBrush,
+        SyncActionType.DeleteDirectoryFromDestination => DeletedActionTipBrush,
+        SyncActionType.DeleteDirectoryFromSource => DeletedActionTipBrush,
+        SyncActionType.DeleteFromDestination => DeletedActionTipBrush,
+        SyncActionType.DeleteFromSource => DeletedActionTipBrush,
+        _ => TransparentBrush,
     };
 
     public System.Windows.Media.Brush PathBrush => StatusBrush;
@@ -341,6 +446,12 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
             RaisePropertyChanged(nameof(ProgressStateBrush));
             RaisePropertyChanged(nameof(ProgressStateForegroundBrush));
             RaisePropertyChanged(nameof(SyncActionText));
+            RaisePropertyChanged(nameof(SyncActionDisplayText));
+            RaisePropertyChanged(nameof(SyncActionBrush));
+            RaisePropertyChanged(nameof(SyncActionTrackFillBrush));
+            RaisePropertyChanged(nameof(SyncActionStrokeBrush));
+            RaisePropertyChanged(nameof(SyncActionTipBrush));
+            RaisePropertyChanged(nameof(SyncActionTextBrush));
         }
     }
 
@@ -375,6 +486,28 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
         }
 
         return item.RelativePath;
+    }
+
+    private static string GetFileType(SyncPreviewItem item)
+    {
+        if (item.IsDirectory)
+        {
+            return "Folder";
+        }
+
+        var path = !string.IsNullOrWhiteSpace(item.SourceFullPath)
+            ? item.SourceFullPath
+            : !string.IsNullOrWhiteSpace(item.DestinationFullPath)
+                ? item.DestinationFullPath
+                : item.RelativePath;
+
+        var extension = Path.GetExtension(path);
+        if (string.IsNullOrWhiteSpace(extension))
+        {
+            return "File";
+        }
+
+        return extension.TrimStart('.').ToUpperInvariant();
     }
 
     private static string FormatSize(long? size)

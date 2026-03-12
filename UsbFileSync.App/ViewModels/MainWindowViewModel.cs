@@ -3,12 +3,30 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Windows.Data;
+using System.Windows.Threading;
 using UsbFileSync.App.Commands;
 using UsbFileSync.App.Services;
 using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Services;
 
 namespace UsbFileSync.App.ViewModels;
+
+public enum PreviewTabKind
+{
+    NewFiles,
+    ChangedFiles,
+    DeletedFiles,
+    UnchangedFiles,
+    AllFiles,
+}
+
+public enum PreviewSelectionTarget
+{
+    FileName,
+    FileFolder,
+    FullPath,
+}
 
 public sealed class MainWindowViewModel : ObservableObject, IDisposable
 {
@@ -19,6 +37,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private readonly IFolderPickerService _folderPickerService;
     private readonly IFileLauncherService _fileLauncherService;
     private readonly IDriveDisplayNameService _driveDisplayNameService;
+    private readonly object _activityLogLock = new();
     private readonly Dictionary<string, SyncPreviewRowViewModel> _previewRowsByRelativePath = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _persistConfigurationCancellationTokenSource;
     private CancellationTokenSource? _syncCancellationTokenSource;
@@ -34,6 +53,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _detectMoves = true;
     private bool _dryRun = true;
     private bool _verifyChecksums;
+    private Dictionary<string, string> _previewProviderMappings = PreviewProviderDefaults.CreateSerializableMapping();
     private bool _isBusy;
     private bool _isSyncRunning;
     private bool _isLoadingSavedConfiguration;
@@ -42,6 +62,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _isStatusSuccess;
     private bool _isSourcePathFocused;
     private bool _isDestinationPathFocused;
+    private ActivityLogFilter _selectedActivityLogFilter = ActivityLogFilter.All;
+    private bool _suppressSelectionUpdates;
 
     public MainWindowViewModel()
         : this(new SyncService(), CreateDefaultSettingsStore(), new WindowsFolderPickerService(), new WindowsFileLauncherService(), new WindowsDriveDisplayNameService())
@@ -68,6 +90,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         UnchangedFiles = new ObservableCollection<SyncPreviewRowViewModel>();
         AllFiles = new ObservableCollection<SyncPreviewRowViewModel>();
         ActivityLog = new ObservableCollection<SyncLogEntryViewModel>();
+        BindingOperations.EnableCollectionSynchronization(ActivityLog, _activityLogLock);
+        ActivityLogView = CollectionViewSource.GetDefaultView(ActivityLog);
+        ActivityLogView.Filter = ShouldIncludeActivityLogEntry;
         RemainingQueue = new ObservableCollection<QueueActionViewModel>();
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, CanExecuteSyncCommands);
         ToggleSyncCommand = new RelayCommand(ToggleSync, CanExecuteToggleSyncCommand);
@@ -99,7 +124,45 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<SyncLogEntryViewModel> ActivityLog { get; }
 
+    public ICollectionView ActivityLogView { get; }
+
     public ObservableCollection<QueueActionViewModel> RemainingQueue { get; }
+
+    public bool ShowAllActivityLog
+    {
+        get => _selectedActivityLogFilter == ActivityLogFilter.All;
+        set
+        {
+            if (value)
+            {
+                SetActivityLogFilter(ActivityLogFilter.All);
+            }
+        }
+    }
+
+    public bool ShowAlertsOnlyActivityLog
+    {
+        get => _selectedActivityLogFilter == ActivityLogFilter.AlertsOnly;
+        set
+        {
+            if (value)
+            {
+                SetActivityLogFilter(ActivityLogFilter.AlertsOnly);
+            }
+        }
+    }
+
+    public bool ShowVerboseOnlyActivityLog
+    {
+        get => _selectedActivityLogFilter == ActivityLogFilter.VerboseOnly;
+        set
+        {
+            if (value)
+            {
+                SetActivityLogFilter(ActivityLogFilter.VerboseOnly);
+            }
+        }
+    }
 
     public AsyncRelayCommand AnalyzeCommand { get; }
 
@@ -487,14 +550,56 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         DryRun = DryRun,
         VerifyChecksums = VerifyChecksums,
         ParallelCopyCount = ParallelCopyCount,
+        PreviewProviderMappings = new Dictionary<string, string>(_previewProviderMappings, StringComparer.OrdinalIgnoreCase),
     };
 
     public void UpdateParallelCopyCount(int parallelCopyCount)
     {
         ParallelCopyCount = parallelCopyCount;
         AddLog("Settings", ParallelCopyCount == 0
-            ? "Parallel copy count set to unlimited."
+            ? "Parallel copy count set to auto."
             : $"Parallel copy count set to {ParallelCopyCount}.");
+    }
+
+    public IReadOnlyDictionary<string, string> GetPreviewProviderMappings() =>
+        new Dictionary<string, string>(_previewProviderMappings, StringComparer.OrdinalIgnoreCase);
+
+    public void UpdatePreviewProviderMappings(IReadOnlyDictionary<string, string> mappings)
+    {
+        _previewProviderMappings = new Dictionary<string, string>(mappings, StringComparer.OrdinalIgnoreCase);
+        HandleConfigurationChanged();
+        AddLog("Settings", $"Preview provider mappings updated for {_previewProviderMappings.Count} file extensions.");
+    }
+
+    public void SelectAllInTab(PreviewTabKind tabKind)
+    {
+        UpdateSelectionForRows(GetRowsForTab(tabKind), _ => true);
+    }
+
+    public void InvertSelectionInTab(PreviewTabKind tabKind)
+    {
+        UpdateSelectionForRows(GetRowsForTab(tabKind), row => !row.IsSelected);
+    }
+
+    public int SelectByPattern(PreviewTabKind tabKind, string keyword, PreviewSelectionTarget target)
+    {
+        var normalizedKeyword = keyword?.Trim();
+        if (string.IsNullOrWhiteSpace(normalizedKeyword))
+        {
+            return 0;
+        }
+
+        var rows = GetRowsForTab(tabKind)
+            .Where(row => row.CanSelect)
+            .ToList();
+
+        if (rows.Count == 0)
+        {
+            return 0;
+        }
+
+        UpdateSelectionForRows(rows, row => MatchesPattern(row, normalizedKeyword, target));
+        return rows.Count(row => row.IsSelected);
     }
 
     public void SetSourcePathFocused(bool isFocused)
@@ -517,18 +622,24 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         if (!TryValidateConfiguration(requireAccessibleDestinationPath: false))
         {
-            AddLog("Error", StatusMessage);
+            AddLog("Error", StatusMessage, SyncLogSeverity.Error);
             return;
         }
 
         await RunBusyOperationAsync(async () =>
         {
             var configuration = CreateConfiguration();
-            var actionsTask = _syncService.AnalyzeChangesAsync(configuration);
-            var previewTask = _syncService.BuildPreviewAsync(configuration);
-            await Task.WhenAll(actionsTask, previewTask).ConfigureAwait(true);
-            var actions = actionsTask.Result;
-            var preview = previewTask.Result;
+            await EnsureBusyOverlayCanRenderAsync().ConfigureAwait(true);
+
+            var analysisResult = await Task.Run(async () =>
+            {
+                var actions = await _syncService.AnalyzeChangesAsync(configuration).ConfigureAwait(false);
+                var preview = _syncService.BuildPreview(configuration, actions);
+                return new AnalyzePreviewResult(actions, preview);
+            }).ConfigureAwait(true);
+
+            var actions = analysisResult.Actions;
+            var preview = analysisResult.Preview;
 
             ReplaceActions(actions);
             ReplacePreview(preview);
@@ -548,7 +659,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         if (!TryValidateConfiguration(requireAccessibleDestinationPath: true))
         {
-            AddLog("Error", StatusMessage);
+            AddLog("Error", StatusMessage, SyncLogSeverity.Error);
             return;
         }
 
@@ -561,8 +672,17 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             var configuration = CreateConfiguration();
             if (PlannedActions.Count == 0)
             {
-                var initialActions = await _syncService.AnalyzeChangesAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(true);
-                var initialPreview = await _syncService.BuildPreviewAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(true);
+                await EnsureBusyOverlayCanRenderAsync().ConfigureAwait(true);
+
+                var initialAnalysis = await Task.Run(async () =>
+                {
+                    var initialActions = await _syncService.AnalyzeChangesAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(false);
+                    var initialPreview = _syncService.BuildPreview(configuration, initialActions, cancellationTokenSource.Token);
+                    return new AnalyzePreviewResult(initialActions, initialPreview);
+                }, cancellationTokenSource.Token).ConfigureAwait(true);
+
+                var initialActions = initialAnalysis.Actions;
+                var initialPreview = initialAnalysis.Preview;
                 ReplaceActions(initialActions);
                 ReplacePreview(initialPreview);
                 ReplaceQueue(GetSelectedActions());
@@ -577,9 +697,12 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 StatusMessage = PlannedActions.Count == 0
                     ? "Folders are already synchronized."
                     : "Select at least one file or folder in the preview before synchronizing.";
-                AddLog("Sync", PlannedActions.Count == 0
-                    ? "No queued operations to process."
-                    : "Synchronization skipped because no items to be synced were selected.");
+                AddLog(
+                    PlannedActions.Count == 0 ? "Sync" : "Warning",
+                    PlannedActions.Count == 0
+                        ? "No queued operations to process."
+                        : "Synchronization skipped because no items to be synced were selected.",
+                    PlannedActions.Count == 0 ? SyncLogSeverity.Verbose : SyncLogSeverity.Warning);
                 CurrentTransferItem = "No active transfer.";
                 CurrentTransferDetails = "Queue is idle.";
                 CurrentTransferProgressValue = 0;
@@ -594,7 +717,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             CurrentTransferProgressValue = 0;
             AddLog("Sync", $"Synchronization started with {actions.Count} queued operation(s).");
 
-            string? activeTransferItem = null;
+            var loggedTransferItems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var progress = new Progress<SyncProgress>(update =>
             {
                 while (_completedQueuedActions < update.CompletedOperations && _completedQueuedActions < _queuedActions.Count)
@@ -611,9 +734,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                     _completedQueuedActions++;
                 }
 
-                if (!string.Equals(activeTransferItem, update.CurrentItem, StringComparison.OrdinalIgnoreCase) && update.CompletedOperations < update.TotalOperations)
+                if (ShouldLogCopyStart(loggedTransferItems, update))
                 {
-                    activeTransferItem = update.CurrentItem;
                     AddLog("Copy", $"Processing {update.CurrentItem}");
                 }
 
@@ -628,8 +750,15 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                     : Math.Round(((double)update.CompletedOperations + (update.CurrentItemProgressPercentage / 100d)) / update.TotalOperations * 100, 0);
                 StatusMessage = $"Processing {update.CurrentItem} ({update.CompletedOperations}/{update.TotalOperations}).";
             });
+            var autoParallelism = new Progress<int>(effectiveParallelism =>
+            {
+                if (ParallelCopyCount == 0)
+                {
+                    AddLog("Copy", $"Auto parallel copy count adjusted to {effectiveParallelism}.");
+                }
+            });
 
-            var result = await _syncService.ExecutePlannedAsync(configuration, actions, progress, cancellationTokenSource.Token).ConfigureAwait(true);
+            var result = await _syncService.ExecutePlannedAsync(configuration, actions, progress, autoParallelism, cancellationTokenSource.Token).ConfigureAwait(true);
             var verifiedCopyCount = configuration.VerifyChecksums
                 ? actions.Count(action => action.Type is
                     SyncActionType.CopyToDestination or
@@ -662,6 +791,13 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         IsSyncRunning = false;
+    }
+
+    internal static bool ShouldLogCopyStart(ISet<string> loggedTransferItems, SyncProgress update)
+    {
+        return update.CompletedOperations < update.TotalOperations
+            && !string.IsNullOrWhiteSpace(update.CurrentItem)
+            && loggedTransferItems.Add(update.CurrentItem);
     }
 
     private void HandleConfigurationChanged()
@@ -816,6 +952,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             DryRun = savedConfiguration.DryRun;
             VerifyChecksums = savedConfiguration.VerifyChecksums;
             ParallelCopyCount = savedConfiguration.ParallelCopyCount;
+            _previewProviderMappings = savedConfiguration.PreviewProviderMappings?.Count > 0
+                ? new Dictionary<string, string>(savedConfiguration.PreviewProviderMappings, StringComparer.OrdinalIgnoreCase)
+                : PreviewProviderDefaults.CreateSerializableMapping();
             SetStatusMessage(
                 IsConfigurationComplete()
                     ? "Restored the previous sync configuration."
@@ -947,18 +1086,33 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             CurrentTransferDetails = QueueSummary;
             CurrentTransferProgressValue = 0;
             PauseActivePreviewRows();
-            AddLog("Sync", "Synchronization cancelled.");
+            AddLog("Warning", "Synchronization cancelled.", SyncLogSeverity.Warning);
         }
         catch (Exception exception)
         {
             StatusMessage = exception.Message;
-            AddLog("Error", exception.Message);
+            AddLog("Error", exception.Message, SyncLogSeverity.Error);
         }
         finally
         {
             IsBusy = false;
         }
     }
+
+    private static async Task EnsureBusyOverlayCanRenderAsync()
+    {
+        if (System.Windows.Application.Current is null)
+        {
+            await Task.Yield();
+            return;
+        }
+
+        await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+    }
+
+    private sealed record AnalyzePreviewResult(
+        IReadOnlyList<SyncAction> Actions,
+        IReadOnlyList<SyncPreviewItem> Preview);
 
     private void ReplaceActions(IEnumerable<SyncAction> actions)
     {
@@ -1044,21 +1198,94 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void SetSelection(IEnumerable<SyncPreviewRowViewModel> rows, bool? isSelected)
     {
-        foreach (var row in rows.Where(row => row.CanSelect))
+        UpdateSelectionForRows(rows, _ => isSelected ?? false);
+    }
+
+    private void OnPreviewRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!_suppressSelectionUpdates && e.PropertyName == nameof(SyncPreviewRowViewModel.IsSelected))
         {
-                row.IsSelected = isSelected ?? false;
+            UpdateSelectedQueue();
+        }
+    }
+
+    private IReadOnlyList<SyncPreviewRowViewModel> GetRowsForTab(PreviewTabKind tabKind) => tabKind switch
+    {
+        PreviewTabKind.NewFiles => NewFiles,
+        PreviewTabKind.ChangedFiles => ChangedFiles,
+        PreviewTabKind.DeletedFiles => DeletedFiles,
+        PreviewTabKind.UnchangedFiles => UnchangedFiles,
+        _ => AllFiles,
+    };
+
+    private void UpdateSelectionForRows(IEnumerable<SyncPreviewRowViewModel> rows, Func<SyncPreviewRowViewModel, bool> selectionFactory)
+    {
+        var selectableRows = rows
+            .Where(row => row.CanSelect)
+            .ToList();
+
+        if (selectableRows.Count == 0)
+        {
+            return;
+        }
+
+        _suppressSelectionUpdates = true;
+        try
+        {
+            foreach (var row in selectableRows)
+            {
+                row.IsSelected = selectionFactory(row);
+            }
+        }
+        finally
+        {
+            _suppressSelectionUpdates = false;
         }
 
         UpdateSelectedQueue();
     }
 
-    private void OnPreviewRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    private static bool MatchesPattern(SyncPreviewRowViewModel row, string keyword, PreviewSelectionTarget target)
     {
-        if (e.PropertyName == nameof(SyncPreviewRowViewModel.IsSelected))
+        return target switch
         {
-            UpdateSelectedQueue();
-        }
+            PreviewSelectionTarget.FileName => GetPathCandidates(row)
+                .Select(Path.GetFileName)
+                .Any(value => ContainsKeyword(value, keyword)),
+            PreviewSelectionTarget.FileFolder => GetPathCandidates(row)
+                .Select(Path.GetDirectoryName)
+                .Any(value => ContainsKeyword(value, keyword)),
+            PreviewSelectionTarget.FullPath => GetPathCandidates(row)
+                .Any(value => ContainsKeyword(value, keyword)),
+            _ => false,
+        };
     }
+
+    private static IEnumerable<string> GetPathCandidates(SyncPreviewRowViewModel row)
+    {
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrWhiteSpace(row.SourcePath))
+        {
+            paths.Add(row.SourcePath);
+        }
+
+        if (!string.IsNullOrWhiteSpace(row.DestinationPath))
+        {
+            paths.Add(row.DestinationPath);
+        }
+
+        if (!string.IsNullOrWhiteSpace(row.Name))
+        {
+            paths.Add(row.Name);
+        }
+
+        return paths;
+    }
+
+    private static bool ContainsKeyword(string? value, string keyword) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        value.Contains(keyword, StringComparison.OrdinalIgnoreCase);
 
     private void UpdateSelectedQueue()
     {
@@ -1117,13 +1344,63 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void AddLog(string state, string message)
+    private void AddLog(string state, string message, SyncLogSeverity severity = SyncLogSeverity.Verbose)
     {
-        ActivityLog.Insert(0, new SyncLogEntryViewModel(state, message));
+        ActivityLog.Insert(0, new SyncLogEntryViewModel(state, message, severity));
         const int maxLogEntries = 200;
         while (ActivityLog.Count > maxLogEntries)
         {
             ActivityLog.RemoveAt(ActivityLog.Count - 1);
         }
+
+        RefreshActivityLogView();
+    }
+
+    private void SetActivityLogFilter(ActivityLogFilter filter)
+    {
+        if (_selectedActivityLogFilter == filter)
+        {
+            return;
+        }
+
+        _selectedActivityLogFilter = filter;
+        RaisePropertyChanged(nameof(ShowAllActivityLog));
+        RaisePropertyChanged(nameof(ShowAlertsOnlyActivityLog));
+        RaisePropertyChanged(nameof(ShowVerboseOnlyActivityLog));
+        RefreshActivityLogView();
+    }
+
+    private void RefreshActivityLogView()
+    {
+        if (ActivityLogView is not DispatcherObject dispatcherObject || dispatcherObject.Dispatcher.CheckAccess())
+        {
+            ActivityLogView.Refresh();
+        }
+        else
+        {
+            dispatcherObject.Dispatcher.BeginInvoke(ActivityLogView.Refresh);
+        }
+    }
+
+    private bool ShouldIncludeActivityLogEntry(object item)
+    {
+        if (item is not SyncLogEntryViewModel entry)
+        {
+            return false;
+        }
+
+        return _selectedActivityLogFilter switch
+        {
+            ActivityLogFilter.AlertsOnly => entry.IsAlert,
+            ActivityLogFilter.VerboseOnly => !entry.IsAlert,
+            _ => true,
+        };
+    }
+
+    private enum ActivityLogFilter
+    {
+        All,
+        AlertsOnly,
+        VerboseOnly,
     }
 }

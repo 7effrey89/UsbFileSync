@@ -15,13 +15,52 @@ UsbFileSync is a Windows desktop file synchronization tool built with WPF and .N
 - Start and stop synchronization from the main window.
 - Safe cancellation for file copy operations.
 - Optional SHA-256 checksum validation for each copied file.
-- Configurable parallel file copy count, including `0` for unlimited parallel copy operations.
+- Configurable parallel file copy count, including `0` for adaptive auto parallelism.
 - Settings persistence between runs.
 - Browse buttons for selecting source and destination folders.
 - Read-only source and destination path fields that show Explorer-style drive names such as `XTIVIA (F:)` when unfocused, and the raw path when focused for easy copy/select behavior.
 - Custom application and window icon tailored to the sync workflow.
 - Windows shell file icons in the preview so items match Explorer more closely.
 - Clickable source and destination preview paths that open Explorer and select the file when possible, plus a right-click menu with `Open file` and `Open file folder` actions.
+- A `Show comparison` action on the source preview item context menu that opens a side-by-side source/destination comparison dialog with metadata and file previews.
+- Embedded PDF preview in the comparison dialog using WebView2, plus an embedded media player for common audio and video formats when the local Windows codecs support them.
+- Office document preview for `docx`, `pptx`, `xlsx`, and related macro-enabled/template variants using built-in text extraction, with a Microsoft Office application fallback for Word, PowerPoint, and Excel files that cannot be parsed directly on the local machine.
+- A **Previewer** dropdown on every comparison pane that lets you switch between the built-in viewer and the Windows Shell preview handler. Office documents offer additional Open XML and Office Interop modes.
+- Preview provider mappings in `Application Settings` so you can assign file extensions to the `Text`, `Image`, `Office`, `PDF`, `Media`, or `Unsupported` preview providers.
+
+### Comparison Preview Modes
+
+Every file type in the comparison dialog has a **Previewer** dropdown at the top-right corner of each pane. The built-in viewer for that file type is selected by default. A **Shell Preview** alternative is shown only when a Windows Shell preview handler is registered on the system for that file type.
+
+| File type | Default mode | Description |
+|---|---|---|
+| **Text** | Text Viewer | Displays the file content as plain text in a scrollable text block. |
+| **Image** | Image Viewer | Renders the image with zoom in/out support. |
+| **PDF** | PDF Viewer | Displays the PDF using an embedded WebView2 control. |
+| **Media** | Media Player | Plays the audio or video file with play/pause/stop controls. |
+
+All four types above also offer **Shell Preview** as a second option when a Windows Shell preview handler is registered for that file type. When selected, the pane loads the same preview you see in File Explorer's preview pane. If no handler is registered, the option is hidden from the dropdown.
+
+### Office Document Preview Modes
+
+Office documents (`.docx`, `.pptx`, `.xlsx`, and related variants) have three dedicated modes:
+
+| Mode | Description | Requirements | Best for |
+|---|---|---|---|
+| **Shell Preview** (default) | Uses the Windows Shell preview handler to render a native, high-fidelity preview of the document. This is the same preview you see in File Explorer's preview pane. | A registered Shell preview handler for the file type, typically installed with Microsoft Office or the free Office viewers. | Rich visual previews with formatting, images, and layout intact. |
+| **Open XML** | Parses the Office Open XML package directly using the Open XML SDK and ExcelDataReader. Extracts the text content without launching any external application. | None — fully built-in. | Quick text-only previews when Office is not installed, or for lightweight comparison of document content. |
+| **Office Interop** | Launches the corresponding Office application (Word, Excel, or PowerPoint) invisibly via COM automation, opens the document read-only, and reads its text content. | Microsoft Office installed on the machine. | Encrypted or complex documents that Open XML cannot parse, or when you need the Office application's own text rendering. |
+
+If Shell Preview fails (no handler registered or the handler returns an error), the pane displays the error message and you can switch to another mode. Similarly, if Open XML or Office Interop extraction fails, diagnostic details are shown in the pane.
+
+### Using Show Comparison
+
+1. Click `Analyze` to build the synchronization preview.
+2. In the preview table, right-click the source item name for the row you want to inspect.
+3. Select `Show comparison`.
+4. Review the side-by-side source and destination panes, including metadata, file previews, and clickable full paths.
+
+![Show comparison preview](docs/images/Screenshot%202026-03-11%20234859.png)
 
 ## Safety Behavior
 
@@ -109,20 +148,23 @@ The main window includes:
 - A large synchronization preview table.
 - Filter tabs for `New Files`, `Changed`, `Deleted`, `Unchanged`, and `All`.
 - Shared selection checkboxes across filtered tabs, including select-all checkboxes in each preview header.
+- Edit menu actions for `Select All In Tab`, `Select By Pattern`, and `Invert Selection` against the active preview tab.
 - Action, status, sync action, transfer speed, source metadata, and destination metadata columns, with the same column set available across all preview tabs.
 - Source and destination paths stay underlined for clickability, and only the side that will be changed is color-highlighted in the preview.
 - The sync action column uses a directional chevron that fills as each item progresses, while the Action column keeps the raw function name for the planned operation.
 - Rounded progress bars remain in the remaining queue panel.
 - A bottom dashboard with `Remaining queue` and `Activity log`.
+- View menu actions for toggling the bottom info boxes and resetting the layout split.
 - Resizable layout for the preview and bottom dashboard.
 - Adjustable width split between the queue and the activity log.
+- A Help menu with an About dialog showing the app name, version, and GitHub repository link.
 
 ## Settings
 
 The settings dialog currently supports:
 
 - `Parallel copies`: number of file copy operations allowed to run at the same time.
-- `0` means unlimited parallel copy operations for the current copy batch.
+- `0` enables auto mode, which estimates a starting parallelism and adjusts it during the copy batch.
 
 The main sync settings area also supports:
 
