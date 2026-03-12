@@ -5,6 +5,7 @@ using System.Windows.Threading;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Microsoft.Web.WebView2.Wpf;
+using UsbFileSync.App.Controls;
 using UsbFileSync.App.Services;
 using UsbFileSync.App.ViewModels;
 
@@ -15,8 +16,10 @@ public partial class FileComparisonDialog : Window
     private const double DefaultImageZoom = 1d;
     private const double ImageZoomStep = 1.25d;
     private const double MaxImageZoom = 6d;
+    private const int PreviewCharacterLimit = 8000;
 
     private readonly IFileLauncherService _fileLauncherService = new WindowsFileLauncherService();
+    private readonly IShellPreviewHandlerResolver _previewHandlerResolver = new WindowsShellPreviewHandlerResolver();
     private readonly string _sourcePath;
     private readonly string _sourceSize;
     private readonly string _sourceModified;
@@ -75,12 +78,14 @@ public partial class FileComparisonDialog : Window
                 SourcePreviewTextBlock,
                 SourceImagePreviewViewer,
                 SourcePreviewImage,
+                SourceShellPreviewHost,
                 SourcePdfPreview,
                 SourceMediaPreviewGrid,
                 SourceMediaElement,
                 SourceEmptyStateTextBlock,
                 SourcePathPanel,
-                SourcePathButton);
+                SourcePathButton,
+                SourcePreviewModeComboBox);
             PopulatePane(
                 _viewModel.DestinationPane,
                 DestinationSideLabelTextBlock,
@@ -93,12 +98,14 @@ public partial class FileComparisonDialog : Window
                 DestinationPreviewTextBlock,
                 DestinationImagePreviewViewer,
                 DestinationPreviewImage,
+                DestinationShellPreviewHost,
                 DestinationPdfPreview,
                 DestinationMediaPreviewGrid,
                 DestinationMediaElement,
                 DestinationEmptyStateTextBlock,
                 DestinationPathPanel,
-                DestinationPathButton);
+                DestinationPathButton,
+                DestinationPreviewModeComboBox);
         }
         catch (Exception exception)
         {
@@ -136,12 +143,14 @@ public partial class FileComparisonDialog : Window
         System.Windows.Controls.TextBlock previewTextBlock,
         System.Windows.Controls.ScrollViewer imagePreviewViewer,
         System.Windows.Controls.Image previewImage,
+        ShellPreviewHost shellPreviewHost,
         WebView2 pdfPreview,
         System.Windows.Controls.Grid mediaPreviewGrid,
         System.Windows.Controls.MediaElement mediaElement,
         System.Windows.Controls.TextBlock emptyStateTextBlock,
         System.Windows.Controls.StackPanel pathPanel,
-        System.Windows.Controls.Button pathButton)
+        System.Windows.Controls.Button pathButton,
+        System.Windows.Controls.ComboBox? previewModeComboBox = null)
     {
         sideLabelTextBlock.Text = pane.SideLabel;
         fileNameTextBlock.Text = pane.FileName;
@@ -159,6 +168,8 @@ public partial class FileComparisonDialog : Window
             imagePreviewViewer.ScrollToHorizontalOffset(0);
             imagePreviewViewer.ScrollToVerticalOffset(0);
             imagePreviewViewer.Cursor = ZoomInCursor;
+            shellPreviewHost.Visibility = Visibility.Collapsed;
+            shellPreviewHost.ClearPreview();
             textPreviewViewer.Visibility = Visibility.Visible;
             pdfPreview.Visibility = Visibility.Collapsed;
             mediaPreviewGrid.Visibility = Visibility.Collapsed;
@@ -182,6 +193,8 @@ public partial class FileComparisonDialog : Window
         mediaPreviewGrid.Visibility = Visibility.Collapsed;
         mediaElement.Stop();
         mediaElement.Source = null;
+        shellPreviewHost.Visibility = Visibility.Collapsed;
+        shellPreviewHost.ClearPreview();
 
         if (pane.HasImagePreview)
         {
@@ -192,6 +205,28 @@ public partial class FileComparisonDialog : Window
             previewImage.Height = 0;
             previewTextBlock.Text = string.Empty;
             ResetImageZoom(imagePreviewViewer);
+        }
+        else if (pane.HasShellPreview)
+        {
+            textPreviewViewer.Visibility = Visibility.Collapsed;
+            imagePreviewViewer.Visibility = Visibility.Collapsed;
+            previewImage.Source = null;
+            previewTextBlock.Text = string.Empty;
+
+            if (shellPreviewHost.TryLoadPreview(pane.Preview.FilePath, out var errorMessage))
+            {
+                shellPreviewHost.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                textPreviewViewer.Visibility = Visibility.Visible;
+                previewTextBlock.Text = !string.IsNullOrWhiteSpace(pane.PreviewText)
+                    ? pane.PreviewText
+                    : $"Windows preview handler could not be loaded.{Environment.NewLine}{Environment.NewLine}{errorMessage}";
+                previewTextBlock.HorizontalAlignment = System.Windows.HorizontalAlignment.Left;
+                previewTextBlock.VerticalAlignment = System.Windows.VerticalAlignment.Top;
+                previewTextBlock.TextAlignment = System.Windows.TextAlignment.Left;
+            }
         }
         else if (pane.HasPdfPreview)
         {
@@ -227,6 +262,207 @@ public partial class FileComparisonDialog : Window
         pathButton.Content = pane.HasPath ? pane.FullPath : "Not available";
         pathButton.Tag = pane.FullPath;
         pathButton.IsEnabled = pane.HasPath;
+
+        if (previewModeComboBox is not null)
+        {
+            var previewModePanel = previewModeComboBox.Parent as System.Windows.Controls.StackPanel;
+            previewModeComboBox.Items.Clear();
+
+            if (pane.IsOfficeFile)
+            {
+                if (!string.IsNullOrWhiteSpace(pane.FullPath)
+                    && _previewHandlerResolver.TryGetPreviewHandlerClsid(pane.FullPath, out _))
+                {
+                    previewModeComboBox.Items.Add(new System.Windows.Controls.ComboBoxItem { Content = "Shell Preview", Tag = OfficePreviewMode.Shell });
+                }
+                previewModeComboBox.Items.Add(new System.Windows.Controls.ComboBoxItem { Content = "Open XML", Tag = OfficePreviewMode.OpenXml });
+                previewModeComboBox.Items.Add(new System.Windows.Controls.ComboBoxItem { Content = "Office Interop", Tag = OfficePreviewMode.OfficeInterop });
+                if (previewModePanel is not null) previewModePanel.Visibility = Visibility.Visible;
+                previewModeComboBox.SelectedIndex = 0;
+            }
+            else if (pane.HasFile && pane.Preview.Kind is not (FilePreviewKind.None or FilePreviewKind.Unsupported))
+            {
+                var builtInLabel = pane.Preview.Kind switch
+                {
+                    FilePreviewKind.Text => "Text Viewer",
+                    FilePreviewKind.Image => "Image Viewer",
+                    FilePreviewKind.Pdf => "PDF Viewer",
+                    FilePreviewKind.Media => "Media Player",
+                    FilePreviewKind.Shell => "Shell Preview",
+                    _ => "Built-in",
+                };
+                previewModeComboBox.Items.Add(new System.Windows.Controls.ComboBoxItem { Content = builtInLabel, Tag = "BuiltIn" });
+                if (pane.Preview.Kind != FilePreviewKind.Shell
+                    && !string.IsNullOrWhiteSpace(pane.FullPath)
+                    && _previewHandlerResolver.TryGetPreviewHandlerClsid(pane.FullPath, out _))
+                {
+                    previewModeComboBox.Items.Add(new System.Windows.Controls.ComboBoxItem { Content = "Shell Preview", Tag = "Shell" });
+                }
+                if (previewModePanel is not null) previewModePanel.Visibility = Visibility.Visible;
+                previewModeComboBox.SelectedIndex = 0;
+            }
+            else
+            {
+                if (previewModePanel is not null) previewModePanel.Visibility = Visibility.Collapsed;
+            }
+        }
+    }
+
+    private async void OnPreviewModeChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.ComboBox comboBox || _viewModel is null)
+        {
+            return;
+        }
+
+        if (comboBox.SelectedItem is not System.Windows.Controls.ComboBoxItem selectedItem)
+        {
+            return;
+        }
+
+        var isSource = Equals(comboBox.Tag, "Source");
+        var pane = isSource ? _viewModel.SourcePane : _viewModel.DestinationPane;
+        if (!pane.HasFile || string.IsNullOrWhiteSpace(pane.FullPath))
+        {
+            return;
+        }
+
+        var textPreviewViewer = isSource ? SourceTextPreviewViewer : DestinationTextPreviewViewer;
+        var previewTextBlock = isSource ? SourcePreviewTextBlock : DestinationPreviewTextBlock;
+        var shellPreviewHost = isSource ? SourceShellPreviewHost : DestinationShellPreviewHost;
+        var imagePreviewViewer = isSource ? SourceImagePreviewViewer : DestinationImagePreviewViewer;
+        var previewImage = isSource ? SourcePreviewImage : DestinationPreviewImage;
+        var pdfPreview = isSource ? SourcePdfPreview : DestinationPdfPreview;
+        var mediaPreviewGrid = isSource ? SourceMediaPreviewGrid : DestinationMediaPreviewGrid;
+        var mediaElement = isSource ? SourceMediaElement : DestinationMediaElement;
+
+        // Handle string tags for non-Office files: "BuiltIn" or "Shell"
+        if (selectedItem.Tag is string tagString)
+        {
+            // Hide all viewers first
+            textPreviewViewer.Visibility = Visibility.Collapsed;
+            imagePreviewViewer.Visibility = Visibility.Collapsed;
+            shellPreviewHost.Visibility = Visibility.Collapsed;
+            shellPreviewHost.ClearPreview();
+            pdfPreview.Visibility = Visibility.Collapsed;
+            mediaPreviewGrid.Visibility = Visibility.Collapsed;
+            mediaElement.Stop();
+            mediaElement.Source = null;
+            pdfPreview.Source = null;
+            previewImage.Source = null;
+            previewTextBlock.Text = string.Empty;
+
+            if (tagString == "Shell")
+            {
+                if (shellPreviewHost.TryLoadPreview(pane.FullPath, out var errorMessage))
+                {
+                    shellPreviewHost.Visibility = Visibility.Visible;
+                }
+                else
+                {
+                    textPreviewViewer.Visibility = Visibility.Visible;
+                    previewTextBlock.HorizontalAlignment = System.Windows.HorizontalAlignment.Left;
+                    previewTextBlock.VerticalAlignment = System.Windows.VerticalAlignment.Top;
+                    previewTextBlock.TextAlignment = System.Windows.TextAlignment.Left;
+                    previewTextBlock.Text = $"Windows preview handler could not be loaded.{Environment.NewLine}{Environment.NewLine}{errorMessage}";
+                }
+            }
+            else // "BuiltIn" — restore the original built-in preview
+            {
+                if (pane.HasImagePreview)
+                {
+                    imagePreviewViewer.Visibility = Visibility.Visible;
+                    previewImage.Source = pane.Preview.ImageSource;
+                    previewImage.Width = 0;
+                    previewImage.Height = 0;
+                    ResetImageZoom(imagePreviewViewer);
+                }
+                else if (pane.HasShellPreview)
+                {
+                    if (shellPreviewHost.TryLoadPreview(pane.Preview.FilePath, out var errorMessage))
+                    {
+                        shellPreviewHost.Visibility = Visibility.Visible;
+                    }
+                    else
+                    {
+                        textPreviewViewer.Visibility = Visibility.Visible;
+                        previewTextBlock.HorizontalAlignment = System.Windows.HorizontalAlignment.Left;
+                        previewTextBlock.VerticalAlignment = System.Windows.VerticalAlignment.Top;
+                        previewTextBlock.TextAlignment = System.Windows.TextAlignment.Left;
+                        previewTextBlock.Text = !string.IsNullOrWhiteSpace(pane.PreviewText)
+                            ? pane.PreviewText
+                            : $"Windows preview handler could not be loaded.{Environment.NewLine}{Environment.NewLine}{errorMessage}";
+                    }
+                }
+                else if (pane.HasPdfPreview)
+                {
+                    pdfPreview.Visibility = Visibility.Visible;
+                    pdfPreview.Source = new Uri(pane.Preview.FilePath, UriKind.Absolute);
+                }
+                else if (pane.HasMediaPreview)
+                {
+                    mediaPreviewGrid.Visibility = Visibility.Visible;
+                    mediaElement.Source = new Uri(pane.Preview.FilePath, UriKind.Absolute);
+                }
+                else
+                {
+                    textPreviewViewer.Visibility = Visibility.Visible;
+                    previewTextBlock.Text = pane.PreviewText;
+                    previewTextBlock.HorizontalAlignment = System.Windows.HorizontalAlignment.Left;
+                    previewTextBlock.VerticalAlignment = System.Windows.VerticalAlignment.Top;
+                    previewTextBlock.TextAlignment = System.Windows.TextAlignment.Left;
+                }
+            }
+
+            return;
+        }
+
+        // Handle OfficePreviewMode tags for Office files
+        if (selectedItem.Tag is not OfficePreviewMode mode)
+        {
+            return;
+        }
+
+        if (!pane.IsOfficeFile)
+        {
+            return;
+        }
+
+        shellPreviewHost.Visibility = Visibility.Collapsed;
+        shellPreviewHost.ClearPreview();
+        imagePreviewViewer.Visibility = Visibility.Collapsed;
+        pdfPreview.Visibility = Visibility.Collapsed;
+        mediaPreviewGrid.Visibility = Visibility.Collapsed;
+        textPreviewViewer.Visibility = Visibility.Visible;
+        previewTextBlock.HorizontalAlignment = System.Windows.HorizontalAlignment.Left;
+        previewTextBlock.VerticalAlignment = System.Windows.VerticalAlignment.Top;
+        previewTextBlock.TextAlignment = System.Windows.TextAlignment.Left;
+
+        if (mode == OfficePreviewMode.Shell)
+        {
+            textPreviewViewer.Visibility = Visibility.Collapsed;
+            previewTextBlock.Text = string.Empty;
+
+            if (shellPreviewHost.TryLoadPreview(pane.FullPath, out var errorMessage))
+            {
+                shellPreviewHost.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                textPreviewViewer.Visibility = Visibility.Visible;
+                previewTextBlock.Text = $"Windows preview handler could not be loaded.{Environment.NewLine}{Environment.NewLine}{errorMessage}";
+            }
+
+            return;
+        }
+
+        previewTextBlock.Text = "Loading...";
+        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+
+        var result = await Task.Run(() =>
+            OfficePreviewExtractor.ExtractPreviewWithMode(pane.FullPath, PreviewCharacterLimit, mode));
+
+        previewTextBlock.Text = result.HasPreview ? result.PreviewText : result.DiagnosticText;
     }
 
     private void OnPlayMediaClicked(object sender, RoutedEventArgs e)
@@ -246,6 +482,8 @@ public partial class FileComparisonDialog : Window
 
     private void OnClosed(object? sender, EventArgs e)
     {
+        SourceShellPreviewHost.ClearPreview();
+        DestinationShellPreviewHost.ClearPreview();
         SourceMediaElement.Stop();
         SourceMediaElement.Source = null;
         DestinationMediaElement.Stop();

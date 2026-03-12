@@ -71,6 +71,7 @@ public sealed class SyncPreviewRowViewModelTests
 
         Assert.Equal(@"E:\folder", row.Name);
         Assert.Equal(@"E:\folder", row.OpenPath);
+        Assert.Equal("Folder", row.FileType);
         Assert.Equal(@"E:\folder", iconProvider.RequestedPath);
         Assert.True(iconProvider.RequestedIsDirectory);
         Assert.Same(iconProvider.IconToReturn, row.IconSource);
@@ -109,6 +110,7 @@ public sealed class SyncPreviewRowViewModelTests
             PlannedActionType: null), new StubFileIconProvider(null));
 
         Assert.Equal(100, row.ProgressValue);
+        Assert.Equal("TXT", row.FileType);
         Assert.Equal("||", row.StatusGlyph);
         Assert.Equal("Unchanged", row.SyncActionText);
         Assert.Equal("||", row.SourceStatusGlyph);

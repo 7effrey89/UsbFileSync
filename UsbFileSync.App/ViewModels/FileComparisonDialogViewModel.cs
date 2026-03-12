@@ -66,6 +66,7 @@ public sealed class FileComparisonPaneViewModel
     public string PreviewText => Preview.Kind switch
     {
         FilePreviewKind.Text => Preview.TextContent,
+        FilePreviewKind.Shell => Preview.TextContent,
         FilePreviewKind.Unsupported => Preview.Message,
         FilePreviewKind.None => Preview.Message,
         _ => string.Empty,
@@ -73,11 +74,28 @@ public sealed class FileComparisonPaneViewModel
 
     public bool HasImagePreview => Preview.Kind == FilePreviewKind.Image && Preview.ImageSource is not null;
 
+    public bool HasShellPreview => Preview.Kind == FilePreviewKind.Shell && !string.IsNullOrWhiteSpace(Preview.FilePath);
+
     public bool HasPdfPreview => Preview.Kind == FilePreviewKind.Pdf && !string.IsNullOrWhiteSpace(Preview.FilePath);
 
     public bool HasMediaPreview => Preview.Kind == FilePreviewKind.Media && !string.IsNullOrWhiteSpace(Preview.FilePath);
 
     public bool HasTextPreview => !string.IsNullOrWhiteSpace(PreviewText);
+
+    public bool IsOfficeFile
+    {
+        get
+        {
+            if (!HasFile || string.IsNullOrWhiteSpace(FullPath))
+            {
+                return false;
+            }
+
+            var extension = Services.PreviewProviderDefaults.NormalizeExtension(System.IO.Path.GetExtension(FullPath));
+            var allMappings = Services.PreviewProviderDefaults.GetAll();
+            return allMappings.TryGetValue(extension, out var kind) && kind == Services.PreviewProviderKind.Office;
+        }
+    }
 
     public static FileComparisonPaneViewModel Create(string sideLabel, string? fullPath, string sizeText, string modifiedText, FilePreviewService previewService)
     {

@@ -62,6 +62,7 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
         Category = item.Category;
         RelativePath = item.RelativePath;
         Kind = item.IsDirectory ? "Folder" : "File";
+        FileType = GetFileType(item);
         IconSource = (iconProvider ?? ShellFileIconProvider.Instance).GetIcon(Name, item.IsDirectory);
         IconGlyph = item.IsDirectory ? "\uE8B7" : "\uE8A5";
         SourcePath = item.SourceFullPath ?? string.Empty;
@@ -91,6 +92,8 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
     public SyncPreviewCategory Category { get; }
 
     public string Kind { get; }
+
+    public string FileType { get; }
 
     public ImageSource? IconSource { get; }
 
@@ -483,6 +486,28 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
         }
 
         return item.RelativePath;
+    }
+
+    private static string GetFileType(SyncPreviewItem item)
+    {
+        if (item.IsDirectory)
+        {
+            return "Folder";
+        }
+
+        var path = !string.IsNullOrWhiteSpace(item.SourceFullPath)
+            ? item.SourceFullPath
+            : !string.IsNullOrWhiteSpace(item.DestinationFullPath)
+                ? item.DestinationFullPath
+                : item.RelativePath;
+
+        var extension = Path.GetExtension(path);
+        if (string.IsNullOrWhiteSpace(extension))
+        {
+            return "File";
+        }
+
+        return extension.TrimStart('.').ToUpperInvariant();
     }
 
     private static string FormatSize(long? size)

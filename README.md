@@ -24,7 +24,34 @@ UsbFileSync is a Windows desktop file synchronization tool built with WPF and .N
 - Clickable source and destination preview paths that open Explorer and select the file when possible, plus a right-click menu with `Open file` and `Open file folder` actions.
 - A `Show comparison` action on the source preview item context menu that opens a side-by-side source/destination comparison dialog with metadata and file previews.
 - Embedded PDF preview in the comparison dialog using WebView2, plus an embedded media player for common audio and video formats when the local Windows codecs support them.
-- Preview provider mappings in `Application Settings` so you can assign file extensions to the `Text`, `Image`, `PDF`, `Media`, or `Unsupported` preview providers.
+- Office document preview for `docx`, `pptx`, `xlsx`, and related macro-enabled/template variants using built-in text extraction, with a Microsoft Office application fallback for Word, PowerPoint, and Excel files that cannot be parsed directly on the local machine.
+- A **Previewer** dropdown on every comparison pane that lets you switch between the built-in viewer and the Windows Shell preview handler. Office documents offer additional Open XML and Office Interop modes.
+- Preview provider mappings in `Application Settings` so you can assign file extensions to the `Text`, `Image`, `Office`, `PDF`, `Media`, or `Unsupported` preview providers.
+
+### Comparison Preview Modes
+
+Every file type in the comparison dialog has a **Previewer** dropdown at the top-right corner of each pane. The built-in viewer for that file type is selected by default. A **Shell Preview** alternative is shown only when a Windows Shell preview handler is registered on the system for that file type.
+
+| File type | Default mode | Description |
+|---|---|---|
+| **Text** | Text Viewer | Displays the file content as plain text in a scrollable text block. |
+| **Image** | Image Viewer | Renders the image with zoom in/out support. |
+| **PDF** | PDF Viewer | Displays the PDF using an embedded WebView2 control. |
+| **Media** | Media Player | Plays the audio or video file with play/pause/stop controls. |
+
+All four types above also offer **Shell Preview** as a second option when a Windows Shell preview handler is registered for that file type. When selected, the pane loads the same preview you see in File Explorer's preview pane. If no handler is registered, the option is hidden from the dropdown.
+
+### Office Document Preview Modes
+
+Office documents (`.docx`, `.pptx`, `.xlsx`, and related variants) have three dedicated modes:
+
+| Mode | Description | Requirements | Best for |
+|---|---|---|---|
+| **Shell Preview** (default) | Uses the Windows Shell preview handler to render a native, high-fidelity preview of the document. This is the same preview you see in File Explorer's preview pane. | A registered Shell preview handler for the file type, typically installed with Microsoft Office or the free Office viewers. | Rich visual previews with formatting, images, and layout intact. |
+| **Open XML** | Parses the Office Open XML package directly using the Open XML SDK and ExcelDataReader. Extracts the text content without launching any external application. | None — fully built-in. | Quick text-only previews when Office is not installed, or for lightweight comparison of document content. |
+| **Office Interop** | Launches the corresponding Office application (Word, Excel, or PowerPoint) invisibly via COM automation, opens the document read-only, and reads its text content. | Microsoft Office installed on the machine. | Encrypted or complex documents that Open XML cannot parse, or when you need the Office application's own text rendering. |
+
+If Shell Preview fails (no handler registered or the handler returns an error), the pane displays the error message and you can switch to another mode. Similarly, if Open XML or Office Interop extraction fails, diagnostic details are shown in the pane.
 
 ### Using Show Comparison
 

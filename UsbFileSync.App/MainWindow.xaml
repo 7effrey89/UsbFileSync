@@ -751,6 +751,7 @@
                                         <DataGridTemplateColumn Header="Sync action" CellTemplate="{StaticResource PreviewProgressCellTemplate}" Width="140" />
                                         <DataGridTemplateColumn Header="Transfer speed" CellTemplate="{StaticResource PreviewTransferSpeedCellTemplate}" Width="110" />
                                         <DataGridTemplateColumn Header="Destination File" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
+                                        <DataGridTextColumn Header="File type" Binding="{Binding FileType}" Width="90" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Source size" Binding="{Binding SourceSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Destination size" Binding="{Binding DestinationSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Source Last Modified" Binding="{Binding SourceModified}" Width="150" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
@@ -791,6 +792,7 @@
                                         <DataGridTemplateColumn Header="Sync action" CellTemplate="{StaticResource PreviewProgressCellTemplate}" Width="140" />
                                         <DataGridTemplateColumn Header="Transfer speed" CellTemplate="{StaticResource PreviewTransferSpeedCellTemplate}" Width="110" />
                                         <DataGridTemplateColumn Header="Destination File" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
+                                        <DataGridTextColumn Header="File type" Binding="{Binding FileType}" Width="90" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Source size" Binding="{Binding SourceSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Destination size" Binding="{Binding DestinationSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Source Last Modified" Binding="{Binding SourceModified}" Width="150" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
@@ -831,6 +833,7 @@
                                         <DataGridTemplateColumn Header="Sync action" CellTemplate="{StaticResource PreviewProgressCellTemplate}" Width="140" />
                                         <DataGridTemplateColumn Header="Transfer speed" CellTemplate="{StaticResource PreviewTransferSpeedCellTemplate}" Width="110" />
                                         <DataGridTemplateColumn Header="Destination File" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
+                                        <DataGridTextColumn Header="File type" Binding="{Binding FileType}" Width="90" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Source size" Binding="{Binding SourceSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Destination size" Binding="{Binding DestinationSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Source Last Modified" Binding="{Binding SourceModified}" Width="150" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
@@ -871,6 +874,7 @@
                                         <DataGridTemplateColumn Header="Sync action" CellTemplate="{StaticResource PreviewProgressCellTemplate}" Width="140" />
                                         <DataGridTemplateColumn Header="Transfer speed" CellTemplate="{StaticResource PreviewTransferSpeedCellTemplate}" Width="110" />
                                         <DataGridTemplateColumn Header="Destination File" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
+                                        <DataGridTextColumn Header="File type" Binding="{Binding FileType}" Width="90" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Source size" Binding="{Binding SourceSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Destination size" Binding="{Binding DestinationSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Source Last Modified" Binding="{Binding SourceModified}" Width="150" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
@@ -911,6 +915,7 @@
                                         <DataGridTemplateColumn Header="Sync action" CellTemplate="{StaticResource PreviewProgressCellTemplate}" Width="140" />
                                         <DataGridTemplateColumn Header="Transfer speed" CellTemplate="{StaticResource PreviewTransferSpeedCellTemplate}" Width="110" />
                                         <DataGridTemplateColumn Header="Destination File" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
+                                        <DataGridTextColumn Header="File type" Binding="{Binding FileType}" Width="90" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Source size" Binding="{Binding SourceSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Destination size" Binding="{Binding DestinationSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="Source Last Modified" Binding="{Binding SourceModified}" Width="150" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
@@ -1047,7 +1052,7 @@
                     Panel.ZIndex="20">
                 <Border HorizontalAlignment="Center"
                         VerticalAlignment="Center"
-                        Width="340"
+                        Width="420"
                         Padding="30,24"
                         Background="#FFFFFF"
                         BorderBrush="#D9E4EE"
@@ -1059,6 +1064,7 @@
                                      Style="{StaticResource RoundedProgressBarStyle}" />
                         <TextBlock Margin="0,16,0,0"
                                    HorizontalAlignment="Center"
+                                   TextWrapping="Wrap"
                                    Text="Loading preview..."
                                    FontSize="18"
                                    FontWeight="SemiBold"
@@ -1066,7 +1072,8 @@
                         <TextBlock Margin="0,8,0,0"
                                    HorizontalAlignment="Center"
                                    TextAlignment="Center"
-                                   Text="Scanning files and building the synchronization preview table."
+                                   TextWrapping="Wrap"
+                                   Text="Building the synchronization preview."
                                    Foreground="{StaticResource SubtleTextBrush}" />
                     </StackPanel>
                 </Border>

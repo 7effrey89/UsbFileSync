@@ -9,7 +9,9 @@ public sealed class FilePreviewService
 
     private readonly IReadOnlyDictionary<string, PreviewProviderKind> _providerMappings;
 
-    public FilePreviewService(IReadOnlyDictionary<string, string>? providerOverrides = null)
+    public FilePreviewService(
+        IReadOnlyDictionary<string, string>? providerOverrides = null,
+        IShellPreviewHandlerResolver? shellPreviewHandlerResolver = null)
     {
         _providerMappings = PreviewProviderDefaults.MergeWithOverrides(providerOverrides);
     }
@@ -36,9 +38,54 @@ public sealed class FilePreviewService
         {
             PreviewProviderKind.Text => LoadTextPreview(normalizedPath),
             PreviewProviderKind.Image => LoadImagePreview(normalizedPath),
+            PreviewProviderKind.Office => LoadOfficePreview(normalizedPath),
             PreviewProviderKind.Pdf => new FilePreviewResult { Kind = FilePreviewKind.Pdf, FilePath = normalizedPath },
             PreviewProviderKind.Media => new FilePreviewResult { Kind = FilePreviewKind.Media, FilePath = normalizedPath },
             _ => new FilePreviewResult { Kind = FilePreviewKind.Unsupported, FilePath = normalizedPath, Message = "Preview for item type not supported" },
+        };
+    }
+
+    private FilePreviewResult LoadOfficePreview(string path)
+    {
+        OfficePreviewExtractionResult? extractionResult = null;
+
+        try
+        {
+            extractionResult = OfficePreviewExtractor.ExtractPreview(path, PreviewCharacterLimit);
+        }
+        catch (Exception)
+        {
+            extractionResult = null;
+        }
+
+        var fallbackText = extractionResult?.PreviewText ?? string.Empty;
+        var diagnosticText = extractionResult?.DiagnosticText ?? string.Empty;
+
+        if (!string.IsNullOrWhiteSpace(fallbackText))
+        {
+            return new FilePreviewResult
+            {
+                Kind = FilePreviewKind.Text,
+                FilePath = path,
+                TextContent = fallbackText,
+            };
+        }
+
+        if (!string.IsNullOrWhiteSpace(diagnosticText))
+        {
+            return new FilePreviewResult
+            {
+                Kind = FilePreviewKind.Text,
+                FilePath = path,
+                TextContent = diagnosticText,
+            };
+        }
+
+        return new FilePreviewResult
+        {
+            Kind = FilePreviewKind.Unsupported,
+            FilePath = path,
+            Message = "Preview could not be loaded.",
         };
     }
 

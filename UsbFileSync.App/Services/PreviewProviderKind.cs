@@ -4,6 +4,7 @@ public enum PreviewProviderKind
 {
     Text,
     Image,
+    Office,
     Pdf,
     Media,
     Unsupported,

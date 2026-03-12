@@ -47,6 +47,21 @@ public sealed class SettingsDialogTests
     }
 
     [Fact]
+    public void TryCreateSerializableMappings_SerializesOfficeProvider()
+    {
+        var mappings = new[]
+        {
+            new PreviewProviderMappingViewModel { Extension = ".docx", ProviderKind = PreviewProviderKind.Office },
+        };
+
+        var success = SettingsDialog.TryCreateSerializableMappings(mappings, out var serializedMappings, out var errorMessage);
+
+        Assert.True(success);
+        Assert.Equal(string.Empty, errorMessage);
+        Assert.Equal("Office", serializedMappings[".docx"]);
+    }
+
+    [Fact]
     public void TryCreateSerializableMappings_RejectsDuplicateExtensions()
     {
         var mappings = new[]

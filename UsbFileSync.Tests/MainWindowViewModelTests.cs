@@ -1,8 +1,15 @@
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Spreadsheet;
+using DocumentFormat.OpenXml.Wordprocessing;
+using System.IO.Compression;
 using UsbFileSync.App.Services;
 using UsbFileSync.App.ViewModels;
 using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Services;
 using UsbFileSync.Core.Strategies;
+using SpreadsheetText = DocumentFormat.OpenXml.Spreadsheet.Text;
+using WordRun = DocumentFormat.OpenXml.Wordprocessing.Run;
+using WordText = DocumentFormat.OpenXml.Wordprocessing.Text;
 
 namespace UsbFileSync.Tests;
 
@@ -699,6 +706,339 @@ public sealed class MainWindowViewModelTests
         Assert.False(pane.HasPdfPreview);
     }
 
+    [Fact]
+    public void FileComparisonPaneViewModel_Create_LoadsTextPreviewForOfficeFiles()
+    {
+        using var workspace = new SyncTestWorkspace();
+        OfficePreviewTestFileFactory.CreateDocx(
+            Path.Combine(workspace.SourcePath, "plan.docx"),
+            "Quarterly Plan",
+            "Milestone A");
+
+        var pane = FileComparisonPaneViewModel.Create(
+            "Source",
+            Path.Combine(workspace.SourcePath, "plan.docx"),
+            "1 KB",
+            "2026-03-11 10:00:00",
+            new FilePreviewService(shellPreviewHandlerResolver: new StubShellPreviewHandlerResolver(isAvailable: false)));
+
+        Assert.True(pane.HasFile);
+        Assert.True(pane.HasTextPreview);
+        Assert.False(pane.HasShellPreview);
+        Assert.Contains("Quarterly Plan", pane.PreviewText);
+        Assert.Contains("Milestone A", pane.PreviewText);
+    }
+
+    [Fact]
+    public void FileComparisonPaneViewModel_Create_LoadsTextPreviewForOfficeFilesEvenWhenHandlerExists()
+    {
+        using var workspace = new SyncTestWorkspace();
+        OfficePreviewTestFileFactory.CreateDocx(
+            Path.Combine(workspace.SourcePath, "plan.docx"),
+            "Quarterly Plan",
+            "Milestone A");
+
+        var pane = FileComparisonPaneViewModel.Create(
+            "Source",
+            Path.Combine(workspace.SourcePath, "plan.docx"),
+            "1 KB",
+            "2026-03-11 10:00:00",
+            new FilePreviewService(shellPreviewHandlerResolver: new StubShellPreviewHandlerResolver(isAvailable: true)));
+
+        Assert.True(pane.HasFile);
+        Assert.True(pane.HasTextPreview);
+        Assert.False(pane.HasShellPreview);
+        Assert.Contains("Quarterly Plan", pane.PreviewText);
+        Assert.Contains("Milestone A", pane.PreviewText);
+    }
+
+    [Fact]
+    public void FileComparisonPaneViewModel_Create_LoadsTextPreviewForExcelFiles()
+    {
+        using var workspace = new SyncTestWorkspace();
+        OfficePreviewTestFileFactory.CreateXlsx(
+            Path.Combine(workspace.SourcePath, "budget.xlsx"),
+            "Budget",
+            ["Category", "Amount"],
+            ["Travel", "1500"]);
+
+        var pane = FileComparisonPaneViewModel.Create(
+            "Source",
+            Path.Combine(workspace.SourcePath, "budget.xlsx"),
+            "1 KB",
+            "2026-03-11 10:00:00",
+            new FilePreviewService(shellPreviewHandlerResolver: new StubShellPreviewHandlerResolver(isAvailable: false)));
+
+        Assert.True(pane.HasFile);
+        Assert.True(pane.HasTextPreview);
+        Assert.False(pane.HasShellPreview);
+        Assert.Contains("Budget", pane.PreviewText);
+        Assert.Contains("Category", pane.PreviewText);
+        Assert.Contains("Travel", pane.PreviewText);
+        Assert.Contains("1500", pane.PreviewText);
+    }
+
+    [Fact]
+    public void FileComparisonPaneViewModel_Create_DoesNotUseShellPreviewForExcelFilesEvenWhenHandlerExists()
+    {
+        using var workspace = new SyncTestWorkspace();
+        OfficePreviewTestFileFactory.CreateXlsx(
+            Path.Combine(workspace.SourcePath, "budget.xlsx"),
+            "Budget",
+            ["Category", "Amount"],
+            ["Travel", "1500"]);
+
+        var pane = FileComparisonPaneViewModel.Create(
+            "Source",
+            Path.Combine(workspace.SourcePath, "budget.xlsx"),
+            "1 KB",
+            "2026-03-11 10:00:00",
+            new FilePreviewService(shellPreviewHandlerResolver: new StubShellPreviewHandlerResolver(isAvailable: true)));
+
+        Assert.True(pane.HasFile);
+        Assert.True(pane.HasTextPreview);
+        Assert.False(pane.HasShellPreview);
+        Assert.Contains("Budget", pane.PreviewText);
+        Assert.Contains("Category", pane.PreviewText);
+    }
+
+    [Fact]
+    public void FileComparisonPaneViewModel_Create_LoadsTextPreviewForArchiveOnlyExcelFiles()
+    {
+        using var workspace = new SyncTestWorkspace();
+        OfficePreviewTestFileFactory.CreateArchiveOnlyXlsx(
+            Path.Combine(workspace.SourcePath, "archive-only.xlsx"),
+            "Budget",
+            ["Category", "Amount"],
+            ["Travel", "1500"]);
+
+        var pane = FileComparisonPaneViewModel.Create(
+            "Source",
+            Path.Combine(workspace.SourcePath, "archive-only.xlsx"),
+            "1 KB",
+            "2026-03-11 10:00:00",
+            new FilePreviewService(shellPreviewHandlerResolver: new StubShellPreviewHandlerResolver(isAvailable: false)));
+
+        Assert.True(pane.HasFile);
+        Assert.True(pane.HasTextPreview);
+        Assert.False(pane.HasShellPreview);
+        Assert.Contains("Budget", pane.PreviewText);
+        Assert.Contains("Category", pane.PreviewText);
+        Assert.Contains("Travel", pane.PreviewText);
+    }
+
+    [Fact]
+    public void FileComparisonPaneViewModel_Create_ShowsExcelDiagnosticsWhenPreviewExtractionFails()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("broken.xlsx", "not an excel workbook");
+
+        var pane = FileComparisonPaneViewModel.Create(
+            "Source",
+            Path.Combine(workspace.SourcePath, "broken.xlsx"),
+            "1 KB",
+            "2026-03-11 10:00:00",
+            new FilePreviewService(shellPreviewHandlerResolver: new StubShellPreviewHandlerResolver(isAvailable: false)));
+
+        Assert.True(pane.HasFile);
+        Assert.True(pane.HasTextPreview);
+        Assert.Contains("Excel preview diagnostics", pane.PreviewText);
+        Assert.Contains("does not have a valid ZIP-based Excel workbook signature", pane.PreviewText);
+        Assert.Contains("ExcelDataReader", pane.PreviewText);
+        Assert.Contains("Open XML SDK", pane.PreviewText);
+        Assert.Contains("Archive XML fallback", pane.PreviewText);
+    }
+
+    [Fact]
+    public void FileComparisonPaneViewModel_Create_ShowsWordDiagnosticsWhenPreviewExtractionFails()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("broken.docx", "not a word document");
+
+        var pane = FileComparisonPaneViewModel.Create(
+            "Source",
+            Path.Combine(workspace.SourcePath, "broken.docx"),
+            "1 KB",
+            "2026-03-11 10:00:00",
+            new FilePreviewService(shellPreviewHandlerResolver: new StubShellPreviewHandlerResolver(isAvailable: true)));
+
+        Assert.True(pane.HasFile);
+        Assert.True(pane.HasTextPreview);
+        Assert.False(pane.HasShellPreview);
+        Assert.Contains("Word preview diagnostics", pane.PreviewText);
+        Assert.Contains("does not have a valid ZIP-based Word document signature", pane.PreviewText);
+    }
+
+    [Fact]
+    public void FileComparisonPaneViewModel_IsOfficeFile_TrueForDocx()
+    {
+        using var workspace = new SyncTestWorkspace();
+        OfficePreviewTestFileFactory.CreateDocx(
+            Path.Combine(workspace.SourcePath, "test.docx"),
+            "Hello");
+
+        var pane = FileComparisonPaneViewModel.Create(
+            "Source",
+            Path.Combine(workspace.SourcePath, "test.docx"),
+            "1 KB",
+            "2026-03-11 10:00:00",
+            new FilePreviewService());
+
+        Assert.True(pane.IsOfficeFile);
+    }
+
+    [Fact]
+    public void FileComparisonPaneViewModel_IsOfficeFile_FalseForTextFiles()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("readme.txt", "hello world");
+
+        var pane = FileComparisonPaneViewModel.Create(
+            "Source",
+            Path.Combine(workspace.SourcePath, "readme.txt"),
+            "1 KB",
+            "2026-03-11 10:00:00",
+            new FilePreviewService());
+
+        Assert.False(pane.IsOfficeFile);
+    }
+
+    [Fact]
+    public void FileComparisonPaneViewModel_IsOfficeFile_FalseWhenFileDoesNotExist()
+    {
+        var pane = FileComparisonPaneViewModel.Create(
+            "Source",
+            @"C:\no\such\file.docx",
+            "1 KB",
+            "2026-03-11 10:00:00",
+            new FilePreviewService());
+
+        Assert.False(pane.IsOfficeFile);
+    }
+
+    [Fact]
+    public void ExtractPreviewWithMode_OpenXml_ExtractsDocxContent()
+    {
+        using var workspace = new SyncTestWorkspace();
+        var path = Path.Combine(workspace.SourcePath, "plan.docx");
+        OfficePreviewTestFileFactory.CreateDocx(path, "Budget Report", "Summary");
+
+        var result = OfficePreviewExtractor.ExtractPreviewWithMode(path, 8000, OfficePreviewMode.OpenXml);
+
+        Assert.True(result.HasPreview);
+        Assert.Contains("Budget Report", result.PreviewText);
+    }
+
+    [Fact]
+    public void ExtractPreviewWithMode_OpenXml_ExtractsXlsxContent()
+    {
+        using var workspace = new SyncTestWorkspace();
+        var path = Path.Combine(workspace.SourcePath, "data.xlsx");
+        OfficePreviewTestFileFactory.CreateXlsx(path, "Sheet1", new[] { new[] { "A1", "B1" }, new[] { "A2", "B2" } });
+
+        var result = OfficePreviewExtractor.ExtractPreviewWithMode(path, 8000, OfficePreviewMode.OpenXml);
+
+        Assert.True(result.HasPreview);
+        Assert.Contains("A1", result.PreviewText);
+    }
+
+    [Fact]
+    public void ExtractPreviewWithMode_OpenXml_ReturnsDiagnosticsForCorruptFile()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("corrupt.docx", "not valid");
+
+        var result = OfficePreviewExtractor.ExtractPreviewWithMode(
+            Path.Combine(workspace.SourcePath, "corrupt.docx"), 8000, OfficePreviewMode.OpenXml);
+
+        Assert.False(result.HasPreview);
+        Assert.False(string.IsNullOrWhiteSpace(result.DiagnosticText));
+    }
+
+    [Fact]
+    public void ExtractPreviewWithMode_OfficeInterop_ReturnsDiagnosticsForCorruptFile()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("corrupt.docx", "not valid");
+
+        var result = OfficePreviewExtractor.ExtractPreviewWithMode(
+            Path.Combine(workspace.SourcePath, "corrupt.docx"), 8000, OfficePreviewMode.OfficeInterop);
+
+        Assert.False(result.HasPreview);
+        Assert.False(string.IsNullOrWhiteSpace(result.DiagnosticText));
+    }
+
+    [Fact]
+    public void ExtractPreviewWithMode_Shell_ReturnsDiagnosticMessage()
+    {
+        using var workspace = new SyncTestWorkspace();
+        var path = Path.Combine(workspace.SourcePath, "plan.docx");
+        OfficePreviewTestFileFactory.CreateDocx(path, "Hello");
+
+        var result = OfficePreviewExtractor.ExtractPreviewWithMode(path, 8000, OfficePreviewMode.Shell);
+
+        Assert.False(result.HasPreview);
+        Assert.Contains("shell preview", result.DiagnosticText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void FileComparisonPaneViewModel_Create_LoadsTextPreviewForUploadedWordAsset()
+    {
+        var assetPath = GetTestAssetPath("*.docx");
+
+        var pane = FileComparisonPaneViewModel.Create(
+            "Source",
+            assetPath,
+            "1 KB",
+            "2026-03-12 10:00:00",
+            new FilePreviewService());
+
+        Assert.True(pane.HasFile);
+        Assert.True(pane.HasTextPreview);
+        Assert.Contains("Word Unit Test", pane.PreviewText);
+        Assert.Contains("This is a test", pane.PreviewText);
+    }
+
+    [Fact]
+    public void FileComparisonPaneViewModel_Create_LoadsTextPreviewForUploadedExcelAsset()
+    {
+        var assetPath = GetTestAssetPath("*.xlsx");
+
+        var pane = FileComparisonPaneViewModel.Create(
+            "Source",
+            assetPath,
+            "1 KB",
+            "2026-03-12 10:00:00",
+            new FilePreviewService());
+
+        Assert.True(pane.HasFile);
+        Assert.True(pane.HasTextPreview);
+        Assert.Contains("Pivot", pane.PreviewText);
+        Assert.Contains("Column1", pane.PreviewText);
+        Assert.Contains("Grand Total", pane.PreviewText);
+        Assert.Contains("ColumnA", pane.PreviewText);
+    }
+
+    [Fact]
+    public void FileComparisonPaneViewModel_Create_LoadsTextPreviewForUploadedPowerPointAsset()
+    {
+        var assetPath = GetTestAssetPath("*.pptx");
+
+        var pane = FileComparisonPaneViewModel.Create(
+            "Source",
+            assetPath,
+            "1 KB",
+            "2026-03-12 10:00:00",
+            new FilePreviewService());
+
+        Assert.True(pane.HasFile);
+        Assert.True(pane.HasTextPreview);
+        Assert.Contains("Slide 1", pane.PreviewText);
+        Assert.Contains("Analyze", pane.PreviewText);
+        Assert.Contains("OVERWRITE", pane.PreviewText);
+        Assert.Contains("DELETE", pane.PreviewText);
+    }
+
     private static async Task WaitForAsync(Func<bool> condition)
     {
         var deadline = DateTime.UtcNow.AddSeconds(3);
@@ -713,9 +1053,169 @@ public sealed class MainWindowViewModelTests
         }
     }
 
+    private static string GetTestAssetPath(string fileNameOrPattern)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            var directCandidate = FindAsset(directory.FullName, fileNameOrPattern);
+            if (directCandidate is not null)
+            {
+                return directCandidate;
+            }
+
+            var nestedCandidate = FindAsset(Path.Combine(directory.FullName, "UsbFileSync.Tests"), fileNameOrPattern);
+            if (nestedCandidate is not null)
+            {
+                return nestedCandidate;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new FileNotFoundException($"Could not locate test asset '{fileNameOrPattern}' from '{AppContext.BaseDirectory}'.");
+    }
+
+    private static string? FindAsset(string rootDirectory, string fileNameOrPattern)
+    {
+        var assetDirectory = Path.Combine(rootDirectory, "TestAssets");
+        if (!Directory.Exists(assetDirectory))
+        {
+            return null;
+        }
+
+        var exactCandidate = Path.Combine(assetDirectory, fileNameOrPattern);
+        if (!fileNameOrPattern.Contains('*') && !fileNameOrPattern.Contains('?'))
+        {
+            return File.Exists(exactCandidate) ? exactCandidate : null;
+        }
+
+        return Directory.GetFiles(assetDirectory, fileNameOrPattern, SearchOption.TopDirectoryOnly)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+    }
+
     private sealed class StubFolderPickerService(string? selectedPath) : IFolderPickerService
     {
         public string? PickFolder(string title, string? initialPath) => selectedPath;
+    }
+
+    private sealed class StubShellPreviewHandlerResolver(bool isAvailable) : IShellPreviewHandlerResolver
+    {
+        public bool TryGetPreviewHandlerClsid(string filePath, out Guid previewHandlerClsid)
+        {
+            previewHandlerClsid = isAvailable ? Guid.NewGuid() : Guid.Empty;
+            return isAvailable;
+        }
+    }
+
+    private static class OfficePreviewTestFileFactory
+    {
+        public static void CreateDocx(string path, params string[] paragraphs)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            using var document = WordprocessingDocument.Create(path, DocumentFormat.OpenXml.WordprocessingDocumentType.Document);
+            var mainPart = document.AddMainDocumentPart();
+            mainPart.Document = new Document(
+                new Body(
+                    paragraphs.Select(paragraph => new Paragraph(new WordRun(new WordText(paragraph))))));
+            mainPart.Document.Save();
+        }
+
+        public static void CreateXlsx(string path, string sheetName, params string[][] rows)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            using var document = SpreadsheetDocument.Create(path, DocumentFormat.OpenXml.SpreadsheetDocumentType.Workbook);
+            var workbookPart = document.AddWorkbookPart();
+            workbookPart.Workbook = new Workbook();
+
+            var worksheetPart = workbookPart.AddNewPart<WorksheetPart>();
+            var sheetData = new SheetData();
+
+            foreach (var rowValues in rows)
+            {
+                var row = new Row();
+                foreach (var cellValue in rowValues)
+                {
+                    row.AppendChild(new Cell
+                    {
+                        DataType = CellValues.InlineString,
+                        InlineString = new InlineString(new SpreadsheetText(cellValue)),
+                    });
+                }
+
+                sheetData.AppendChild(row);
+            }
+
+            worksheetPart.Worksheet = new Worksheet(sheetData);
+            worksheetPart.Worksheet.Save();
+
+            var sheets = workbookPart.Workbook.AppendChild(new Sheets());
+            sheets.AppendChild(new Sheet
+            {
+                Id = workbookPart.GetIdOfPart(worksheetPart),
+                SheetId = 1,
+                Name = sheetName,
+            });
+
+            workbookPart.Workbook.Save();
+        }
+
+                public static void CreateArchiveOnlyXlsx(string path, string sheetName, params string[][] rows)
+                {
+                        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                        using var archive = ZipFile.Open(path, ZipArchiveMode.Create);
+
+                        WriteEntry(
+                                archive,
+                                "xl/workbook.xml",
+                                $$"""
+                                <?xml version="1.0" encoding="UTF-8"?>
+                                <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+                                    <sheets>
+                                        <sheet name="{{System.Security.SecurityElement.Escape(sheetName)}}" sheetId="1" r:id="rId1" />
+                                    </sheets>
+                                </workbook>
+                                """);
+
+                        WriteEntry(
+                                archive,
+                                "xl/_rels/workbook.xml.rels",
+                                """
+                                <?xml version="1.0" encoding="UTF-8"?>
+                                <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                                    <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml" />
+                                </Relationships>
+                                """);
+
+                        var rowXml = string.Join(
+                                Environment.NewLine,
+                                rows.Select(rowValues =>
+                                {
+                                        var cellXml = string.Join(string.Empty, rowValues.Select(value =>
+                                                $"<c t=\"inlineStr\"><is><t>{System.Security.SecurityElement.Escape(value)}</t></is></c>"));
+                                        return $"<row>{cellXml}</row>";
+                                }));
+
+                        WriteEntry(
+                                archive,
+                                "xl/worksheets/sheet1.xml",
+                                $$"""
+                                <?xml version="1.0" encoding="UTF-8"?>
+                                <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+                                    <sheetData>
+                                {{rowXml}}
+                                    </sheetData>
+                                </worksheet>
+                                """);
+                }
+
+                private static void WriteEntry(ZipArchive archive, string entryName, string contents)
+                {
+                        var entry = archive.CreateEntry(entryName);
+                        using var writer = new StreamWriter(entry.Open());
+                        writer.Write(contents);
+                }
     }
 
     private sealed class StubFileLauncherService : IFileLauncherService
