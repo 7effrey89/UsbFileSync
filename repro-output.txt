@@ -1,4 +1,0 @@
-Status: Preview generated with 4 planned action(s). Select the items to synchronize.
-NewFilesCount: 4
-AllFilesCount: 4
-Log0: Analyze :: Preview generated with 4 planned action(s). Select the items to synchronize.
