@@ -58,6 +58,7 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
 
     public SyncPreviewRowViewModel(SyncPreviewItem item, IFileIconProvider? iconProvider = null)
     {
+        ItemKey = item.ItemKey;
         Name = GetDisplayPath(item);
         Category = item.Category;
         RelativePath = item.RelativePath;
@@ -80,6 +81,8 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
         _progressState = _hasPlannedAction ? PreviewTransferState.Pending : PreviewTransferState.Completed;
         _transferSpeedText = _hasPlannedAction ? "Pending" : "On hold";
     }
+
+    public string ItemKey { get; }
 
     public string Name { get; }
 

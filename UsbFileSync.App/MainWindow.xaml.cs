@@ -136,6 +136,15 @@ public partial class MainWindow : Window
     private void OnDestinationPathTextBoxLostKeyboardFocus(object sender, RoutedEventArgs e) =>
         _viewModel.SetDestinationPathFocused(false);
 
+    private void OnAdditionalDestinationPathTextBoxGotKeyboardFocus(object sender, RoutedEventArgs e)
+    {
+        _viewModel.SetAdditionalDestinationPathFocused((sender as FrameworkElement)?.DataContext, true);
+        SelectAllText(sender);
+    }
+
+    private void OnAdditionalDestinationPathTextBoxLostKeyboardFocus(object sender, RoutedEventArgs e) =>
+        _viewModel.SetAdditionalDestinationPathFocused((sender as FrameworkElement)?.DataContext, false);
+
     private static void SelectAllText(object sender)
     {
         if (sender is not System.Windows.Controls.TextBox textBox)

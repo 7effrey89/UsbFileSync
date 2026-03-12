@@ -40,6 +40,54 @@ public sealed class SyncServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_OneWayCopiesFilesToAllDestinations()
+    {
+        var source = CreateDirectory("source");
+        var destinationOne = CreateDirectory("destination-one");
+        var destinationTwo = CreateDirectory("destination-two");
+        var timestamp = new DateTime(2024, 1, 3, 0, 0, 0, DateTimeKind.Utc);
+        WriteFile(source, "shared.txt", "payload", timestamp);
+
+        var service = new SyncService();
+        var result = await service.ExecuteAsync(new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destinationOne,
+            DestinationPaths = [destinationOne, destinationTwo],
+            Mode = SyncMode.OneWay,
+        });
+
+        Assert.False(result.IsDryRun);
+        Assert.Equal(2, result.AppliedOperations);
+        Assert.Equal("payload", await File.ReadAllTextAsync(Path.Combine(destinationOne, "shared.txt")));
+        Assert.Equal("payload", await File.ReadAllTextAsync(Path.Combine(destinationTwo, "shared.txt")));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_TwoWayProcessesEachDestinationIndependently()
+    {
+        var source = CreateDirectory("source");
+        var destinationOne = CreateDirectory("destination-one");
+        var destinationTwo = CreateDirectory("destination-two");
+        WriteFile(destinationOne, "from-one.txt", "one", new DateTime(2024, 1, 2, 0, 0, 0, DateTimeKind.Utc));
+        WriteFile(destinationTwo, "from-two.txt", "two", new DateTime(2024, 1, 3, 0, 0, 0, DateTimeKind.Utc));
+
+        var service = new SyncService();
+        var result = await service.ExecuteAsync(new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destinationOne,
+            DestinationPaths = [destinationOne, destinationTwo],
+            Mode = SyncMode.TwoWay,
+        });
+
+        Assert.False(result.IsDryRun);
+        Assert.Equal(2, result.AppliedOperations);
+        Assert.Equal("one", await File.ReadAllTextAsync(Path.Combine(source, "from-one.txt")));
+        Assert.Equal("two", await File.ReadAllTextAsync(Path.Combine(source, "from-two.txt")));
+    }
+
+    [Fact]
     public async Task AnalyzeChangesAsync_OneWayTurnsRenameIntoDestinationMove()
     {
         var source = CreateDirectory("source");

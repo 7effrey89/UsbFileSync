@@ -6,4 +6,5 @@ public sealed record SyncProgress(
 	string CurrentItem,
 	long CurrentItemBytesTransferred = 0,
 	long? CurrentItemTotalBytes = null,
-	double CurrentItemProgressPercentage = 0);
+	double CurrentItemProgressPercentage = 0,
+    string? CurrentItemKey = null);

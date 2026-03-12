@@ -178,9 +178,9 @@ internal static class DirectorySnapshotBuilder
             throw new ArgumentException("SourcePath is required.", nameof(configuration));
         }
 
-        if (string.IsNullOrWhiteSpace(configuration.DestinationPath))
+        if (configuration.GetDestinationPaths().Count == 0)
         {
-            throw new ArgumentException("DestinationPath is required.", nameof(configuration));
+            throw new ArgumentException("At least one destination path is required.", nameof(configuration));
         }
     }
 }

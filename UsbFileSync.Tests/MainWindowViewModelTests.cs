@@ -54,6 +54,19 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public void BrowseDestinationPathCommand_UpdatesAdditionalDestination()
+    {
+        var folderPicker = new StubFolderPickerService("G:\\Archive");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: folderPicker);
+        viewModel.AddDestinationPathCommand.Execute(null);
+
+        var additionalDestination = Assert.Single(viewModel.AdditionalDestinationPaths);
+        viewModel.BrowseDestinationPathCommand.Execute(additionalDestination);
+
+        Assert.Equal("G:\\Archive", additionalDestination.Path);
+    }
+
+    [Fact]
     public void SourceAndDestinationDisplayText_UseExplorerStyleLabels_WhenNotFocused()
     {
         var driveDisplayNameService = new StubDriveDisplayNameService();
@@ -183,6 +196,24 @@ public sealed class MainWindowViewModelTests
 
         Assert.Equal("Restored the previous sync configuration.", viewModel.StatusMessage);
         Assert.True(viewModel.IsStatusSuccess);
+    }
+
+    [Fact]
+    public void LoadSavedConfiguration_RestoresAdditionalDestinationPaths()
+    {
+        var settingsStore = new StubSyncSettingsStore(new SyncConfiguration
+        {
+            SourcePath = "F:\\Primary",
+            DestinationPath = "E:\\Backup",
+            DestinationPaths = ["E:\\Backup", "G:\\Archive"],
+            Mode = SyncMode.OneWay,
+        });
+
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: settingsStore, folderPickerService: new StubFolderPickerService(null));
+
+        Assert.Equal("E:\\Backup", viewModel.DestinationPath);
+        Assert.Single(viewModel.AdditionalDestinationPaths);
+        Assert.Equal("G:\\Archive", viewModel.AdditionalDestinationPaths[0].Path);
     }
 
     [Fact]
@@ -333,6 +364,39 @@ public sealed class MainWindowViewModelTests
 
         Assert.True(File.Exists(Path.Combine(workspace.DestinationPath, "one.txt")));
         Assert.False(File.Exists(Path.Combine(workspace.DestinationPath, "two.txt")));
+    }
+
+    [Fact]
+    public async Task AnalyzeAndSynchronize_ProcessesAdditionalDestinationsAsSeparatePreviewRows()
+    {
+        using var workspace = new SyncTestWorkspace();
+        var secondDestinationPath = workspace.CreateAdditionalDestination("destination-two");
+        workspace.WriteSourceFile("shared.txt", "payload");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+            DryRun = false,
+        };
+
+        viewModel.AddDestinationPathCommand.Execute(null);
+        var additionalDestination = Assert.Single(viewModel.AdditionalDestinationPaths);
+        additionalDestination.Path = secondDestinationPath;
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 2 && viewModel.AllFilesCount == 2).ConfigureAwait(true);
+
+        Assert.Equal(2, viewModel.NewFiles.Select(row => row.DestinationPath).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+
+        viewModel.AreAllNewFilesSelected = true;
+        viewModel.ToggleSyncCommand.Execute(null);
+        await WaitForAsync(() =>
+            File.Exists(Path.Combine(workspace.DestinationPath, "shared.txt")) &&
+            File.Exists(Path.Combine(secondDestinationPath, "shared.txt")) &&
+            !viewModel.IsSyncRunning).ConfigureAwait(true);
+
+        Assert.Equal("payload", await File.ReadAllTextAsync(Path.Combine(workspace.DestinationPath, "shared.txt")).ConfigureAwait(true));
+        Assert.Equal("payload", await File.ReadAllTextAsync(Path.Combine(secondDestinationPath, "shared.txt")).ConfigureAwait(true));
     }
 
     [Fact]
@@ -1306,6 +1370,13 @@ public sealed class MainWindowViewModelTests
             var fullPath = Path.Combine(SourcePath, relativePath);
             Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
             File.WriteAllText(fullPath, contents);
+        }
+
+        public string CreateAdditionalDestination(string name)
+        {
+            var path = Path.Combine(_rootPath, name);
+            Directory.CreateDirectory(path);
+            return path;
         }
 
         public void Dispose()

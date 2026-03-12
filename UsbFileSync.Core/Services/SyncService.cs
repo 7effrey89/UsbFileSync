@@ -40,8 +40,23 @@ public sealed class SyncService
         _metadataStore = metadataStore;
     }
 
-    public Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(SyncConfiguration configuration, CancellationToken cancellationToken = default) =>
-        SelectStrategy(configuration).AnalyzeChangesAsync(configuration, cancellationToken);
+    public async Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(SyncConfiguration configuration, CancellationToken cancellationToken = default)
+    {
+        DirectorySnapshotBuilder.EnsureConfigurationIsValid(configuration);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var actions = new List<SyncAction>();
+        foreach (var destinationConfiguration in ExpandDestinationConfigurations(configuration))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var destinationActions = await SelectStrategy(destinationConfiguration)
+                .AnalyzeChangesAsync(destinationConfiguration, cancellationToken)
+                .ConfigureAwait(false);
+            actions.AddRange(destinationActions);
+        }
+
+        return actions;
+    }
 
     public async Task<IReadOnlyList<SyncPreviewItem>> BuildPreviewAsync(
         SyncConfiguration configuration,
@@ -61,7 +76,21 @@ public sealed class SyncService
     {
         DirectorySnapshotBuilder.EnsureConfigurationIsValid(configuration);
         cancellationToken.ThrowIfCancellationRequested();
-        return BuildPreviewCore(configuration, actions, cancellationToken);
+        var previewItems = new List<SyncPreviewItem>();
+        foreach (var destinationConfiguration in ExpandDestinationConfigurations(configuration))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var destinationActions = actions
+                .Where(action => string.Equals(
+                    ResolveDestinationPath(configuration, action),
+                    destinationConfiguration.DestinationPath,
+                    StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            previewItems.AddRange(BuildPreviewCore(destinationConfiguration, destinationActions, cancellationToken));
+        }
+
+        return previewItems;
     }
 
     public async Task<SyncResult> ExecuteAsync(
@@ -87,46 +116,28 @@ public sealed class SyncService
         }
 
         var appliedOperations = 0;
-        var verifiedChecksumsByRelativePath = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var trackedChecksumEntriesByRelativePath = configuration.VerifyChecksums
-            ? LoadTrackedChecksumEntries(configuration)
-            : new Dictionary<string, SyncFileIndexEntry>(StringComparer.OrdinalIgnoreCase);
-
-        for (var index = 0; index < actions.Count; index++)
+        var totalActions = actions.Count;
+        foreach (var destinationConfiguration in ExpandDestinationConfigurations(configuration))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (IsCopyAction(actions[index].Type))
-            {
-                var copyBatch = new List<SyncAction>();
-                while (index < actions.Count && IsCopyAction(actions[index].Type))
-                {
-                    copyBatch.Add(actions[index]);
-                    index++;
-                }
+            var destinationActions = actions
+                .Where(action => string.Equals(
+                    ResolveDestinationPath(configuration, action),
+                    destinationConfiguration.DestinationPath,
+                    StringComparison.OrdinalIgnoreCase))
+                .ToList();
 
-                appliedOperations += await ExecuteCopyBatchAsync(
-                    configuration,
-                    copyBatch,
-                    trackedChecksumEntriesByRelativePath,
-                    verifiedChecksumsByRelativePath,
-                    progress,
-                    autoParallelism,
-                    appliedOperations,
-                    actions.Count,
-                    cancellationToken).ConfigureAwait(false);
-                index--;
-                continue;
-            }
+            var result = await ExecutePlannedSingleAsync(
+                destinationConfiguration,
+                destinationActions,
+                progress,
+                autoParallelism,
+                appliedOperations,
+                totalActions,
+                cancellationToken).ConfigureAwait(false);
 
-            var action = actions[index];
-            ApplySequentialAsync(configuration, action, progress, appliedOperations, actions.Count, cancellationToken);
-            appliedOperations++;
-        }
-
-        if (configuration.Mode is SyncMode.OneWay or SyncMode.TwoWay)
-        {
-            PersistSyncMetadata(configuration, actions, verifiedChecksumsByRelativePath);
+            appliedOperations += result.AppliedOperations;
         }
 
         return new SyncResult(actions, appliedOperations, false);
@@ -180,6 +191,7 @@ public sealed class SyncService
                 var (direction, status, category) = DescribePreview(action?.Type);
 
                 return new SyncPreviewItem(
+                    action?.GetActionKey() ?? BuildPreviewItemKey(relativePath, sourceFullPath, destinationFullPath),
                     relativePath,
                     isDirectory,
                     sourceFullPath,
@@ -212,11 +224,132 @@ public sealed class SyncService
         _ => ("=", "Unchanged", SyncPreviewCategory.UnchangedFiles),
     };
 
+    private static string BuildPreviewItemKey(string relativePath, string? sourceFullPath, string? destinationFullPath) =>
+        string.Join("|", new[]
+        {
+            relativePath,
+            sourceFullPath ?? string.Empty,
+            destinationFullPath ?? string.Empty,
+        });
+
     private static bool IsCopyAction(SyncActionType actionType) => actionType is
         SyncActionType.CopyToDestination or
         SyncActionType.CopyToSource or
         SyncActionType.OverwriteFileOnDestination or
         SyncActionType.OverwriteFileOnSource;
+
+    private IReadOnlyList<SyncConfiguration> ExpandDestinationConfigurations(SyncConfiguration configuration) =>
+        configuration.GetDestinationPaths()
+            .Select(destinationPath => CreateDestinationConfiguration(configuration, destinationPath))
+            .ToList();
+
+    private static SyncConfiguration CreateDestinationConfiguration(SyncConfiguration configuration, string destinationPath) => new()
+    {
+        SourcePath = configuration.SourcePath,
+        DestinationPath = destinationPath,
+        DestinationPaths = [destinationPath],
+        Mode = configuration.Mode,
+        DetectMoves = configuration.DetectMoves,
+        DryRun = configuration.DryRun,
+        VerifyChecksums = configuration.VerifyChecksums,
+        ParallelCopyCount = configuration.ParallelCopyCount,
+        PreviewProviderMappings = new Dictionary<string, string>(configuration.PreviewProviderMappings, StringComparer.OrdinalIgnoreCase),
+    };
+
+    private static string ResolveDestinationPath(SyncConfiguration configuration, SyncAction action)
+    {
+        foreach (var destinationPath in configuration.GetDestinationPaths())
+        {
+            if (PathBelongsToRoot(action.SourceFullPath, destinationPath) ||
+                PathBelongsToRoot(action.DestinationFullPath, destinationPath))
+            {
+                return destinationPath;
+            }
+        }
+
+        return configuration.DestinationPath;
+    }
+
+    private static bool PathBelongsToRoot(string? candidatePath, string rootPath)
+    {
+        if (string.IsNullOrWhiteSpace(candidatePath) || string.IsNullOrWhiteSpace(rootPath))
+        {
+            return false;
+        }
+
+        var normalizedRootPath = Path.GetFullPath(rootPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var normalizedCandidatePath = Path.GetFullPath(candidatePath);
+
+        return string.Equals(normalizedCandidatePath, normalizedRootPath, StringComparison.OrdinalIgnoreCase) ||
+            normalizedCandidatePath.StartsWith(
+                normalizedRootPath + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase) ||
+            normalizedCandidatePath.StartsWith(
+                normalizedRootPath + Path.AltDirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task<SyncResult> ExecutePlannedSingleAsync(
+        SyncConfiguration configuration,
+        IReadOnlyList<SyncAction> actions,
+        IProgress<SyncProgress>? progress,
+        IProgress<int>? autoParallelism,
+        int completedOperationsOffset,
+        int totalActions,
+        CancellationToken cancellationToken)
+    {
+        var appliedOperations = 0;
+        var verifiedChecksumsByRelativePath = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var trackedChecksumEntriesByRelativePath = configuration.VerifyChecksums
+            ? LoadTrackedChecksumEntries(configuration)
+            : new Dictionary<string, SyncFileIndexEntry>(StringComparer.OrdinalIgnoreCase);
+
+        for (var index = 0; index < actions.Count; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (IsCopyAction(actions[index].Type))
+            {
+                var copyBatch = new List<SyncAction>();
+                while (index < actions.Count && IsCopyAction(actions[index].Type))
+                {
+                    copyBatch.Add(actions[index]);
+                    index++;
+                }
+
+                appliedOperations += await ExecuteCopyBatchAsync(
+                    configuration,
+                    copyBatch,
+                    trackedChecksumEntriesByRelativePath,
+                    verifiedChecksumsByRelativePath,
+                    progress,
+                    autoParallelism,
+                    completedOperationsOffset + appliedOperations,
+                    totalActions,
+                    cancellationToken).ConfigureAwait(false);
+                index--;
+                continue;
+            }
+
+            var action = actions[index];
+            ApplySequentialAsync(
+                configuration,
+                action,
+                progress,
+                completedOperationsOffset + appliedOperations,
+                totalActions,
+                cancellationToken);
+            appliedOperations++;
+        }
+
+        if (configuration.Mode is SyncMode.OneWay or SyncMode.TwoWay)
+        {
+            PersistSyncMetadata(configuration, actions, verifiedChecksumsByRelativePath);
+        }
+
+        return new SyncResult(actions, appliedOperations, false);
+    }
 
     private static int NormalizeParallelCopyCount(int parallelCopyCount)
     {
@@ -300,7 +433,14 @@ public sealed class SyncService
             }
 
             var batchCompleted = Interlocked.Increment(ref completedInBatch);
-            progress?.Report(new SyncProgress(completedOperations + batchCompleted, totalActions, sample.Action.RelativePath, sample.TotalBytes, sample.TotalBytes, 100));
+            progress?.Report(new SyncProgress(
+                completedOperations + batchCompleted,
+                totalActions,
+                sample.Action.RelativePath,
+                sample.TotalBytes,
+                sample.TotalBytes,
+                100,
+                sample.Action.GetActionKey()));
 
             if (isAutoParallelism)
             {
@@ -334,6 +474,7 @@ public sealed class SyncService
             getCompletedOperations,
             totalActions,
             workItem.Action.RelativePath,
+            workItem.Action.GetActionKey(),
             cancellationToken).ConfigureAwait(false);
 
         return new CopyExecutionSample(workItem.Action, workItem.TotalBytes, DateTime.UtcNow - startedAt, verifiedChecksum);
@@ -401,36 +542,36 @@ public sealed class SyncService
         {
             case SyncActionType.CreateDirectoryOnDestination:
                 CreateDirectory(action.DestinationFullPath!);
-                progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100));
+                progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100, action.GetActionKey()));
                 break;
             case SyncActionType.CreateDirectoryOnSource:
                 CreateDirectory(action.SourceFullPath!);
-                progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100));
+                progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100, action.GetActionKey()));
                 break;
             case SyncActionType.DeleteDirectoryFromDestination:
                 DeleteDirectory(action.DestinationFullPath!);
-                progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100));
+                progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100, action.GetActionKey()));
                 break;
             case SyncActionType.DeleteDirectoryFromSource:
                 DeleteDirectory(action.SourceFullPath!);
-                progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100));
+                progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100, action.GetActionKey()));
                 break;
             case SyncActionType.DeleteFromDestination:
                 Delete(action.DestinationFullPath!);
-                progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100));
+                progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100, action.GetActionKey()));
                 break;
             case SyncActionType.DeleteFromSource:
                 Delete(action.SourceFullPath!);
-                progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100));
+                progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100, action.GetActionKey()));
                 break;
             case SyncActionType.MoveOnDestination:
                 Move(
                     Path.Combine(configuration.DestinationPath, action.PreviousRelativePath!),
                     action.DestinationFullPath!);
-                progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100));
+                progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100, action.GetActionKey()));
                 break;
             case SyncActionType.NoOp:
-                progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100));
+                progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100, action.GetActionKey()));
                 break;
             default:
                 throw new NotSupportedException($"Unsupported sync action: {action.Type}");
@@ -446,6 +587,7 @@ public sealed class SyncService
         Func<int> getCompletedOperations,
         int totalActions,
         string relativePath,
+        string actionKey,
         CancellationToken cancellationToken)
     {
         var destinationDirectory = Path.GetDirectoryName(destinationPath);
@@ -457,7 +599,7 @@ public sealed class SyncService
         var tempPath = CreateTemporaryCopyPath(destinationPath);
 
         var totalBytes = new FileInfo(sourcePath).Length;
-        progress?.Report(new SyncProgress(getCompletedOperations(), totalActions, relativePath, 0, totalBytes, totalBytes == 0 ? 100 : 0));
+        progress?.Report(new SyncProgress(getCompletedOperations(), totalActions, relativePath, 0, totalBytes, totalBytes == 0 ? 100 : 0, actionKey));
 
         const int bufferSize = 1024 * 128;
         var buffer = new byte[bufferSize];
@@ -491,7 +633,7 @@ public sealed class SyncService
                     var progressPercentage = totalBytes == 0
                         ? 100
                         : Math.Round((double)transferredBytes / totalBytes * 100, 0);
-                    progress?.Report(new SyncProgress(getCompletedOperations(), totalActions, relativePath, transferredBytes, totalBytes, progressPercentage));
+                    progress?.Report(new SyncProgress(getCompletedOperations(), totalActions, relativePath, transferredBytes, totalBytes, progressPercentage, actionKey));
                 }
 
                 await destinationStream.FlushAsync(cancellationToken).ConfigureAwait(false);

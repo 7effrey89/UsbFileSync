@@ -38,7 +38,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private readonly IFileLauncherService _fileLauncherService;
     private readonly IDriveDisplayNameService _driveDisplayNameService;
     private readonly object _activityLogLock = new();
-    private readonly Dictionary<string, SyncPreviewRowViewModel> _previewRowsByRelativePath = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, SyncPreviewRowViewModel> _previewRowsByItemKey = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _persistConfigurationCancellationTokenSource;
     private CancellationTokenSource? _syncCancellationTokenSource;
     private IReadOnlyList<SyncAction> _queuedActions = [];
@@ -84,6 +84,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _driveDisplayNameService = driveDisplayNameService ?? new WindowsDriveDisplayNameService();
         AvailableModes = Enum.GetValues<SyncMode>();
         PlannedActions = new ObservableCollection<SyncAction>();
+        AdditionalDestinationPaths = new ObservableCollection<DestinationPathEntryViewModel>();
         NewFiles = new ObservableCollection<SyncPreviewRowViewModel>();
         ChangedFiles = new ObservableCollection<SyncPreviewRowViewModel>();
         DeletedFiles = new ObservableCollection<SyncPreviewRowViewModel>();
@@ -97,7 +98,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, CanExecuteSyncCommands);
         ToggleSyncCommand = new RelayCommand(ToggleSync, CanExecuteToggleSyncCommand);
         BrowseSourcePathCommand = new RelayCommand(BrowseSourcePath);
-        BrowseDestinationPathCommand = new RelayCommand(BrowseDestinationPath);
+        AddDestinationPathCommand = new RelayCommand(AddDestinationPath);
+        BrowseDestinationPathCommand = new ParameterizedRelayCommand(BrowseDestinationPath);
+        RemoveDestinationPathCommand = new ParameterizedRelayCommand(RemoveDestinationPath, CanRemoveDestinationPath);
         OpenPreviewItemCommand = new ParameterizedRelayCommand(OpenPreviewItem, CanOpenPreviewItem);
         OpenPreviewContainingFolderCommand = new ParameterizedRelayCommand(OpenPreviewContainingFolder, CanOpenPreviewItem);
         OpenPreviewFileCommand = new ParameterizedRelayCommand(OpenPreviewFile, CanOpenPreviewFile);
@@ -111,6 +114,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public IEnumerable<SyncMode> AvailableModes { get; }
 
     public ObservableCollection<SyncAction> PlannedActions { get; }
+
+    public ObservableCollection<DestinationPathEntryViewModel> AdditionalDestinationPaths { get; }
 
     public ObservableCollection<SyncPreviewRowViewModel> NewFiles { get; }
 
@@ -170,7 +175,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public RelayCommand BrowseSourcePathCommand { get; }
 
-    public RelayCommand BrowseDestinationPathCommand { get; }
+    public RelayCommand AddDestinationPathCommand { get; }
+
+    public ParameterizedRelayCommand BrowseDestinationPathCommand { get; }
+
+    public ParameterizedRelayCommand RemoveDestinationPathCommand { get; }
 
     public ParameterizedRelayCommand OpenPreviewItemCommand { get; }
 
@@ -217,6 +226,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public string DestinationPathDisplayText => _isDestinationPathFocused
         ? DestinationPath
         : _driveDisplayNameService.FormatPathForDisplay(DestinationPath);
+
+    public bool HasAdditionalDestinationPaths => AdditionalDestinationPaths.Count > 0;
 
     public SyncMode SelectedMode
     {
@@ -455,14 +466,47 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void BrowseDestinationPath()
+    private void AddDestinationPath()
     {
-        var selectedPath = _folderPickerService.PickFolder("Select the destination drive or folder", DestinationPath);
+        AdditionalDestinationPaths.Add(CreateDestinationPathEntry(string.Empty));
+        RaisePropertyChanged(nameof(HasAdditionalDestinationPaths));
+        HandleConfigurationChanged();
+    }
+
+    private void BrowseDestinationPath(object? parameter)
+    {
+        var destinationPath = parameter is DestinationPathEntryViewModel entry
+            ? entry.Path
+            : DestinationPath;
+        var selectedPath = _folderPickerService.PickFolder("Select the destination drive or folder", destinationPath);
         if (!string.IsNullOrWhiteSpace(selectedPath))
         {
-            DestinationPath = selectedPath;
+            if (parameter is DestinationPathEntryViewModel destinationEntry)
+            {
+                destinationEntry.Path = selectedPath;
+            }
+            else
+            {
+                DestinationPath = selectedPath;
+            }
         }
     }
+
+    private void RemoveDestinationPath(object? parameter)
+    {
+        if (parameter is not DestinationPathEntryViewModel entry)
+        {
+            return;
+        }
+
+        if (AdditionalDestinationPaths.Remove(entry))
+        {
+            RaisePropertyChanged(nameof(HasAdditionalDestinationPaths));
+            HandleConfigurationChanged();
+        }
+    }
+
+    private static bool CanRemoveDestinationPath(object? parameter) => parameter is DestinationPathEntryViewModel;
 
     private void OpenPreviewItem(object? parameter)
     {
@@ -545,6 +589,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         SourcePath = SourcePath,
         DestinationPath = DestinationPath,
+        DestinationPaths = GetDestinationPaths().ToList(),
         Mode = SelectedMode,
         DetectMoves = DetectMoves,
         DryRun = DryRun,
@@ -615,6 +660,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         if (SetProperty(ref _isDestinationPathFocused, isFocused))
         {
             RaisePropertyChanged(nameof(DestinationPathDisplayText));
+        }
+    }
+
+    public void SetAdditionalDestinationPathFocused(object? parameter, bool isFocused)
+    {
+        if (parameter is DestinationPathEntryViewModel entry)
+        {
+            entry.SetFocused(isFocused);
         }
     }
 
@@ -730,7 +783,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                     }
 
                     AddLog("Done", $"{completedAction.Type}: {completedAction.RelativePath}");
-                    MarkPreviewRowCompleted(completedAction.RelativePath);
+                    MarkPreviewRowCompleted(completedAction.GetActionKey());
                     _completedQueuedActions++;
                 }
 
@@ -740,7 +793,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 }
 
                 CurrentTransferItem = update.CurrentItem;
-                UpdatePreviewRowProgress(update.CurrentItem, update.CurrentItemProgressPercentage, update.CurrentItemBytesTransferred);
+                UpdatePreviewRowProgress(update.CurrentItemKey ?? update.CurrentItem, update.CurrentItemProgressPercentage, update.CurrentItemBytesTransferred);
                 CurrentTransferProgressValue = update.CurrentItemProgressPercentage;
                 CurrentTransferDetails = update.CurrentItemTotalBytes.HasValue
                     ? $"{update.CurrentItemBytesTransferred:n0} / {update.CurrentItemTotalBytes.Value:n0} bytes, {QueueSummary}"
@@ -797,7 +850,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         return update.CompletedOperations < update.TotalOperations
             && !string.IsNullOrWhiteSpace(update.CurrentItem)
-            && loggedTransferItems.Add(update.CurrentItem);
+            && loggedTransferItems.Add(update.CurrentItemKey ?? update.CurrentItem);
     }
 
     private void HandleConfigurationChanged()
@@ -824,28 +877,75 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         return $"{message} Checksum verification passed for {verifiedCopyCount} copied file(s).";
     }
 
+    private IReadOnlyList<string> GetDestinationPaths()
+    {
+        var destinationPaths = new List<string>();
+        if (!string.IsNullOrWhiteSpace(DestinationPath))
+        {
+            destinationPaths.Add(DestinationPath);
+        }
+
+        destinationPaths.AddRange(AdditionalDestinationPaths
+            .Select(entry => entry.Path)
+            .Where(path => !string.IsNullOrWhiteSpace(path)));
+
+        return destinationPaths
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private DestinationPathEntryViewModel CreateDestinationPathEntry(string path) =>
+        new(path, _driveDisplayNameService, HandleConfigurationChanged);
+
+    private void LoadDestinationPaths(IReadOnlyList<string> destinationPaths)
+    {
+        var normalizedDestinationPaths = destinationPaths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        DestinationPath = normalizedDestinationPaths.FirstOrDefault() ?? string.Empty;
+
+        AdditionalDestinationPaths.Clear();
+        foreach (var destinationPath in normalizedDestinationPaths.Skip(1))
+        {
+            AdditionalDestinationPaths.Add(CreateDestinationPathEntry(destinationPath));
+        }
+
+        RaisePropertyChanged(nameof(HasAdditionalDestinationPaths));
+    }
+
     private bool IsConfigurationComplete() =>
         !string.IsNullOrWhiteSpace(SourcePath) &&
-        !string.IsNullOrWhiteSpace(DestinationPath) &&
-        !string.Equals(SourcePath, DestinationPath, StringComparison.OrdinalIgnoreCase);
+        GetDestinationPaths().Count > 0 &&
+        GetDestinationPaths().All(destinationPath => !string.Equals(SourcePath, destinationPath, StringComparison.OrdinalIgnoreCase));
 
     private bool TryValidateConfiguration(bool requireAccessibleDestinationPath)
     {
+        var destinationPaths = GetDestinationPaths();
         if (string.IsNullOrWhiteSpace(SourcePath))
         {
             StatusMessage = "Choose a source drive path before running synchronization.";
             return false;
         }
 
-        if (string.IsNullOrWhiteSpace(DestinationPath))
+        if (destinationPaths.Count == 0)
         {
             StatusMessage = "Choose a destination drive path before running synchronization.";
             return false;
         }
 
-        if (string.Equals(SourcePath, DestinationPath, StringComparison.OrdinalIgnoreCase))
+        if (destinationPaths.Any(destinationPath => string.Equals(SourcePath, destinationPath, StringComparison.OrdinalIgnoreCase)))
         {
-            StatusMessage = "Source and destination drive paths must be different.";
+            StatusMessage = destinationPaths.Count == 1
+                ? "Source and destination drive paths must be different."
+                : "Source and destination drive paths must all be different.";
+            return false;
+        }
+
+        if (destinationPaths.Count != destinationPaths.Distinct(StringComparer.OrdinalIgnoreCase).Count())
+        {
+            StatusMessage = "Destination drive paths must be unique.";
             return false;
         }
 
@@ -855,10 +955,21 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             return false;
         }
 
-        if (requireAccessibleDestinationPath && !TryValidateSyncPath(DestinationPath, "Destination", requireExistingDirectory: false, out var destinationValidationMessage))
+        if (!requireAccessibleDestinationPath)
         {
-            StatusMessage = destinationValidationMessage;
-            return false;
+            return true;
+        }
+
+        for (var index = 0; index < destinationPaths.Count; index++)
+        {
+            var label = destinationPaths.Count == 1
+                ? "Destination"
+                : $"Destination {index + 1}";
+            if (!TryValidateSyncPath(destinationPaths[index], label, requireExistingDirectory: false, out var destinationValidationMessage))
+            {
+                StatusMessage = destinationValidationMessage;
+                return false;
+            }
         }
 
         return true;
@@ -946,7 +1057,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
             _isLoadingSavedConfiguration = true;
             SourcePath = savedConfiguration.SourcePath;
-            DestinationPath = savedConfiguration.DestinationPath;
+            LoadDestinationPaths(savedConfiguration.GetDestinationPaths());
             SelectedMode = savedConfiguration.Mode;
             DetectMoves = savedConfiguration.DetectMoves;
             DryRun = savedConfiguration.DryRun;
@@ -1125,16 +1236,16 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void ReplacePreview(IEnumerable<SyncPreviewItem> items)
     {
-        foreach (var existingRow in _previewRowsByRelativePath.Values)
+        foreach (var existingRow in _previewRowsByItemKey.Values)
         {
             existingRow.PropertyChanged -= OnPreviewRowPropertyChanged;
         }
 
         var rows = items.Select(item => new SyncPreviewRowViewModel(item)).ToList();
-        _previewRowsByRelativePath.Clear();
+        _previewRowsByItemKey.Clear();
         foreach (var row in rows)
         {
-            _previewRowsByRelativePath[row.RelativePath] = row;
+            _previewRowsByItemKey[row.ItemKey] = row;
             row.PropertyChanged += OnPreviewRowPropertyChanged;
         }
 
@@ -1164,13 +1275,13 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private IReadOnlyList<SyncAction> GetSelectedActions()
     {
-        var selectedPaths = _previewRowsByRelativePath.Values
+        var selectedKeys = _previewRowsByItemKey.Values
             .Where(row => row.CanSelect && row.IsSelected)
-            .Select(row => row.RelativePath)
+            .Select(row => row.ItemKey)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         return PlannedActions
-            .Where(action => selectedPaths.Contains(action.RelativePath))
+            .Where(action => selectedKeys.Contains(action.GetActionKey()))
             .ToList();
     }
 
@@ -1313,7 +1424,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void UpdatePreviewRowProgress(string relativePath, double progressValue, long bytesTransferred)
     {
-        if (_previewRowsByRelativePath.TryGetValue(relativePath, out var row))
+        if (_previewRowsByItemKey.TryGetValue(relativePath, out var row))
         {
             if (progressValue >= 100)
             {
@@ -1327,7 +1438,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void MarkPreviewRowCompleted(string relativePath)
     {
-        if (_previewRowsByRelativePath.TryGetValue(relativePath, out var row))
+        if (_previewRowsByItemKey.TryGetValue(relativePath, out var row))
         {
             row.MarkCompleted();
         }
@@ -1335,7 +1446,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void PauseActivePreviewRows()
     {
-        foreach (var row in _previewRowsByRelativePath.Values)
+        foreach (var row in _previewRowsByItemKey.Values)
         {
             if (row.ProgressStateText == "Transferring")
             {
