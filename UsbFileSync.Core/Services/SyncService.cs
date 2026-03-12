@@ -609,13 +609,14 @@ public sealed class SyncService
         string actionKey,
         CancellationToken cancellationToken)
     {
-        var destinationDirectory = Path.GetDirectoryName(destinationRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        var normalizedDestinationRelativePath = VolumePath.NormalizeRelativePath(destinationRelativePath);
+        var destinationDirectory = Path.GetDirectoryName(normalizedDestinationRelativePath.Replace('/', Path.DirectorySeparatorChar));
         if (!string.IsNullOrWhiteSpace(destinationDirectory))
         {
             destinationVolume.CreateDirectory(destinationDirectory.Replace(Path.DirectorySeparatorChar, '/'));
         }
 
-        var tempRelativePath = CreateTemporaryCopyPath(destinationRelativePath);
+        var tempRelativePath = CreateTemporaryCopyPath(normalizedDestinationRelativePath);
         var totalBytes = sourceVolume.GetEntry(sourceRelativePath).Size ?? 0;
         progress?.Report(new SyncProgress(getCompletedOperations(), totalActions, relativePath, 0, totalBytes, totalBytes == 0 ? 100 : 0, actionKey));
 
@@ -696,16 +697,8 @@ public sealed class SyncService
         }
     }
 
-    private static string CreateTemporaryCopyPath(string destinationRelativePath)
-    {
-        var normalizedRelativePath = VolumePath.NormalizeRelativePath(destinationRelativePath);
-        var destinationDirectory = Path.GetDirectoryName(normalizedRelativePath.Replace('/', Path.DirectorySeparatorChar)) ?? string.Empty;
-        var destinationFileName = Path.GetFileName(normalizedRelativePath.Replace('/', Path.DirectorySeparatorChar));
-        var tempFileName = $".{destinationFileName}.{Guid.NewGuid():N}.usfcopy.tmp";
-        return string.IsNullOrWhiteSpace(destinationDirectory)
-            ? tempFileName
-            : VolumePath.NormalizeRelativePath(Path.Combine(destinationDirectory, tempFileName));
-    }
+    private static string CreateTemporaryCopyPath(string destinationRelativePath) =>
+        TemporaryCopyPathBuilder.Build(destinationRelativePath);
 
     private void PersistSyncMetadata(
         SyncConfiguration configuration,

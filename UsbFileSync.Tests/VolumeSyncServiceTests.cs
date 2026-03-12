@@ -107,7 +107,8 @@ public sealed class VolumeSyncServiceTests : IDisposable
 
     private static void WriteFile(string rootPath, string relativePath, string contents, DateTime lastWriteTimeUtc)
     {
-        var fullPath = Path.Combine(rootPath, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        var normalizedRelativePath = VolumePath.NormalizeRelativePath(relativePath);
+        var fullPath = Path.Combine(rootPath, normalizedRelativePath.Replace('/', Path.DirectorySeparatorChar));
         var directory = Path.GetDirectoryName(fullPath);
         if (!string.IsNullOrWhiteSpace(directory))
         {

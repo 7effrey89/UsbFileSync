@@ -45,7 +45,7 @@ internal static class VolumePath
         return separatorIndex >= 0 ? normalizedRelativePath[(separatorIndex + 1)..] : normalizedRelativePath;
     }
 
-    private static bool LooksLikeWindowsPath(string path)
+    internal static bool LooksLikeWindowsPath(string path)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
