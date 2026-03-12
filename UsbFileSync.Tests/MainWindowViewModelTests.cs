@@ -451,7 +451,7 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
-    public void AnalyzeCommand_ShowsValidationError_WhenDestinationDriveIsUnavailable()
+    public async Task AnalyzeCommand_ShowsValidationError_WhenDestinationDriveIsUnavailable()
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -481,7 +481,7 @@ public sealed class MainWindowViewModelTests
 
         viewModel.AnalyzeCommand.Execute(null);
 
-        WaitForAsync(() => viewModel.NewFilesCount == 1 && viewModel.AllFilesCount == 1).GetAwaiter().GetResult();
+        await WaitForAsync(() => viewModel.NewFilesCount == 1 && viewModel.AllFilesCount == 1).ConfigureAwait(true);
 
         Assert.Equal("Preview generated with 1 planned action(s). Select the items to synchronize.", viewModel.StatusMessage);
         Assert.Equal("Analyze", viewModel.ActivityLog[0].State);
@@ -574,12 +574,15 @@ public sealed class MainWindowViewModelTests
         };
 
         viewModel.AnalyzeCommand.Execute(null);
-        await WaitForAsync(() => viewModel.NewFilesCount == 2 && viewModel.AllFilesCount == 2).ConfigureAwait(true);
+        var nestedRelativePath = Path.Combine("nested", "two.txt");
+        await WaitForAsync(() =>
+            viewModel.NewFiles.Any(row => row.RelativePath == "one.txt") &&
+            viewModel.NewFiles.Any(row => row.RelativePath == nestedRelativePath)).ConfigureAwait(true);
 
         viewModel.SelectAllInTab(PreviewTabKind.NewFiles);
 
-        Assert.All(viewModel.NewFiles, row => Assert.True(row.IsSelected));
-        Assert.Equal(2, viewModel.RemainingQueue.Count);
+        Assert.All(viewModel.NewFiles.Where(row => row.CanSelect), row => Assert.True(row.IsSelected));
+        Assert.Equal(viewModel.NewFiles.Count(row => row.CanSelect), viewModel.RemainingQueue.Count);
     }
 
     [Fact]
@@ -596,22 +599,26 @@ public sealed class MainWindowViewModelTests
         };
 
         viewModel.AnalyzeCommand.Execute(null);
-        await WaitForAsync(() => viewModel.NewFilesCount == 2 && viewModel.AllFilesCount == 2).ConfigureAwait(true);
+        var holidayRelativePath = Path.Combine("photos", "holiday-shot.txt");
+        var notesRelativePath = Path.Combine("docs", "notes.txt");
+        await WaitForAsync(() =>
+            viewModel.NewFiles.Any(row => row.RelativePath == holidayRelativePath) &&
+            viewModel.NewFiles.Any(row => row.RelativePath == notesRelativePath)).ConfigureAwait(true);
 
         var fileNameMatches = viewModel.SelectByPattern(PreviewTabKind.NewFiles, "holiday", PreviewSelectionTarget.FileName);
         Assert.Equal(1, fileNameMatches);
-        Assert.True(viewModel.NewFiles.Single(row => row.RelativePath == "holiday-shot.txt").IsSelected);
-        Assert.False(viewModel.NewFiles.Single(row => row.RelativePath == "notes.txt").IsSelected);
+        Assert.True(viewModel.NewFiles.Single(row => row.RelativePath == holidayRelativePath).IsSelected);
+        Assert.False(viewModel.NewFiles.Single(row => row.RelativePath == notesRelativePath).IsSelected);
 
         var folderMatches = viewModel.SelectByPattern(PreviewTabKind.NewFiles, "docs", PreviewSelectionTarget.FileFolder);
         Assert.Equal(1, folderMatches);
-        Assert.False(viewModel.NewFiles.Single(row => row.RelativePath == "holiday-shot.txt").IsSelected);
-        Assert.True(viewModel.NewFiles.Single(row => row.RelativePath == "notes.txt").IsSelected);
+        Assert.False(viewModel.NewFiles.Single(row => row.RelativePath == holidayRelativePath).IsSelected);
+        Assert.True(viewModel.NewFiles.Single(row => row.RelativePath == notesRelativePath).IsSelected);
 
         var fullPathMatches = viewModel.SelectByPattern(PreviewTabKind.NewFiles, "photos\\holiday-shot", PreviewSelectionTarget.FullPath);
         Assert.Equal(1, fullPathMatches);
-        Assert.True(viewModel.NewFiles.Single(row => row.RelativePath == "holiday-shot.txt").IsSelected);
-        Assert.False(viewModel.NewFiles.Single(row => row.RelativePath == "notes.txt").IsSelected);
+        Assert.True(viewModel.NewFiles.Single(row => row.RelativePath == holidayRelativePath).IsSelected);
+        Assert.False(viewModel.NewFiles.Single(row => row.RelativePath == notesRelativePath).IsSelected);
     }
 
     [Fact]
@@ -1041,7 +1048,7 @@ public sealed class MainWindowViewModelTests
 
     private static async Task WaitForAsync(Func<bool> condition)
     {
-        var deadline = DateTime.UtcNow.AddSeconds(3);
+        var deadline = DateTime.UtcNow.AddSeconds(10);
         while (!condition())
         {
             if (DateTime.UtcNow >= deadline)

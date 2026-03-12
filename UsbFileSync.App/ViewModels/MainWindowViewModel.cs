@@ -37,6 +37,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private readonly IFolderPickerService _folderPickerService;
     private readonly IFileLauncherService _fileLauncherService;
     private readonly IDriveDisplayNameService _driveDisplayNameService;
+    private readonly object _activityLogLock = new();
     private readonly Dictionary<string, SyncPreviewRowViewModel> _previewRowsByRelativePath = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _persistConfigurationCancellationTokenSource;
     private CancellationTokenSource? _syncCancellationTokenSource;
@@ -89,6 +90,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         UnchangedFiles = new ObservableCollection<SyncPreviewRowViewModel>();
         AllFiles = new ObservableCollection<SyncPreviewRowViewModel>();
         ActivityLog = new ObservableCollection<SyncLogEntryViewModel>();
+        BindingOperations.EnableCollectionSynchronization(ActivityLog, _activityLogLock);
         ActivityLogView = CollectionViewSource.GetDefaultView(ActivityLog);
         ActivityLogView.Filter = ShouldIncludeActivityLogEntry;
         RemainingQueue = new ObservableCollection<QueueActionViewModel>();
@@ -1351,7 +1353,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             ActivityLog.RemoveAt(ActivityLog.Count - 1);
         }
 
-        ActivityLogView.Refresh();
+        RefreshActivityLogView();
     }
 
     private void SetActivityLogFilter(ActivityLogFilter filter)
@@ -1365,7 +1367,19 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         RaisePropertyChanged(nameof(ShowAllActivityLog));
         RaisePropertyChanged(nameof(ShowAlertsOnlyActivityLog));
         RaisePropertyChanged(nameof(ShowVerboseOnlyActivityLog));
-        ActivityLogView.Refresh();
+        RefreshActivityLogView();
+    }
+
+    private void RefreshActivityLogView()
+    {
+        if (ActivityLogView is not DispatcherObject dispatcherObject || dispatcherObject.Dispatcher.CheckAccess())
+        {
+            ActivityLogView.Refresh();
+        }
+        else
+        {
+            dispatcherObject.Dispatcher.BeginInvoke(ActivityLogView.Refresh);
+        }
     }
 
     private bool ShouldIncludeActivityLogEntry(object item)
