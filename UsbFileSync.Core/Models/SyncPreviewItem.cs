@@ -13,7 +13,8 @@ public sealed record SyncPreviewItem(
     string Direction,
     string Status,
     SyncPreviewCategory Category,
-    SyncActionType? PlannedActionType = null)
+    SyncActionType? PlannedActionType = null,
+    string? DriveLocationPath = null)
 {
     public SyncPreviewItem(
         string RelativePath,
@@ -27,7 +28,8 @@ public sealed record SyncPreviewItem(
         string Direction,
         string Status,
         SyncPreviewCategory Category,
-        SyncActionType? PlannedActionType = null)
+        SyncActionType? PlannedActionType = null,
+        string? DriveLocationPath = null)
         : this(
             string.Join("|", new[]
             {
@@ -46,7 +48,8 @@ public sealed record SyncPreviewItem(
             Direction,
             Status,
             Category,
-            PlannedActionType)
+            PlannedActionType,
+            DriveLocationPath)
     {
     }
 }

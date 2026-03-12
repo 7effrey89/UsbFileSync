@@ -8,6 +8,30 @@ namespace UsbFileSync.Tests;
 public sealed class SyncPreviewRowViewModelTests
 {
     [Fact]
+    public void UsesFormattedDriveLocationWhenPreviewItemIncludesDestinationRoot()
+    {
+        var row = new SyncPreviewRowViewModel(
+            new SyncPreviewItem(
+                RelativePath: "folder/file.txt",
+                IsDirectory: false,
+                SourceFullPath: @"F:\\folder\\file.txt",
+                SourceLength: 10,
+                SourceLastWriteTimeUtc: DateTime.UtcNow,
+                DestinationFullPath: @"D:\\Backup\\folder\\file.txt",
+                DestinationLength: 10,
+                DestinationLastWriteTimeUtc: DateTime.UtcNow,
+                Direction: "->",
+                Status: "New File",
+                Category: SyncPreviewCategory.NewFiles,
+                PlannedActionType: SyncActionType.CopyToDestination,
+                DriveLocationPath: @"D:\\Backup"),
+            iconProvider: new StubFileIconProvider(null),
+            driveDisplayNameService: new StubDriveDisplayNameService());
+
+        Assert.Equal("Backup Drive (D:)", row.DriveLocation);
+    }
+
+    [Fact]
     public void UsesSourcePathAsDisplayedNameWhenAvailable()
     {
         var iconProvider = new StubFileIconProvider(null);
@@ -49,6 +73,15 @@ public sealed class SyncPreviewRowViewModelTests
         Assert.Equal("Queued", row.ProgressStateText);
         Assert.False(row.IsSourceAction);
         Assert.True(row.IsDestinationAction);
+    }
+
+    private sealed class StubDriveDisplayNameService : IDriveDisplayNameService
+    {
+        public string FormatPathForDisplay(string path) => path switch
+        {
+            @"D:\\Backup" => "Backup Drive (D:)",
+            _ => path,
+        };
     }
 
     [Fact]

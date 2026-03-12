@@ -203,7 +203,8 @@ public sealed class SyncService
                     direction,
                     status,
                     category,
-                    action?.Type);
+                        action?.Type,
+                        configuration.DestinationPath);
             })
             .ToList();
     }

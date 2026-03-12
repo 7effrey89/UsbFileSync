@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.ComponentModel;
 using System.Windows.Threading;
 using UsbFileSync.App.ViewModels;
 
@@ -17,6 +18,8 @@ public partial class MainWindow : Window
         InitializeComponent();
         _viewModel = new MainWindowViewModel();
         DataContext = _viewModel;
+        _viewModel.PropertyChanged += OnViewModelPropertyChanged;
+        UpdateDriveLocationColumnsVisibility();
         Closed += OnClosed;
     }
 
@@ -145,6 +148,80 @@ public partial class MainWindow : Window
     private void OnAdditionalDestinationPathTextBoxLostKeyboardFocus(object sender, RoutedEventArgs e) =>
         _viewModel.SetAdditionalDestinationPathFocused((sender as FrameworkElement)?.DataContext, false);
 
+    private void OnPreviewColumnFilterButtonClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: PreviewColumnHeader header } element)
+        {
+            return;
+        }
+
+        _viewModel.OpenPreviewColumnFilter(GetSelectedPreviewTabKind(), header);
+        PreviewFilterPopup.PlacementTarget = element;
+        PreviewFilterPopup.IsOpen = true;
+        PreviewFilterSearchTextBox.Dispatcher.BeginInvoke(() =>
+        {
+            PreviewFilterSearchTextBox.Focus();
+            PreviewFilterSearchTextBox.SelectAll();
+        }, DispatcherPriority.Input);
+        e.Handled = true;
+    }
+
+    private void OnSelectVisiblePreviewFilterOptionsClicked(object sender, RoutedEventArgs e) =>
+        _viewModel.SetAllVisiblePreviewFilterOptions(true);
+
+    private void OnClearVisiblePreviewFilterOptionsClicked(object sender, RoutedEventArgs e) =>
+        _viewModel.SetAllVisiblePreviewFilterOptions(false);
+
+    private void OnDeselectNonShownPreviewFilterOptionsClicked(object sender, RoutedEventArgs e) =>
+        _viewModel.SetAllNonShownPreviewFilterOptions(false);
+
+    private void OnSortPreviewColumnAscendingClicked(object sender, RoutedEventArgs e) =>
+        _viewModel.SortActivePreviewColumn(ListSortDirection.Ascending);
+
+    private void OnSortPreviewColumnDescendingClicked(object sender, RoutedEventArgs e) =>
+        _viewModel.SortActivePreviewColumn(ListSortDirection.Descending);
+
+    private void OnApplyPreviewColumnFilterClicked(object sender, RoutedEventArgs e)
+    {
+        _viewModel.ApplyActivePreviewColumnFilter();
+        PreviewFilterPopup.IsOpen = false;
+    }
+
+    private void OnClearPreviewColumnFilterClicked(object sender, RoutedEventArgs e)
+    {
+        _viewModel.ClearActivePreviewColumnFilter();
+        PreviewFilterPopup.IsOpen = false;
+    }
+
+    private void OnPreviewFilterPopupClosed(object sender, EventArgs e) =>
+        _viewModel.PreviewFilterSearchText = string.Empty;
+
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(MainWindowViewModel.IsDriveLocationColumnVisible))
+        {
+            UpdateDriveLocationColumnsVisibility();
+        }
+    }
+
+    private void UpdateDriveLocationColumnsVisibility()
+    {
+        var visibility = _viewModel.IsDriveLocationColumnVisible ? Visibility.Visible : Visibility.Collapsed;
+        NewFilesDriveLocationColumn.Visibility = visibility;
+        ChangedFilesDriveLocationColumn.Visibility = visibility;
+        DeletedFilesDriveLocationColumn.Visibility = visibility;
+        UnchangedFilesDriveLocationColumn.Visibility = visibility;
+        AllFilesDriveLocationColumn.Visibility = visibility;
+    }
+
+    private void OnPreviewFilterResizeThumbDragDelta(object sender, DragDeltaEventArgs e)
+    {
+        var nextWidth = Math.Max(PreviewFilterPopupBorder.MinWidth, PreviewFilterPopupBorder.Width + e.HorizontalChange);
+        var nextHeight = Math.Max(PreviewFilterPopupBorder.MinHeight, PreviewFilterPopupBorder.Height + e.VerticalChange);
+        PreviewFilterPopupBorder.Width = nextWidth;
+        PreviewFilterPopupBorder.Height = nextHeight;
+    }
+
     private static void SelectAllText(object sender)
     {
         if (sender is not System.Windows.Controls.TextBox textBox)
@@ -183,5 +260,9 @@ public partial class MainWindow : Window
         DashboardRowDefinition.Height = isVisible ? _savedDashboardHeight : new GridLength(0);
     }
 
-    private void OnClosed(object? sender, EventArgs e) => _viewModel.Dispose();
+    private void OnClosed(object? sender, EventArgs e)
+    {
+        _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
+        _viewModel.Dispose();
+    }
 }

@@ -153,7 +153,8 @@ The main window includes:
 - Filter tabs for `New Files`, `Changed`, `Deleted`, `Unchanged`, and `All`.
 - Shared selection checkboxes across filtered tabs, including select-all checkboxes in each preview header.
 - Edit menu actions for `Select All In Tab`, `Select By Pattern`, and `Invert Selection` against the active preview tab.
-- Action, status, sync action, transfer speed, source metadata, and destination metadata columns, with the same column set available across all preview tabs.
+- Action, status, sync action, transfer speed, drive location, source metadata, and destination metadata columns, with the same column set available across all preview tabs.
+- Excel-style column filter dropdowns on the preview table headers, with searchable value lists, sort controls, and bulk select or deselect actions for narrowing the current tab.
 - Source and destination paths stay underlined for clickability, and only the side that will be changed is color-highlighted in the preview.
 - The sync action column uses a directional chevron that fills as each item progresses, while the Action column keeps the raw function name for the planned operation.
 - Rounded progress bars remain in the remaining queue panel.
