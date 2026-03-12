@@ -2,6 +2,16 @@
 
 UsbFileSync is a Windows desktop file synchronization tool built with WPF and .NET 8. It is designed for synchronizing a source location and one or more destination locations with support for one-way and two-way sync, preview-first workflows, cancellation, and safe file copy behavior.
 
+## Supported Filesystems
+
+UsbFileSync now routes sync IO through a volume abstraction instead of assuming every source and destination is a plain Windows path.
+
+- **Windows mounted volumes** (`WindowsMountedVolume`): read/write using normal `System.IO` paths.
+- **Linux ext volumes** (`ExtVolumeSource`): read/write through the same sync engine abstraction, so ext-backed sources and destinations can participate in copy, overwrite, delete, directory creation, and metadata updates.
+- **macOS APFS volumes** (`ApfsVolumeSource`): **read-only by design**. UsbFileSync allows APFS content to be analyzed and copied out, but any write attempt against an APFS target is rejected before the sync can modify the volume.
+
+The APFS backend intentionally enforces read-only behavior so the application does not expose unsupported write-back flows.
+
 ## Current Capabilities
 
 - One-way synchronization from source to destination.
@@ -24,6 +34,7 @@ UsbFileSync is a Windows desktop file synchronization tool built with WPF and .N
 - Windows shell file icons in the preview so items match Explorer more closely.
 - Clickable source and destination preview paths that open Explorer and select the file when possible, plus a right-click menu with `Open file` and `Open file folder` actions.
 - A `Show comparison` action on the source preview item context menu that opens a side-by-side source/destination comparison dialog with metadata and file previews.
+- Sync planning and execution through pluggable `IVolumeSource` backends so non-mounted filesystems can be integrated without rewriting the core planner.
 - Embedded PDF preview in the comparison dialog using WebView2, plus an embedded media player for common audio and video formats when the local Windows codecs support them.
 - Office document preview for `docx`, `pptx`, `xlsx`, and related macro-enabled/template variants using built-in text extraction, with a Microsoft Office application fallback for Word, PowerPoint, and Excel files that cannot be parsed directly on the local machine.
 - A **Previewer** dropdown on every comparison pane that lets you switch between the built-in viewer and the Windows Shell preview handler. Office documents offer additional Open XML and Office Interop modes.
@@ -223,6 +234,7 @@ The solution includes automated coverage for:
 - Cancellation is safe, but it is not a true resume system. Restarting synchronization re-analyzes the file set and starts the interrupted file from the beginning.
 - One-way and two-way sync both persist pairwise metadata inside `.sync-metadata`, but two-way conflict resolution still falls back to last write times when both sides changed the same file between sync sessions.
 - The app is currently Windows-only.
+- APFS volumes are intentionally treated as read-only targets and will throw a read-only volume error if selected as a write destination.
 
 ## Development Notes
 

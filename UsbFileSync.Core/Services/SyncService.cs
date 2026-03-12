@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Collections.Concurrent;
 using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Strategies;
+using UsbFileSync.Core.Volumes;
 
 namespace UsbFileSync.Core.Services;
 
@@ -155,10 +156,12 @@ public sealed class SyncService
         IReadOnlyList<SyncAction> actions,
         CancellationToken cancellationToken)
     {
-        var sourceFiles = DirectorySnapshotBuilder.Build(configuration.SourcePath);
-        var destinationFiles = DirectorySnapshotBuilder.Build(configuration.DestinationPath);
-        var sourceDirectories = DirectorySnapshotBuilder.BuildDirectories(configuration.SourcePath);
-        var destinationDirectories = DirectorySnapshotBuilder.BuildDirectories(configuration.DestinationPath);
+        var sourceVolume = configuration.ResolveSourceVolume();
+        var destinationVolume = configuration.ResolveDestinationVolumes().Single();
+        var sourceFiles = DirectorySnapshotBuilder.Build(sourceVolume);
+        var destinationFiles = DirectorySnapshotBuilder.Build(destinationVolume);
+        var sourceDirectories = DirectorySnapshotBuilder.BuildDirectories(sourceVolume);
+        var destinationDirectories = DirectorySnapshotBuilder.BuildDirectories(destinationVolume);
         var actionsByRelativePath = actions
             .GroupBy(action => action.RelativePath, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
@@ -184,9 +187,9 @@ public sealed class SyncService
                 actionsByRelativePath.TryGetValue(relativePath, out var action);
 
                 var sourceFullPath = sourceFile?.FullPath
-                    ?? (hasSourceDirectory ? Path.Combine(configuration.SourcePath, relativePath) : action?.SourceFullPath);
+                    ?? (hasSourceDirectory ? VolumePath.CombineDisplayPath(sourceVolume, relativePath) : action?.SourceFullPath);
                 var destinationFullPath = destinationFile?.FullPath
-                    ?? (hasDestinationDirectory ? Path.Combine(configuration.DestinationPath, relativePath) : action?.DestinationFullPath);
+                    ?? (hasDestinationDirectory ? VolumePath.CombineDisplayPath(destinationVolume, relativePath) : action?.DestinationFullPath);
 
                 var (direction, status, category) = DescribePreview(action?.Type);
 
@@ -239,16 +242,29 @@ public sealed class SyncService
         SyncActionType.OverwriteFileOnDestination or
         SyncActionType.OverwriteFileOnSource;
 
-    private IReadOnlyList<SyncConfiguration> ExpandDestinationConfigurations(SyncConfiguration configuration) =>
-        configuration.GetDestinationPaths()
-            .Select(destinationPath => CreateDestinationConfiguration(configuration, destinationPath))
+    private IReadOnlyList<SyncConfiguration> ExpandDestinationConfigurations(SyncConfiguration configuration)
+    {
+        var destinationVolumes = configuration.ResolveDestinationVolumes();
+        var destinationPaths = configuration.GetDestinationPaths();
+        return destinationVolumes
+            .Select((destinationVolume, index) => CreateDestinationConfiguration(
+                configuration,
+                destinationPaths.ElementAtOrDefault(index) ?? destinationVolume.Root,
+                destinationVolume))
             .ToList();
+    }
 
-    private static SyncConfiguration CreateDestinationConfiguration(SyncConfiguration configuration, string destinationPath) => new()
+    private static SyncConfiguration CreateDestinationConfiguration(
+        SyncConfiguration configuration,
+        string destinationPath,
+        IVolumeSource destinationVolume) => new()
     {
         SourcePath = configuration.SourcePath,
+        SourceVolume = configuration.SourceVolume,
         DestinationPath = destinationPath,
+        DestinationVolume = destinationVolume,
         DestinationPaths = [destinationPath],
+        DestinationVolumes = [destinationVolume],
         Mode = configuration.Mode,
         DetectMoves = configuration.DetectMoves,
         DryRun = configuration.DryRun,
@@ -259,7 +275,7 @@ public sealed class SyncService
 
     private static string ResolveDestinationPath(SyncConfiguration configuration, SyncAction action)
     {
-        foreach (var destinationPath in configuration.GetDestinationPaths())
+        foreach (var destinationPath in configuration.GetDestinationDisplayPaths())
         {
             if (PathBelongsToRoot(action.SourceFullPath, destinationPath) ||
                 PathBelongsToRoot(action.DestinationFullPath, destinationPath))
@@ -268,7 +284,7 @@ public sealed class SyncService
             }
         }
 
-        return configuration.DestinationPath;
+        return configuration.DestinationVolume?.Root ?? configuration.DestinationPath;
     }
 
     private static bool PathBelongsToRoot(string? candidatePath, string rootPath)
@@ -278,17 +294,11 @@ public sealed class SyncService
             return false;
         }
 
-        var normalizedRootPath = Path.GetFullPath(rootPath)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var normalizedCandidatePath = Path.GetFullPath(candidatePath);
-
+        var normalizedRootPath = rootPath.TrimEnd('/', '\\');
+        var normalizedCandidatePath = candidatePath.TrimEnd('/', '\\');
         return string.Equals(normalizedCandidatePath, normalizedRootPath, StringComparison.OrdinalIgnoreCase) ||
-            normalizedCandidatePath.StartsWith(
-                normalizedRootPath + Path.DirectorySeparatorChar,
-                StringComparison.OrdinalIgnoreCase) ||
-            normalizedCandidatePath.StartsWith(
-                normalizedRootPath + Path.AltDirectorySeparatorChar,
-                StringComparison.OrdinalIgnoreCase);
+            normalizedCandidatePath.StartsWith(normalizedRootPath + '/', StringComparison.OrdinalIgnoreCase) ||
+            normalizedCandidatePath.StartsWith(normalizedRootPath + "\\", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<SyncResult> ExecutePlannedSingleAsync(
@@ -305,6 +315,8 @@ public sealed class SyncService
         var trackedChecksumEntriesByRelativePath = configuration.VerifyChecksums
             ? LoadTrackedChecksumEntries(configuration)
             : new Dictionary<string, SyncFileIndexEntry>(StringComparer.OrdinalIgnoreCase);
+        var sourceVolume = configuration.ResolveSourceVolume();
+        var destinationVolume = configuration.ResolveDestinationVolumes().Single();
 
         for (var index = 0; index < actions.Count; index++)
         {
@@ -321,6 +333,8 @@ public sealed class SyncService
 
                 appliedOperations += await ExecuteCopyBatchAsync(
                     configuration,
+                    sourceVolume,
+                    destinationVolume,
                     copyBatch,
                     trackedChecksumEntriesByRelativePath,
                     verifiedChecksumsByRelativePath,
@@ -334,13 +348,13 @@ public sealed class SyncService
             }
 
             var action = actions[index];
-            ApplySequentialAsync(
-                configuration,
+            ApplySequentialAction(
+                sourceVolume,
+                destinationVolume,
                 action,
                 progress,
                 completedOperationsOffset + appliedOperations,
-                totalActions,
-                cancellationToken);
+                totalActions);
             appliedOperations++;
         }
 
@@ -359,6 +373,8 @@ public sealed class SyncService
 
     private static async Task<int> ExecuteCopyBatchAsync(
         SyncConfiguration configuration,
+        IVolumeSource sourceVolume,
+        IVolumeSource destinationVolume,
         IReadOnlyList<SyncAction> actions,
         IReadOnlyDictionary<string, SyncFileIndexEntry> trackedChecksumEntriesByRelativePath,
         IDictionary<string, string> verifiedChecksumsByRelativePath,
@@ -371,19 +387,19 @@ public sealed class SyncService
         var workItems = actions
             .Select(action =>
             {
-                var sourcePath = action.Type is SyncActionType.CopyToDestination or SyncActionType.OverwriteFileOnDestination
-                    ? action.SourceFullPath!
-                    : action.DestinationFullPath!;
-                var destinationPath = action.Type is SyncActionType.CopyToDestination or SyncActionType.OverwriteFileOnDestination
-                    ? action.DestinationFullPath!
-                    : action.SourceFullPath!;
+                var (copySourceVolume, copyDestinationVolume) = action.Type is SyncActionType.CopyToDestination or SyncActionType.OverwriteFileOnDestination
+                    ? (sourceVolume, destinationVolume)
+                    : (destinationVolume, sourceVolume);
 
+                var sourceEntry = copySourceVolume.GetEntry(action.RelativePath);
                 return new CopyWorkItem(
                     action,
-                    sourcePath,
-                    destinationPath,
-                    new FileInfo(sourcePath).Length,
-                    TryGetReusableSourceChecksum(action, trackedChecksumEntriesByRelativePath));
+                    copySourceVolume,
+                    copyDestinationVolume,
+                    action.RelativePath,
+                    action.RelativePath,
+                    sourceEntry.Size ?? 0,
+                    TryGetReusableSourceChecksum(copySourceVolume, action, trackedChecksumEntriesByRelativePath));
             })
             .ToArray();
 
@@ -467,8 +483,10 @@ public sealed class SyncService
     {
         var startedAt = DateTime.UtcNow;
         var verifiedChecksum = await CopyAsync(
-            workItem.SourcePath,
-            workItem.DestinationPath,
+            workItem.SourceVolume,
+            workItem.SourceRelativePath,
+            workItem.DestinationVolume,
+            workItem.DestinationRelativePath,
             verifyChecksums,
             workItem.ReusableSourceChecksum,
             progress,
@@ -531,44 +549,42 @@ public sealed class SyncService
         return Math.Clamp(estimatedParallelism, 1, Math.Min(autoParallelismLimit, remainingItems.Count));
     }
 
-    private static void ApplySequentialAsync(
-        SyncConfiguration configuration,
+    private static void ApplySequentialAction(
+        IVolumeSource sourceVolume,
+        IVolumeSource destinationVolume,
         SyncAction action,
         IProgress<SyncProgress>? progress,
         int completedOperations,
-        int totalActions,
-        CancellationToken cancellationToken)
+        int totalActions)
     {
         switch (action.Type)
         {
             case SyncActionType.CreateDirectoryOnDestination:
-                CreateDirectory(action.DestinationFullPath!);
+                destinationVolume.CreateDirectory(action.RelativePath);
                 progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100, action.GetActionKey()));
                 break;
             case SyncActionType.CreateDirectoryOnSource:
-                CreateDirectory(action.SourceFullPath!);
+                sourceVolume.CreateDirectory(action.RelativePath);
                 progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100, action.GetActionKey()));
                 break;
             case SyncActionType.DeleteDirectoryFromDestination:
-                DeleteDirectory(action.DestinationFullPath!);
+                destinationVolume.DeleteDirectory(action.RelativePath);
                 progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100, action.GetActionKey()));
                 break;
             case SyncActionType.DeleteDirectoryFromSource:
-                DeleteDirectory(action.SourceFullPath!);
+                sourceVolume.DeleteDirectory(action.RelativePath);
                 progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100, action.GetActionKey()));
                 break;
             case SyncActionType.DeleteFromDestination:
-                Delete(action.DestinationFullPath!);
+                destinationVolume.DeleteFile(action.RelativePath);
                 progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100, action.GetActionKey()));
                 break;
             case SyncActionType.DeleteFromSource:
-                Delete(action.SourceFullPath!);
+                sourceVolume.DeleteFile(action.RelativePath);
                 progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100, action.GetActionKey()));
                 break;
             case SyncActionType.MoveOnDestination:
-                Move(
-                    Path.Combine(configuration.DestinationPath, action.PreviousRelativePath!),
-                    action.DestinationFullPath!);
+                destinationVolume.Move(action.PreviousRelativePath!, action.RelativePath, overwrite: true);
                 progress?.Report(new SyncProgress(completedOperations + 1, totalActions, action.RelativePath, 0, null, 100, action.GetActionKey()));
                 break;
             case SyncActionType.NoOp:
@@ -580,8 +596,10 @@ public sealed class SyncService
     }
 
     private static async Task<string?> CopyAsync(
-        string sourcePath,
-        string destinationPath,
+        IVolumeSource sourceVolume,
+        string sourceRelativePath,
+        IVolumeSource destinationVolume,
+        string destinationRelativePath,
         bool verifyChecksums,
         string? reusableSourceChecksum,
         IProgress<SyncProgress>? progress,
@@ -591,15 +609,14 @@ public sealed class SyncService
         string actionKey,
         CancellationToken cancellationToken)
     {
-        var destinationDirectory = Path.GetDirectoryName(destinationPath);
+        var destinationDirectory = Path.GetDirectoryName(destinationRelativePath.Replace('/', Path.DirectorySeparatorChar));
         if (!string.IsNullOrWhiteSpace(destinationDirectory))
         {
-            Directory.CreateDirectory(destinationDirectory);
+            destinationVolume.CreateDirectory(destinationDirectory.Replace(Path.DirectorySeparatorChar, '/'));
         }
 
-        var tempPath = CreateTemporaryCopyPath(destinationPath);
-
-        var totalBytes = new FileInfo(sourcePath).Length;
+        var tempRelativePath = CreateTemporaryCopyPath(destinationRelativePath);
+        var totalBytes = sourceVolume.GetEntry(sourceRelativePath).Size ?? 0;
         progress?.Report(new SyncProgress(getCompletedOperations(), totalActions, relativePath, 0, totalBytes, totalBytes == 0 ? 100 : 0, actionKey));
 
         const int bufferSize = 1024 * 128;
@@ -608,6 +625,7 @@ public sealed class SyncService
         IncrementalHash? sourceHash = null;
         IncrementalHash? destinationHash = null;
         string? copiedChecksum = null;
+        var sourceLastWriteTimeUtc = sourceVolume.GetEntry(sourceRelativePath).LastWriteTimeUtc;
 
         try
         {
@@ -621,8 +639,8 @@ public sealed class SyncService
                 destinationHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             }
 
-            await using (var sourceStream = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, useAsync: true))
-            await using (var destinationStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize, useAsync: true))
+            await using (var sourceStream = sourceVolume.OpenRead(sourceRelativePath))
+            await using (var destinationStream = destinationVolume.OpenWrite(tempRelativePath, overwrite: true))
             {
                 int bytesRead;
                 while ((bytesRead = await sourceStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
@@ -647,16 +665,20 @@ public sealed class SyncService
                     : reusableSourceChecksum;
                 copiedChecksum = Convert.ToHexString(destinationHash!.GetHashAndReset());
 
-                ValidateCopiedFileChecksums(expectedSourceChecksum, copiedChecksum, sourcePath);
+                ValidateCopiedFileChecksums(expectedSourceChecksum, copiedChecksum, sourceVolume.GetEntry(sourceRelativePath).FullPath);
             }
 
-            CommitTemporaryCopy(tempPath, destinationPath);
-            File.SetLastWriteTimeUtc(destinationPath, File.GetLastWriteTimeUtc(sourcePath));
+            destinationVolume.Move(tempRelativePath, destinationRelativePath, overwrite: true);
+            if (sourceLastWriteTimeUtc.HasValue)
+            {
+                destinationVolume.SetLastWriteTimeUtc(destinationRelativePath, sourceLastWriteTimeUtc.Value);
+            }
+
             return copiedChecksum;
         }
         catch
         {
-            Delete(tempPath);
+            destinationVolume.DeleteFile(tempRelativePath);
             throw;
         }
         finally
@@ -674,67 +696,15 @@ public sealed class SyncService
         }
     }
 
-    private static string CreateTemporaryCopyPath(string destinationPath)
+    private static string CreateTemporaryCopyPath(string destinationRelativePath)
     {
-        var destinationDirectory = Path.GetDirectoryName(destinationPath) ?? string.Empty;
-        var destinationFileName = Path.GetFileName(destinationPath);
-        return Path.Combine(destinationDirectory, $".{destinationFileName}.{Guid.NewGuid():N}.usfcopy.tmp");
-    }
-
-    private static void CommitTemporaryCopy(string temporaryPath, string destinationPath)
-    {
-        try
-        {
-            File.Move(temporaryPath, destinationPath, overwrite: true);
-        }
-        catch (IOException) when (File.Exists(destinationPath))
-        {
-            File.Delete(destinationPath);
-            File.Move(temporaryPath, destinationPath);
-        }
-    }
-
-    private static void Delete(string path)
-    {
-        if (File.Exists(path))
-        {
-            File.Delete(path);
-        }
-    }
-
-    private static void CreateDirectory(string path)
-    {
-        if (!string.IsNullOrWhiteSpace(path))
-        {
-            Directory.CreateDirectory(path);
-        }
-    }
-
-    private static void DeleteDirectory(string path)
-    {
-        if (Directory.Exists(path) && !Directory.EnumerateFileSystemEntries(path).Any())
-        {
-            Directory.Delete(path, recursive: false);
-        }
-    }
-
-    private static void Move(string sourcePath, string destinationPath)
-    {
-        var destinationDirectory = Path.GetDirectoryName(destinationPath);
-        if (!string.IsNullOrWhiteSpace(destinationDirectory))
-        {
-            Directory.CreateDirectory(destinationDirectory);
-        }
-
-        if (File.Exists(destinationPath))
-        {
-            File.Delete(destinationPath);
-        }
-
-        if (File.Exists(sourcePath))
-        {
-            File.Move(sourcePath, destinationPath);
-        }
+        var normalizedRelativePath = VolumePath.NormalizeRelativePath(destinationRelativePath);
+        var destinationDirectory = Path.GetDirectoryName(normalizedRelativePath.Replace('/', Path.DirectorySeparatorChar)) ?? string.Empty;
+        var destinationFileName = Path.GetFileName(normalizedRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        var tempFileName = $".{destinationFileName}.{Guid.NewGuid():N}.usfcopy.tmp";
+        return string.IsNullOrWhiteSpace(destinationDirectory)
+            ? tempFileName
+            : VolumePath.NormalizeRelativePath(Path.Combine(destinationDirectory, tempFileName));
     }
 
     private void PersistSyncMetadata(
@@ -742,12 +712,14 @@ public sealed class SyncService
         IReadOnlyList<SyncAction> actions,
         IReadOnlyDictionary<string, string> verifiedChecksumsByRelativePath)
     {
-        var sourceMetadata = _metadataStore.Load(configuration.SourcePath);
-        var destinationMetadata = _metadataStore.Load(configuration.DestinationPath);
+        var sourceVolume = configuration.ResolveSourceVolume();
+        var destinationVolume = configuration.ResolveDestinationVolumes().Single();
+        var sourceMetadata = _metadataStore.Load(sourceVolume);
+        var destinationMetadata = _metadataStore.Load(destinationVolume);
         var sourceRootId = _metadataStore.GetOrCreateRootId(sourceMetadata);
         var destinationRootId = _metadataStore.GetOrCreateRootId(destinationMetadata);
-        var sourceRootName = _metadataStore.GetRootDisplayName(configuration.SourcePath);
-        var destinationRootName = _metadataStore.GetRootDisplayName(configuration.DestinationPath);
+        var sourceRootName = _metadataStore.GetRootDisplayName(sourceVolume);
+        var destinationRootName = _metadataStore.GetRootDisplayName(destinationVolume);
         sourceMetadata.RootName = sourceRootName;
         destinationMetadata.RootName = destinationRootName;
         var existingPeerState = _metadataStore.GetSharedPeerState(sourceMetadata, destinationRootId, destinationMetadata, sourceRootId);
@@ -764,8 +736,8 @@ public sealed class SyncService
         sourceMetadata.PeerStates[destinationRootId] = Clone(currentPeerState, destinationRootName);
         destinationMetadata.PeerStates[sourceRootId] = Clone(currentPeerState, sourceRootName);
 
-        _metadataStore.Save(configuration.SourcePath, sourceMetadata);
-        _metadataStore.Save(configuration.DestinationPath, destinationMetadata);
+        _metadataStore.Save(sourceVolume, sourceMetadata);
+        _metadataStore.Save(destinationVolume, destinationMetadata);
     }
 
     private static SyncPeerState BuildCurrentPeerState(
@@ -778,8 +750,10 @@ public sealed class SyncService
         string sourceRootName,
         string destinationRootName)
     {
-        var currentSourceFiles = DirectorySnapshotBuilder.Build(configuration.SourcePath);
-        var currentDestinationFiles = DirectorySnapshotBuilder.Build(configuration.DestinationPath);
+        var sourceVolume = configuration.ResolveSourceVolume();
+        var destinationVolume = configuration.ResolveDestinationVolumes().Single();
+        var currentSourceFiles = DirectorySnapshotBuilder.Build(sourceVolume);
+        var currentDestinationFiles = DirectorySnapshotBuilder.Build(destinationVolume);
         var entries = existingPeerState?.Entries.ToDictionary(
             pair => pair.Key,
             pair => Clone(pair.Value),
@@ -907,8 +881,10 @@ public sealed class SyncService
 
     private Dictionary<string, SyncFileIndexEntry> LoadTrackedChecksumEntries(SyncConfiguration configuration)
     {
-        var sourceMetadata = _metadataStore.Load(configuration.SourcePath);
-        var destinationMetadata = _metadataStore.Load(configuration.DestinationPath);
+        var sourceVolume = configuration.ResolveSourceVolume();
+        var destinationVolume = configuration.ResolveDestinationVolumes().Single();
+        var sourceMetadata = _metadataStore.Load(sourceVolume);
+        var destinationMetadata = _metadataStore.Load(destinationVolume);
         var sourceRootId = _metadataStore.GetOrCreateRootId(sourceMetadata);
         var destinationRootId = _metadataStore.GetOrCreateRootId(destinationMetadata);
         var existingPeerState = _metadataStore.GetSharedPeerState(sourceMetadata, destinationRootId, destinationMetadata, sourceRootId);
@@ -923,6 +899,7 @@ public sealed class SyncService
     }
 
     private static string? TryGetReusableSourceChecksum(
+        IVolumeSource sourceVolume,
         SyncAction action,
         IReadOnlyDictionary<string, SyncFileIndexEntry> trackedChecksumEntriesByRelativePath)
     {
@@ -932,16 +909,13 @@ public sealed class SyncService
             return null;
         }
 
-        var sourcePath = action.Type is SyncActionType.CopyToDestination or SyncActionType.OverwriteFileOnDestination
-            ? action.SourceFullPath
-            : action.DestinationFullPath;
-        if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
+        var sourceEntry = sourceVolume.GetEntry(action.RelativePath);
+        if (!sourceEntry.Exists || sourceEntry.IsDirectory || sourceEntry.Size is null || sourceEntry.LastWriteTimeUtc is null)
         {
             return null;
         }
 
-        var sourceInfo = new FileInfo(sourcePath);
-        var sourceSnapshot = new FileSnapshot(action.RelativePath, sourcePath, sourceInfo.Length, sourceInfo.LastWriteTimeUtc);
+        var sourceSnapshot = new FileSnapshot(action.RelativePath, sourceEntry.FullPath, sourceEntry.Size.Value, sourceEntry.LastWriteTimeUtc.Value);
         return trackedEntry.Matches(sourceSnapshot)
             ? trackedEntry.ChecksumSha256
             : null;
@@ -964,8 +938,10 @@ public sealed class SyncService
     }
     private sealed record CopyWorkItem(
         SyncAction Action,
-        string SourcePath,
-        string DestinationPath,
+        IVolumeSource SourceVolume,
+        IVolumeSource DestinationVolume,
+        string SourceRelativePath,
+        string DestinationRelativePath,
         long TotalBytes,
         string? ReusableSourceChecksum);
 
