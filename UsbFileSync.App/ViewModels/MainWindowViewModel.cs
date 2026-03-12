@@ -37,8 +37,12 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private readonly IFolderPickerService _folderPickerService;
     private readonly IFileLauncherService _fileLauncherService;
     private readonly IDriveDisplayNameService _driveDisplayNameService;
+    private readonly Dispatcher _dispatcher;
+    private readonly bool _hasWpfApplication;
     private readonly object _activityLogLock = new();
-    private readonly Dictionary<string, SyncPreviewRowViewModel> _previewRowsByRelativePath = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, SyncPreviewRowViewModel> _previewRowsByItemKey = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<PreviewTabKind, ICollectionView> _previewViews = new();
+    private readonly Dictionary<PreviewColumnKey, HashSet<string>> _activePreviewFilters = new();
     private CancellationTokenSource? _persistConfigurationCancellationTokenSource;
     private CancellationTokenSource? _syncCancellationTokenSource;
     private IReadOnlyList<SyncAction> _queuedActions = [];
@@ -62,6 +66,12 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _isStatusSuccess;
     private bool _isSourcePathFocused;
     private bool _isDestinationPathFocused;
+    private bool _isDriveLocationColumnVisible;
+    private PreviewColumnKey? _activePreviewFilterColumn;
+    private PreviewColumnKey? _activePreviewSortColumn;
+    private ListSortDirection _activePreviewSortDirection = ListSortDirection.Ascending;
+    private string _previewFilterTitle = "Column filter";
+    private string _previewFilterSearchText = string.Empty;
     private ActivityLogFilter _selectedActivityLogFilter = ActivityLogFilter.All;
     private bool _suppressSelectionUpdates;
 
@@ -82,13 +92,30 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _folderPickerService = folderPickerService ?? new WindowsFolderPickerService();
         _fileLauncherService = fileLauncherService ?? new WindowsFileLauncherService();
         _driveDisplayNameService = driveDisplayNameService ?? new WindowsDriveDisplayNameService();
+        _dispatcher = Dispatcher.CurrentDispatcher;
+        _hasWpfApplication = System.Windows.Application.Current is not null;
         AvailableModes = Enum.GetValues<SyncMode>();
         PlannedActions = new ObservableCollection<SyncAction>();
+        AdditionalDestinationPaths = new ObservableCollection<DestinationPathEntryViewModel>();
         NewFiles = new ObservableCollection<SyncPreviewRowViewModel>();
         ChangedFiles = new ObservableCollection<SyncPreviewRowViewModel>();
         DeletedFiles = new ObservableCollection<SyncPreviewRowViewModel>();
         UnchangedFiles = new ObservableCollection<SyncPreviewRowViewModel>();
         AllFiles = new ObservableCollection<SyncPreviewRowViewModel>();
+        if (_hasWpfApplication)
+        {
+            _previewViews[PreviewTabKind.NewFiles] = CreatePreviewView(NewFiles);
+            _previewViews[PreviewTabKind.ChangedFiles] = CreatePreviewView(ChangedFiles);
+            _previewViews[PreviewTabKind.DeletedFiles] = CreatePreviewView(DeletedFiles);
+            _previewViews[PreviewTabKind.UnchangedFiles] = CreatePreviewView(UnchangedFiles);
+            _previewViews[PreviewTabKind.AllFiles] = CreatePreviewView(AllFiles);
+        }
+        PreviewFilterOptions = new ObservableCollection<PreviewFilterOptionViewModel>();
+        if (_hasWpfApplication)
+        {
+            PreviewFilterOptionsView = CollectionViewSource.GetDefaultView(PreviewFilterOptions);
+            PreviewFilterOptionsView.Filter = ShouldIncludePreviewFilterOption;
+        }
         ActivityLog = new ObservableCollection<SyncLogEntryViewModel>();
         BindingOperations.EnableCollectionSynchronization(ActivityLog, _activityLogLock);
         ActivityLogView = CollectionViewSource.GetDefaultView(ActivityLog);
@@ -97,7 +124,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, CanExecuteSyncCommands);
         ToggleSyncCommand = new RelayCommand(ToggleSync, CanExecuteToggleSyncCommand);
         BrowseSourcePathCommand = new RelayCommand(BrowseSourcePath);
-        BrowseDestinationPathCommand = new RelayCommand(BrowseDestinationPath);
+        AddDestinationPathCommand = new RelayCommand(AddDestinationPath);
+        BrowseDestinationPathCommand = new ParameterizedRelayCommand(BrowseDestinationPath);
+        RemoveDestinationPathCommand = new ParameterizedRelayCommand(RemoveDestinationPath, CanRemoveDestinationPath);
         OpenPreviewItemCommand = new ParameterizedRelayCommand(OpenPreviewItem, CanOpenPreviewItem);
         OpenPreviewContainingFolderCommand = new ParameterizedRelayCommand(OpenPreviewContainingFolder, CanOpenPreviewItem);
         OpenPreviewFileCommand = new ParameterizedRelayCommand(OpenPreviewFile, CanOpenPreviewFile);
@@ -111,6 +140,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public IEnumerable<SyncMode> AvailableModes { get; }
 
     public ObservableCollection<SyncAction> PlannedActions { get; }
+
+    public ObservableCollection<DestinationPathEntryViewModel> AdditionalDestinationPaths { get; }
 
     public ObservableCollection<SyncPreviewRowViewModel> NewFiles { get; }
 
@@ -126,7 +157,37 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public ICollectionView ActivityLogView { get; }
 
+    public ObservableCollection<PreviewFilterOptionViewModel> PreviewFilterOptions { get; }
+
+    public ICollectionView? PreviewFilterOptionsView { get; }
+
     public ObservableCollection<QueueActionViewModel> RemainingQueue { get; }
+
+    public string PreviewFilterTitle
+    {
+        get => _previewFilterTitle;
+        private set => SetProperty(ref _previewFilterTitle, value);
+    }
+
+    public string PreviewFilterSearchText
+    {
+        get => _previewFilterSearchText;
+        set
+        {
+            if (SetProperty(ref _previewFilterSearchText, value))
+            {
+                PreviewFilterOptionsView?.Refresh();
+            }
+        }
+    }
+
+    public bool HasActivePreviewFilters => _activePreviewFilters.Count > 0;
+
+    public bool IsDriveLocationColumnVisible
+    {
+        get => _isDriveLocationColumnVisible;
+        private set => SetProperty(ref _isDriveLocationColumnVisible, value);
+    }
 
     public bool ShowAllActivityLog
     {
@@ -170,7 +231,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public RelayCommand BrowseSourcePathCommand { get; }
 
-    public RelayCommand BrowseDestinationPathCommand { get; }
+    public RelayCommand AddDestinationPathCommand { get; }
+
+    public ParameterizedRelayCommand BrowseDestinationPathCommand { get; }
+
+    public ParameterizedRelayCommand RemoveDestinationPathCommand { get; }
 
     public ParameterizedRelayCommand OpenPreviewItemCommand { get; }
 
@@ -217,6 +282,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public string DestinationPathDisplayText => _isDestinationPathFocused
         ? DestinationPath
         : _driveDisplayNameService.FormatPathForDisplay(DestinationPath);
+
+    public bool HasAdditionalDestinationPaths => AdditionalDestinationPaths.Count > 0;
 
     public SyncMode SelectedMode
     {
@@ -389,32 +456,32 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public bool? AreAllNewFilesSelected
     {
-        get => GetSelectionState(NewFiles);
-        set => SetSelection(NewFiles, value);
+        get => GetSelectionState(PreviewTabKind.NewFiles);
+        set => SetSelection(PreviewTabKind.NewFiles, value);
     }
 
     public bool? AreAllChangedFilesSelected
     {
-        get => GetSelectionState(ChangedFiles);
-        set => SetSelection(ChangedFiles, value);
+        get => GetSelectionState(PreviewTabKind.ChangedFiles);
+        set => SetSelection(PreviewTabKind.ChangedFiles, value);
     }
 
     public bool? AreAllDeletedFilesSelected
     {
-        get => GetSelectionState(DeletedFiles);
-        set => SetSelection(DeletedFiles, value);
+        get => GetSelectionState(PreviewTabKind.DeletedFiles);
+        set => SetSelection(PreviewTabKind.DeletedFiles, value);
     }
 
     public bool? AreAllUnchangedFilesSelected
     {
-        get => GetSelectionState(UnchangedFiles);
-        set => SetSelection(UnchangedFiles, value);
+        get => GetSelectionState(PreviewTabKind.UnchangedFiles);
+        set => SetSelection(PreviewTabKind.UnchangedFiles, value);
     }
 
     public bool? AreAllFilesSelected
     {
-        get => GetSelectionState(AllFiles);
-        set => SetSelection(AllFiles, value);
+        get => GetSelectionState(PreviewTabKind.AllFiles);
+        set => SetSelection(PreviewTabKind.AllFiles, value);
     }
 
     public string QueueSummary => RemainingQueue.Count == 0
@@ -455,14 +522,47 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void BrowseDestinationPath()
+    private void AddDestinationPath()
     {
-        var selectedPath = _folderPickerService.PickFolder("Select the destination drive or folder", DestinationPath);
+        AdditionalDestinationPaths.Add(CreateDestinationPathEntry(string.Empty));
+        RaisePropertyChanged(nameof(HasAdditionalDestinationPaths));
+        HandleConfigurationChanged();
+    }
+
+    private void BrowseDestinationPath(object? parameter)
+    {
+        var destinationPath = parameter is DestinationPathEntryViewModel entry
+            ? entry.Path
+            : DestinationPath;
+        var selectedPath = _folderPickerService.PickFolder("Select the destination drive or folder", destinationPath);
         if (!string.IsNullOrWhiteSpace(selectedPath))
         {
-            DestinationPath = selectedPath;
+            if (parameter is DestinationPathEntryViewModel destinationEntry)
+            {
+                destinationEntry.Path = selectedPath;
+            }
+            else
+            {
+                DestinationPath = selectedPath;
+            }
         }
     }
+
+    private void RemoveDestinationPath(object? parameter)
+    {
+        if (parameter is not DestinationPathEntryViewModel entry)
+        {
+            return;
+        }
+
+        if (AdditionalDestinationPaths.Remove(entry))
+        {
+            RaisePropertyChanged(nameof(HasAdditionalDestinationPaths));
+            HandleConfigurationChanged();
+        }
+    }
+
+    private static bool CanRemoveDestinationPath(object? parameter) => parameter is DestinationPathEntryViewModel;
 
     private void OpenPreviewItem(object? parameter)
     {
@@ -545,6 +645,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         SourcePath = SourcePath,
         DestinationPath = DestinationPath,
+        DestinationPaths = GetDestinationPaths().ToList(),
         Mode = SelectedMode,
         DetectMoves = DetectMoves,
         DryRun = DryRun,
@@ -573,12 +674,12 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public void SelectAllInTab(PreviewTabKind tabKind)
     {
-        UpdateSelectionForRows(GetRowsForTab(tabKind), _ => true);
+        UpdateSelectionForRows(GetVisibleRowsForTab(tabKind), _ => true);
     }
 
     public void InvertSelectionInTab(PreviewTabKind tabKind)
     {
-        UpdateSelectionForRows(GetRowsForTab(tabKind), row => !row.IsSelected);
+        UpdateSelectionForRows(GetVisibleRowsForTab(tabKind), row => !row.IsSelected);
     }
 
     public int SelectByPattern(PreviewTabKind tabKind, string keyword, PreviewSelectionTarget target)
@@ -602,6 +703,113 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         return rows.Count(row => row.IsSelected);
     }
 
+    public void OpenPreviewColumnFilter(PreviewTabKind tabKind, PreviewColumnHeader header)
+    {
+        if (header.ColumnKey == PreviewColumnKey.DriveLocation && !IsDriveLocationColumnVisible)
+        {
+            return;
+        }
+
+        _activePreviewFilterColumn = header.ColumnKey;
+        PreviewFilterTitle = header.Title;
+        PreviewFilterSearchText = string.Empty;
+
+        var selectedValues = _activePreviewFilters.TryGetValue(header.ColumnKey, out var activeValues)
+            ? activeValues
+            : null;
+
+        var optionValues = GetRowsForFilterOptions(tabKind, header.ColumnKey)
+            .Select(row => GetPreviewColumnValue(row, header.ColumnKey))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        PreviewFilterOptions.Clear();
+        foreach (var optionValue in optionValues)
+        {
+            PreviewFilterOptions.Add(new PreviewFilterOptionViewModel(
+                optionValue,
+                selectedValues is null || selectedValues.Contains(optionValue)));
+        }
+
+        PreviewFilterOptionsView?.Refresh();
+    }
+
+    public void ApplyActivePreviewColumnFilter()
+    {
+        if (!_activePreviewFilterColumn.HasValue)
+        {
+            return;
+        }
+
+        var column = _activePreviewFilterColumn.Value;
+        var selectedValues = PreviewFilterOptions
+            .Where(option => option.IsSelected)
+            .Select(option => option.Value)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (selectedValues.Count == PreviewFilterOptions.Count)
+        {
+            _activePreviewFilters.Remove(column);
+        }
+        else
+        {
+            _activePreviewFilters[column] = selectedValues;
+        }
+
+        RefreshPreviewViews();
+        RaisePropertyChanged(nameof(HasActivePreviewFilters));
+        RaiseSelectionStateChanged();
+    }
+
+    public void ClearActivePreviewColumnFilter()
+    {
+        if (!_activePreviewFilterColumn.HasValue)
+        {
+            return;
+        }
+
+        _activePreviewFilters.Remove(_activePreviewFilterColumn.Value);
+        foreach (var option in PreviewFilterOptions)
+        {
+            option.IsSelected = true;
+        }
+
+        RefreshPreviewViews();
+        RaisePropertyChanged(nameof(HasActivePreviewFilters));
+        RaiseSelectionStateChanged();
+    }
+
+    public void SetAllVisiblePreviewFilterOptions(bool isSelected)
+    {
+        var options = GetShownPreviewFilterOptions();
+
+        foreach (var option in options)
+        {
+            option.IsSelected = isSelected;
+        }
+    }
+
+    public void SetAllNonShownPreviewFilterOptions(bool isSelected)
+    {
+        foreach (var option in GetNonShownPreviewFilterOptions())
+        {
+            option.IsSelected = isSelected;
+        }
+    }
+
+    public void SortActivePreviewColumn(ListSortDirection direction)
+    {
+        if (!_activePreviewFilterColumn.HasValue)
+        {
+            return;
+        }
+
+        _activePreviewSortColumn = _activePreviewFilterColumn.Value;
+        _activePreviewSortDirection = direction;
+        ApplyPreviewSort();
+    }
+
     public void SetSourcePathFocused(bool isFocused)
     {
         if (SetProperty(ref _isSourcePathFocused, isFocused))
@@ -615,6 +823,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         if (SetProperty(ref _isDestinationPathFocused, isFocused))
         {
             RaisePropertyChanged(nameof(DestinationPathDisplayText));
+        }
+    }
+
+    public void SetAdditionalDestinationPathFocused(object? parameter, bool isFocused)
+    {
+        if (parameter is DestinationPathEntryViewModel entry)
+        {
+            entry.SetFocused(isFocused);
         }
     }
 
@@ -730,7 +946,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                     }
 
                     AddLog("Done", $"{completedAction.Type}: {completedAction.RelativePath}");
-                    MarkPreviewRowCompleted(completedAction.RelativePath);
+                    MarkPreviewRowCompleted(completedAction.GetActionKey());
                     _completedQueuedActions++;
                 }
 
@@ -740,7 +956,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 }
 
                 CurrentTransferItem = update.CurrentItem;
-                UpdatePreviewRowProgress(update.CurrentItem, update.CurrentItemProgressPercentage, update.CurrentItemBytesTransferred);
+                UpdatePreviewRowProgress(update.CurrentItemKey ?? update.CurrentItem, update.CurrentItemProgressPercentage, update.CurrentItemBytesTransferred);
                 CurrentTransferProgressValue = update.CurrentItemProgressPercentage;
                 CurrentTransferDetails = update.CurrentItemTotalBytes.HasValue
                     ? $"{update.CurrentItemBytesTransferred:n0} / {update.CurrentItemTotalBytes.Value:n0} bytes, {QueueSummary}"
@@ -797,7 +1013,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         return update.CompletedOperations < update.TotalOperations
             && !string.IsNullOrWhiteSpace(update.CurrentItem)
-            && loggedTransferItems.Add(update.CurrentItem);
+            && loggedTransferItems.Add(update.CurrentItemKey ?? update.CurrentItem);
     }
 
     private void HandleConfigurationChanged()
@@ -824,28 +1040,75 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         return $"{message} Checksum verification passed for {verifiedCopyCount} copied file(s).";
     }
 
+    private IReadOnlyList<string> GetDestinationPaths()
+    {
+        var destinationPaths = new List<string>();
+        if (!string.IsNullOrWhiteSpace(DestinationPath))
+        {
+            destinationPaths.Add(DestinationPath);
+        }
+
+        destinationPaths.AddRange(AdditionalDestinationPaths
+            .Select(entry => entry.Path)
+            .Where(path => !string.IsNullOrWhiteSpace(path)));
+
+        return destinationPaths
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private DestinationPathEntryViewModel CreateDestinationPathEntry(string path) =>
+        new(path, _driveDisplayNameService, HandleConfigurationChanged);
+
+    private void LoadDestinationPaths(IReadOnlyList<string> destinationPaths)
+    {
+        var normalizedDestinationPaths = destinationPaths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        DestinationPath = normalizedDestinationPaths.FirstOrDefault() ?? string.Empty;
+
+        AdditionalDestinationPaths.Clear();
+        foreach (var destinationPath in normalizedDestinationPaths.Skip(1))
+        {
+            AdditionalDestinationPaths.Add(CreateDestinationPathEntry(destinationPath));
+        }
+
+        RaisePropertyChanged(nameof(HasAdditionalDestinationPaths));
+    }
+
     private bool IsConfigurationComplete() =>
         !string.IsNullOrWhiteSpace(SourcePath) &&
-        !string.IsNullOrWhiteSpace(DestinationPath) &&
-        !string.Equals(SourcePath, DestinationPath, StringComparison.OrdinalIgnoreCase);
+        GetDestinationPaths().Count > 0 &&
+        GetDestinationPaths().All(destinationPath => !string.Equals(SourcePath, destinationPath, StringComparison.OrdinalIgnoreCase));
 
     private bool TryValidateConfiguration(bool requireAccessibleDestinationPath)
     {
+        var destinationPaths = GetDestinationPaths();
         if (string.IsNullOrWhiteSpace(SourcePath))
         {
             StatusMessage = "Choose a source drive path before running synchronization.";
             return false;
         }
 
-        if (string.IsNullOrWhiteSpace(DestinationPath))
+        if (destinationPaths.Count == 0)
         {
             StatusMessage = "Choose a destination drive path before running synchronization.";
             return false;
         }
 
-        if (string.Equals(SourcePath, DestinationPath, StringComparison.OrdinalIgnoreCase))
+        if (destinationPaths.Any(destinationPath => string.Equals(SourcePath, destinationPath, StringComparison.OrdinalIgnoreCase)))
         {
-            StatusMessage = "Source and destination drive paths must be different.";
+            StatusMessage = destinationPaths.Count == 1
+                ? "Source and destination drive paths must be different."
+                : "Source and destination drive paths must all be different.";
+            return false;
+        }
+
+        if (destinationPaths.Count != destinationPaths.Distinct(StringComparer.OrdinalIgnoreCase).Count())
+        {
+            StatusMessage = "Destination drive paths must be unique.";
             return false;
         }
 
@@ -855,10 +1118,21 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             return false;
         }
 
-        if (requireAccessibleDestinationPath && !TryValidateSyncPath(DestinationPath, "Destination", requireExistingDirectory: false, out var destinationValidationMessage))
+        if (!requireAccessibleDestinationPath)
         {
-            StatusMessage = destinationValidationMessage;
-            return false;
+            return true;
+        }
+
+        for (var index = 0; index < destinationPaths.Count; index++)
+        {
+            var label = destinationPaths.Count == 1
+                ? "Destination"
+                : $"Destination {index + 1}";
+            if (!TryValidateSyncPath(destinationPaths[index], label, requireExistingDirectory: false, out var destinationValidationMessage))
+            {
+                StatusMessage = destinationValidationMessage;
+                return false;
+            }
         }
 
         return true;
@@ -946,7 +1220,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
             _isLoadingSavedConfiguration = true;
             SourcePath = savedConfiguration.SourcePath;
-            DestinationPath = savedConfiguration.DestinationPath;
+            LoadDestinationPaths(savedConfiguration.GetDestinationPaths());
             SelectedMode = savedConfiguration.Mode;
             DetectMoves = savedConfiguration.DetectMoves;
             DryRun = savedConfiguration.DryRun;
@@ -1116,67 +1390,88 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void ReplaceActions(IEnumerable<SyncAction> actions)
     {
-        PlannedActions.Clear();
-        foreach (var action in actions)
+        RunOnDispatcher(() =>
         {
-            PlannedActions.Add(action);
-        }
+            PlannedActions.Clear();
+            foreach (var action in actions)
+            {
+                PlannedActions.Add(action);
+            }
+        });
     }
 
     private void ReplacePreview(IEnumerable<SyncPreviewItem> items)
     {
-        foreach (var existingRow in _previewRowsByRelativePath.Values)
-        {
-            existingRow.PropertyChanged -= OnPreviewRowPropertyChanged;
-        }
+        var previewItems = items.ToList();
 
-        var rows = items.Select(item => new SyncPreviewRowViewModel(item)).ToList();
-        _previewRowsByRelativePath.Clear();
-        foreach (var row in rows)
+        RunOnDispatcher(() =>
         {
-            _previewRowsByRelativePath[row.RelativePath] = row;
-            row.PropertyChanged += OnPreviewRowPropertyChanged;
-        }
+            foreach (var existingRow in _previewRowsByItemKey.Values)
+            {
+                existingRow.PropertyChanged -= OnPreviewRowPropertyChanged;
+            }
 
-        ReplaceRows(NewFiles, rows.Where(row => row.Status == "New File"));
-        ReplaceRows(ChangedFiles, rows.Where(row => row.Category == SyncPreviewCategory.ChangedFiles));
-        ReplaceRows(DeletedFiles, rows.Where(row => row.Category == SyncPreviewCategory.DeletedFiles));
-        ReplaceRows(UnchangedFiles, rows.Where(row => row.Status == "Unchanged"));
-        ReplaceRows(AllFiles, rows);
-        RaisePropertyChanged(nameof(NewFilesCount));
-        RaisePropertyChanged(nameof(ChangedFilesCount));
-        RaisePropertyChanged(nameof(DeletedFilesCount));
-        RaisePropertyChanged(nameof(UnchangedFilesCount));
-        RaisePropertyChanged(nameof(AllFilesCount));
-        RaiseSelectionStateChanged();
+            var rows = previewItems
+                .Select(item => new SyncPreviewRowViewModel(item, driveDisplayNameService: _driveDisplayNameService))
+                .ToList();
+
+            rows = SortPreviewRows(rows);
+            _previewRowsByItemKey.Clear();
+            foreach (var row in rows)
+            {
+                _previewRowsByItemKey[row.ItemKey] = row;
+                row.PropertyChanged += OnPreviewRowPropertyChanged;
+            }
+
+            UpdateDriveLocationColumnVisibility(rows);
+
+            ReplaceRows(NewFiles, rows.Where(row => row.Status == "New File"));
+            ReplaceRows(ChangedFiles, rows.Where(row => row.Category == SyncPreviewCategory.ChangedFiles));
+            ReplaceRows(DeletedFiles, rows.Where(row => row.Category == SyncPreviewCategory.DeletedFiles));
+            ReplaceRows(UnchangedFiles, rows.Where(row => row.Status == "Unchanged"));
+            ReplaceRows(AllFiles, rows);
+            RaisePropertyChanged(nameof(NewFilesCount));
+            RaisePropertyChanged(nameof(ChangedFilesCount));
+            RaisePropertyChanged(nameof(DeletedFilesCount));
+            RaisePropertyChanged(nameof(UnchangedFilesCount));
+            RaisePropertyChanged(nameof(AllFilesCount));
+            RaiseSelectionStateChanged();
+        });
     }
 
     private void ReplaceQueue(IEnumerable<SyncAction> actions)
     {
-        RemainingQueue.Clear();
-        foreach (var action in actions)
-        {
-            RemainingQueue.Add(new QueueActionViewModel(action));
-        }
+        var queueActions = actions.ToList();
 
-        RaisePropertyChanged(nameof(QueueSummary));
+        RunOnDispatcher(() =>
+        {
+            RemainingQueue.Clear();
+            foreach (var action in queueActions)
+            {
+                RemainingQueue.Add(new QueueActionViewModel(action));
+            }
+
+            RaisePropertyChanged(nameof(QueueSummary));
+        });
     }
 
     private IReadOnlyList<SyncAction> GetSelectedActions()
     {
-        var selectedPaths = _previewRowsByRelativePath.Values
+        var selectedKeys = _previewRowsByItemKey.Values
             .Where(row => row.CanSelect && row.IsSelected)
-            .Select(row => row.RelativePath)
+            .Select(row => row.ItemKey)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         return PlannedActions
-            .Where(action => selectedPaths.Contains(action.RelativePath))
+            .Where(action => selectedKeys.Contains(action.GetActionKey()))
             .ToList();
     }
 
-    private bool? GetSelectionState(IEnumerable<SyncPreviewRowViewModel> rows)
+    private bool? GetSelectionState(PreviewTabKind tabKind)
     {
-        var selectableRows = rows.Where(row => row.CanSelect).ToList();
+        var selectableRows = GetVisibleRowsForTab(tabKind)
+            .Where(row => row.CanSelect)
+            .ToList();
         if (selectableRows.Count == 0)
         {
             return false;
@@ -1196,9 +1491,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         return null;
     }
 
-    private void SetSelection(IEnumerable<SyncPreviewRowViewModel> rows, bool? isSelected)
+    private void SetSelection(PreviewTabKind tabKind, bool? isSelected)
     {
-        UpdateSelectionForRows(rows, _ => isSelected ?? false);
+        UpdateSelectionForRows(GetVisibleRowsForTab(tabKind), _ => isSelected ?? false);
     }
 
     private void OnPreviewRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -1206,6 +1501,13 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         if (!_suppressSelectionUpdates && e.PropertyName == nameof(SyncPreviewRowViewModel.IsSelected))
         {
             UpdateSelectedQueue();
+            return;
+        }
+
+        if (_activePreviewFilters.Count > 0)
+        {
+            RefreshPreviewViews();
+            RaiseSelectionStateChanged();
         }
     }
 
@@ -1217,6 +1519,19 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         PreviewTabKind.UnchangedFiles => UnchangedFiles,
         _ => AllFiles,
     };
+
+    private IReadOnlyList<SyncPreviewRowViewModel> GetVisibleRowsForTab(PreviewTabKind tabKind)
+    {
+        if (_previewViews.TryGetValue(tabKind, out var view))
+        {
+            return view.Cast<SyncPreviewRowViewModel>().ToList();
+        }
+
+        return GetRowsForTab(tabKind);
+    }
+
+    private IEnumerable<SyncPreviewRowViewModel> GetRowsForFilterOptions(PreviewTabKind tabKind, PreviewColumnKey columnKey) =>
+        GetRowsForTab(tabKind).Where(row => MatchesActivePreviewFilters(row, columnKey));
 
     private void UpdateSelectionForRows(IEnumerable<SyncPreviewRowViewModel> rows, Func<SyncPreviewRowViewModel, bool> selectionFactory)
     {
@@ -1302,6 +1617,194 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         RaisePropertyChanged(nameof(AreAllFilesSelected));
     }
 
+    private ICollectionView CreatePreviewView(ObservableCollection<SyncPreviewRowViewModel> rows)
+    {
+        var view = CollectionViewSource.GetDefaultView(rows);
+        view.Filter = ShouldIncludePreviewRow;
+        return view;
+    }
+
+    private void RefreshPreviewViews()
+    {
+        foreach (var view in _previewViews.Values)
+        {
+            if (view is not DispatcherObject dispatcherObject || dispatcherObject.Dispatcher.CheckAccess())
+            {
+                view.Refresh();
+            }
+            else
+            {
+                dispatcherObject.Dispatcher.BeginInvoke(view.Refresh);
+            }
+        }
+    }
+
+    private IEnumerable<PreviewFilterOptionViewModel> GetShownPreviewFilterOptions() =>
+        PreviewFilterOptions.Where(ShouldIncludePreviewFilterOption);
+
+    private IEnumerable<PreviewFilterOptionViewModel> GetNonShownPreviewFilterOptions() =>
+        PreviewFilterOptions.Where(option => !ShouldIncludePreviewFilterOption(option));
+
+    private void ApplyPreviewSort()
+    {
+        ReplaceRows(NewFiles, SortPreviewRows(NewFiles));
+        ReplaceRows(ChangedFiles, SortPreviewRows(ChangedFiles));
+        ReplaceRows(DeletedFiles, SortPreviewRows(DeletedFiles));
+        ReplaceRows(UnchangedFiles, SortPreviewRows(UnchangedFiles));
+        ReplaceRows(AllFiles, SortPreviewRows(AllFiles));
+        RefreshPreviewViews();
+    }
+
+    private List<SyncPreviewRowViewModel> SortPreviewRows(IEnumerable<SyncPreviewRowViewModel> rows)
+    {
+        var rowList = rows.ToList();
+        if (!_activePreviewSortColumn.HasValue)
+        {
+            return rowList;
+        }
+
+        rowList.Sort(ComparePreviewRows);
+        return rowList;
+    }
+
+    private int ComparePreviewRows(SyncPreviewRowViewModel? left, SyncPreviewRowViewModel? right)
+    {
+        if (left is null && right is null)
+        {
+            return 0;
+        }
+
+        if (left is null)
+        {
+            return -1;
+        }
+
+        if (right is null)
+        {
+            return 1;
+        }
+
+        var column = _activePreviewSortColumn ?? PreviewColumnKey.SourceFile;
+        var result = column switch
+        {
+            PreviewColumnKey.SyncAction => CompareSyncActions(left, right),
+            PreviewColumnKey.SourceSize => Nullable.Compare(left.SourceSizeBytes, right.SourceSizeBytes),
+            PreviewColumnKey.DestinationSize => Nullable.Compare(left.DestinationSizeBytes, right.DestinationSizeBytes),
+            PreviewColumnKey.SourceModified => Nullable.Compare(left.SourceModifiedUtc, right.SourceModifiedUtc),
+            PreviewColumnKey.DestinationModified => Nullable.Compare(left.DestinationModifiedUtc, right.DestinationModifiedUtc),
+            _ => StringComparer.OrdinalIgnoreCase.Compare(GetPreviewColumnValue(left, column), GetPreviewColumnValue(right, column)),
+        };
+
+        if (result == 0)
+        {
+            result = StringComparer.OrdinalIgnoreCase.Compare(left.RelativePath, right.RelativePath);
+        }
+
+        return _activePreviewSortDirection == ListSortDirection.Ascending ? result : -result;
+    }
+
+    private static int CompareSyncActions(SyncPreviewRowViewModel left, SyncPreviewRowViewModel right)
+    {
+        var actionResult = StringComparer.OrdinalIgnoreCase.Compare(left.SyncActionDisplayText, right.SyncActionDisplayText);
+        if (actionResult != 0)
+        {
+            return actionResult;
+        }
+
+        var directionResult = StringComparer.OrdinalIgnoreCase.Compare(left.Direction, right.Direction);
+        if (directionResult != 0)
+        {
+            return directionResult;
+        }
+
+        return StringComparer.OrdinalIgnoreCase.Compare(left.Action, right.Action);
+    }
+
+    private void UpdateDriveLocationColumnVisibility(IReadOnlyCollection<SyncPreviewRowViewModel> rows)
+    {
+        var shouldShowDriveLocationColumn = rows
+            .Select(row => row.DriveLocation)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(2)
+            .Count() > 1;
+
+        if (IsDriveLocationColumnVisible == shouldShowDriveLocationColumn)
+        {
+            return;
+        }
+
+        IsDriveLocationColumnVisible = shouldShowDriveLocationColumn;
+
+        if (shouldShowDriveLocationColumn)
+        {
+            return;
+        }
+
+        _activePreviewFilters.Remove(PreviewColumnKey.DriveLocation);
+        if (_activePreviewFilterColumn == PreviewColumnKey.DriveLocation)
+        {
+            _activePreviewFilterColumn = null;
+            PreviewFilterOptions.Clear();
+            PreviewFilterSearchText = string.Empty;
+        }
+
+        RaisePropertyChanged(nameof(HasActivePreviewFilters));
+        RefreshPreviewViews();
+    }
+
+    private bool ShouldIncludePreviewRow(object item) =>
+        item is SyncPreviewRowViewModel row && MatchesActivePreviewFilters(row);
+
+    private bool MatchesActivePreviewFilters(SyncPreviewRowViewModel row, PreviewColumnKey? excludedColumn = null)
+    {
+        foreach (var filter in _activePreviewFilters)
+        {
+            if (excludedColumn.HasValue && filter.Key == excludedColumn.Value)
+            {
+                continue;
+            }
+
+            if (!filter.Value.Contains(GetPreviewColumnValue(row, filter.Key)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool ShouldIncludePreviewFilterOption(object item)
+    {
+        return item is PreviewFilterOptionViewModel option && ShouldIncludePreviewFilterOption(option);
+    }
+
+    private bool ShouldIncludePreviewFilterOption(PreviewFilterOptionViewModel option)
+    {
+        return string.IsNullOrWhiteSpace(PreviewFilterSearchText)
+            || option.Value.Contains(PreviewFilterSearchText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string GetPreviewColumnValue(SyncPreviewRowViewModel row, PreviewColumnKey columnKey) => NormalizePreviewFilterValue(columnKey switch
+    {
+        PreviewColumnKey.SourceFile => row.SourcePath,
+        PreviewColumnKey.SyncAction => row.SyncActionDisplayText,
+        PreviewColumnKey.TransferSpeed => row.TransferSpeedText,
+        PreviewColumnKey.DriveLocation => row.DriveLocation,
+        PreviewColumnKey.DestinationFile => row.DestinationPath,
+        PreviewColumnKey.FileType => row.FileType,
+        PreviewColumnKey.SourceSize => row.SourceSize,
+        PreviewColumnKey.DestinationSize => row.DestinationSize,
+        PreviewColumnKey.SourceModified => row.SourceModified,
+        PreviewColumnKey.DestinationModified => row.DestinationModified,
+        PreviewColumnKey.Status => row.Status,
+        PreviewColumnKey.Action => row.Action,
+        _ => string.Empty,
+    });
+
+    private static string NormalizePreviewFilterValue(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? "(blank)" : value.Trim();
+
     private void ReplaceRows(ObservableCollection<SyncPreviewRowViewModel> target, IEnumerable<SyncPreviewRowViewModel> rows)
     {
         target.Clear();
@@ -1313,47 +1816,76 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void UpdatePreviewRowProgress(string relativePath, double progressValue, long bytesTransferred)
     {
-        if (_previewRowsByRelativePath.TryGetValue(relativePath, out var row))
+        RunOnDispatcher(() =>
         {
-            if (progressValue >= 100)
+            if (_previewRowsByItemKey.TryGetValue(relativePath, out var row))
             {
-                row.MarkCompleted();
-                return;
-            }
+                if (progressValue >= 100)
+                {
+                    row.MarkCompleted();
+                    return;
+                }
 
-            row.MarkInProgress(progressValue, bytesTransferred, DateTime.UtcNow);
-        }
+                row.MarkInProgress(progressValue, bytesTransferred, DateTime.UtcNow);
+            }
+        });
     }
 
     private void MarkPreviewRowCompleted(string relativePath)
     {
-        if (_previewRowsByRelativePath.TryGetValue(relativePath, out var row))
+        RunOnDispatcher(() =>
         {
-            row.MarkCompleted();
-        }
+            if (_previewRowsByItemKey.TryGetValue(relativePath, out var row))
+            {
+                row.MarkCompleted();
+            }
+        });
     }
 
     private void PauseActivePreviewRows()
     {
-        foreach (var row in _previewRowsByRelativePath.Values)
+        RunOnDispatcher(() =>
         {
-            if (row.ProgressStateText == "Transferring")
+            foreach (var row in _previewRowsByItemKey.Values)
             {
-                row.MarkPaused();
+                if (row.ProgressStateText == "Transferring")
+                {
+                    row.MarkPaused();
+                }
             }
-        }
+        });
     }
 
     private void AddLog(string state, string message, SyncLogSeverity severity = SyncLogSeverity.Verbose)
     {
-        ActivityLog.Insert(0, new SyncLogEntryViewModel(state, message, severity));
-        const int maxLogEntries = 200;
-        while (ActivityLog.Count > maxLogEntries)
+        RunOnDispatcher(() =>
         {
-            ActivityLog.RemoveAt(ActivityLog.Count - 1);
+            ActivityLog.Insert(0, new SyncLogEntryViewModel(state, message, severity));
+            const int maxLogEntries = 200;
+            while (ActivityLog.Count > maxLogEntries)
+            {
+                ActivityLog.RemoveAt(ActivityLog.Count - 1);
+            }
+
+            RefreshActivityLogView();
+        });
+    }
+
+    private void RunOnDispatcher(Action action)
+    {
+        if (!_hasWpfApplication)
+        {
+            action();
+            return;
         }
 
-        RefreshActivityLogView();
+        if (_dispatcher.CheckAccess())
+        {
+            action();
+            return;
+        }
+
+        _dispatcher.Invoke(action);
     }
 
     private void SetActivityLogFilter(ActivityLogFilter filter)

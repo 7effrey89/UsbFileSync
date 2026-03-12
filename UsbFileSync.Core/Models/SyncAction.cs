@@ -5,4 +5,15 @@ public sealed record SyncAction(
     string RelativePath,
     string? SourceFullPath = null,
     string? DestinationFullPath = null,
-    string? PreviousRelativePath = null);
+    string? PreviousRelativePath = null)
+{
+    public string GetActionKey() =>
+        string.Join("|", new[]
+        {
+            Type.ToString(),
+            RelativePath,
+            SourceFullPath ?? string.Empty,
+            DestinationFullPath ?? string.Empty,
+            PreviousRelativePath ?? string.Empty,
+        });
+}

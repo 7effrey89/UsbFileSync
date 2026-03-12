@@ -56,8 +56,14 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
     private string _transferSpeedText;
     private DateTime? _transferStartedAtUtc;
 
-    public SyncPreviewRowViewModel(SyncPreviewItem item, IFileIconProvider? iconProvider = null)
+    public SyncPreviewRowViewModel(
+        SyncPreviewItem item,
+        IFileIconProvider? iconProvider = null,
+        IDriveDisplayNameService? driveDisplayNameService = null)
     {
+        var resolvedDriveDisplayNameService = driveDisplayNameService ?? new WindowsDriveDisplayNameService();
+
+        ItemKey = item.ItemKey;
         Name = GetDisplayPath(item);
         Category = item.Category;
         RelativePath = item.RelativePath;
@@ -67,11 +73,18 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
         IconGlyph = item.IsDirectory ? "\uE8B7" : "\uE8A5";
         SourcePath = item.SourceFullPath ?? string.Empty;
         SourceSize = item.IsDirectory ? "Folder" : FormatSize(item.SourceLength);
+        SourceSizeBytes = item.SourceLength;
         SourceModified = FormatTimestamp(item.SourceLastWriteTimeUtc);
+        SourceModifiedUtc = item.SourceLastWriteTimeUtc;
         Direction = item.Direction;
         DestinationPath = item.DestinationFullPath ?? string.Empty;
+        DriveLocation = string.IsNullOrWhiteSpace(item.DriveLocationPath)
+            ? string.Empty
+            : resolvedDriveDisplayNameService.FormatPathForDisplay(item.DriveLocationPath);
         DestinationSize = item.IsDirectory ? "Folder" : FormatSize(item.DestinationLength);
+        DestinationSizeBytes = item.DestinationLength;
         DestinationModified = FormatTimestamp(item.DestinationLastWriteTimeUtc);
+        DestinationModifiedUtc = item.DestinationLastWriteTimeUtc;
         Status = item.Status;
         _actionType = item.PlannedActionType;
         Action = item.PlannedActionType?.ToString() ?? "NoAction";
@@ -80,6 +93,8 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
         _progressState = _hasPlannedAction ? PreviewTransferState.Pending : PreviewTransferState.Completed;
         _transferSpeedText = _hasPlannedAction ? "Pending" : "On hold";
     }
+
+    public string ItemKey { get; }
 
     public string Name { get; }
 
@@ -121,17 +136,27 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
 
     public string SourceSize { get; }
 
+    public long? SourceSizeBytes { get; }
+
     public string SourceModified { get; }
+
+    public DateTime? SourceModifiedUtc { get; }
 
     public string Direction { get; }
 
     public string DestinationPath { get; }
 
+    public string DriveLocation { get; }
+
     public bool HasDestinationPath => !string.IsNullOrWhiteSpace(DestinationPath);
 
     public string DestinationSize { get; }
 
+    public long? DestinationSizeBytes { get; }
+
     public string DestinationModified { get; }
+
+    public DateTime? DestinationModifiedUtc { get; }
 
     public string Status { get; }
 

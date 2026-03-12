@@ -68,6 +68,27 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public void Save_ThenLoad_RoundTripsMultipleDestinationPaths()
+    {
+        Directory.CreateDirectory(_rootPath);
+        var settingsPath = Path.Combine(_rootPath, "settings.json");
+        var store = new JsonSyncSettingsStore(settingsPath);
+        var configuration = new SyncConfiguration
+        {
+            SourcePath = @"E:\MainDrive",
+            DestinationPath = @"F:\BackupDrive",
+            DestinationPaths = [@"F:\BackupDrive", @"G:\ArchiveDrive"],
+            Mode = SyncMode.OneWay,
+        };
+
+        store.Save(configuration);
+        var restored = store.Load();
+
+        Assert.NotNull(restored);
+        Assert.Equal([@"F:\BackupDrive", @"G:\ArchiveDrive"], restored.GetDestinationPaths());
+    }
+
+    [Fact]
     public void Load_ReturnsNull_WhenSettingsFileContainsInvalidJson()
     {
         Directory.CreateDirectory(_rootPath);

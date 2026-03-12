@@ -1,11 +1,12 @@
 # UsbFileSync
 
-UsbFileSync is a Windows desktop file synchronization tool built with WPF and .NET 8. It is designed for synchronizing a source location and a destination location with support for one-way and two-way sync, preview-first workflows, cancellation, and safe file copy behavior.
+UsbFileSync is a Windows desktop file synchronization tool built with WPF and .NET 8. It is designed for synchronizing a source location and one or more destination locations with support for one-way and two-way sync, preview-first workflows, cancellation, and safe file copy behavior.
 
 ## Current Capabilities
 
 - One-way synchronization from source to destination.
 - Two-way synchronization using last-write-time reconciliation.
+- Optional multiple destination paths so the same source can be synchronized to more than one destination in the same analyze/sync session.
 - Persistent `.sync-metadata/file-index.json` tracking shared across one-way and two-way sync sessions, including per-root IDs plus both `LastSyncedByRootId` and friendly `LastSyncedByRootName` metadata for debugging file ownership history.
 - Detection of new files, modified files, deleted files, renamed files, and empty directories.
 - Folder creation and folder deletion synchronization.
@@ -17,7 +18,7 @@ UsbFileSync is a Windows desktop file synchronization tool built with WPF and .N
 - Optional SHA-256 checksum validation for each copied file.
 - Configurable parallel file copy count, including `0` for adaptive auto parallelism.
 - Settings persistence between runs.
-- Browse buttons for selecting source and destination folders.
+- Browse buttons for selecting the source folder and one or more destination folders.
 - Read-only source and destination path fields that show Explorer-style drive names such as `XTIVIA (F:)` when unfocused, and the raw path when focused for easy copy/select behavior.
 - Custom application and window icon tailored to the sync workflow.
 - Windows shell file icons in the preview so items match Explorer more closely.
@@ -85,6 +86,7 @@ In one-way mode, the source location is treated as the source of truth.
 - Deleted files are removed from destination.
 - New folders are created on destination.
 - Missing folders on source are removed from destination when empty.
+- When multiple destinations are configured, the one-way planner queues the same source-driven changes separately for each destination.
 - Optional `Detect moves` support can turn a matching delete-plus-create pair into a rename or move on the destination instead of recopying the file. 
 Detect moves only affects one-way planning. When the option is enabled, the planner looks for a file that exists only on the source and a matching file that exists only on the destination with the same fingerprint, then turns that into a MoveOnDestination action. That means instead of “copy the new path and delete the old path”, it can do “rename/move the existing destination file”.
 
@@ -92,11 +94,12 @@ Detect moves only affects one-way planning. When the option is enabled, the plan
 
 ### Two-Way
 
-In two-way mode, both sides are compared.
+In two-way mode, the source and each configured destination are compared pair-by-pair.
 
 - New files can be copied in either direction.
 - Modified files are resolved by comparing last write times, with persisted `.sync-metadata` state used to distinguish true deletions from files that should not be resurrected on the next session.
 - New folders can be created on either side.
+- When multiple destinations are configured, each destination is analyzed and synchronized independently against the same source location during the same run.
 - `Detect moves` does not currently apply in two-way mode, so the checkbox is disabled in the UI when `TwoWay` is selected.
 
 ## Metadata Model
@@ -141,7 +144,7 @@ Example interpretation:
 
 The main window includes:
 
-- Source and destination path selection.
+- Source path selection plus add/remove controls for multiple destination paths.
 - Sync mode selection.
 - `Detect moves` and `Dry run` options with hover tooltips that explain their behavior.
 - Optional `Checksums` validation toggle with a tooltip describing the integrity/performance tradeoff.
@@ -150,7 +153,8 @@ The main window includes:
 - Filter tabs for `New Files`, `Changed`, `Deleted`, `Unchanged`, and `All`.
 - Shared selection checkboxes across filtered tabs, including select-all checkboxes in each preview header.
 - Edit menu actions for `Select All In Tab`, `Select By Pattern`, and `Invert Selection` against the active preview tab.
-- Action, status, sync action, transfer speed, source metadata, and destination metadata columns, with the same column set available across all preview tabs.
+- Action, status, sync action, transfer speed, drive location, source metadata, and destination metadata columns, with the same column set available across all preview tabs.
+- Excel-style column filter dropdowns on the preview table headers, with searchable value lists, sort controls, and bulk select or deselect actions for narrowing the current tab.
 - Source and destination paths stay underlined for clickability, and only the side that will be changed is color-highlighted in the preview.
 - The sync action column uses a directional chevron that fills as each item progresses, while the Action column keeps the raw function name for the planned operation.
 - Rounded progress bars remain in the remaining queue panel.

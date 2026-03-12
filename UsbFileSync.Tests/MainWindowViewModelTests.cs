@@ -1,6 +1,7 @@
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using DocumentFormat.OpenXml.Wordprocessing;
+using System.ComponentModel;
 using System.IO.Compression;
 using UsbFileSync.App.Services;
 using UsbFileSync.App.ViewModels;
@@ -51,6 +52,19 @@ public sealed class MainWindowViewModelTests
         viewModel.BrowseDestinationPathCommand.Execute(null);
 
         Assert.Equal("E:\\Backup", viewModel.DestinationPath);
+    }
+
+    [Fact]
+    public void BrowseDestinationPathCommand_UpdatesAdditionalDestination()
+    {
+        var folderPicker = new StubFolderPickerService("G:\\Archive");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: folderPicker);
+        viewModel.AddDestinationPathCommand.Execute(null);
+
+        var additionalDestination = Assert.Single(viewModel.AdditionalDestinationPaths);
+        viewModel.BrowseDestinationPathCommand.Execute(additionalDestination);
+
+        Assert.Equal("G:\\Archive", additionalDestination.Path);
     }
 
     [Fact]
@@ -186,6 +200,24 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public void LoadSavedConfiguration_RestoresAdditionalDestinationPaths()
+    {
+        var settingsStore = new StubSyncSettingsStore(new SyncConfiguration
+        {
+            SourcePath = "F:\\Primary",
+            DestinationPath = "E:\\Backup",
+            DestinationPaths = ["E:\\Backup", "G:\\Archive"],
+            Mode = SyncMode.OneWay,
+        });
+
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: settingsStore, folderPickerService: new StubFolderPickerService(null));
+
+        Assert.Equal("E:\\Backup", viewModel.DestinationPath);
+        Assert.Single(viewModel.AdditionalDestinationPaths);
+        Assert.Equal("G:\\Archive", viewModel.AdditionalDestinationPaths[0].Path);
+    }
+
+    [Fact]
     public void UpdateParallelCopyCount_AllowsAutoValue_AndLogsAutoMode()
     {
         using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null));
@@ -290,6 +322,8 @@ public sealed class MainWindowViewModelTests
         viewModel.AnalyzeCommand.Execute(null);
         await WaitForAsync(() => viewModel.NewFilesCount == 1 && viewModel.AllFilesCount == 1).ConfigureAwait(true);
 
+        Assert.False(viewModel.IsDriveLocationColumnVisible);
+
         var newRow = Assert.Single(viewModel.NewFiles);
         var allRow = Assert.Single(viewModel.AllFiles);
         Assert.False(newRow.IsSelected);
@@ -333,6 +367,189 @@ public sealed class MainWindowViewModelTests
 
         Assert.True(File.Exists(Path.Combine(workspace.DestinationPath, "one.txt")));
         Assert.False(File.Exists(Path.Combine(workspace.DestinationPath, "two.txt")));
+    }
+
+    [Fact]
+    public async Task AnalyzeAndSynchronize_ProcessesAdditionalDestinationsAsSeparatePreviewRows()
+    {
+        using var workspace = new SyncTestWorkspace();
+        var secondDestinationPath = workspace.CreateAdditionalDestination("destination-two");
+        workspace.WriteSourceFile("shared.txt", "payload");
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            driveDisplayNameService: new StubDriveDisplayNameService())
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+            DryRun = false,
+        };
+
+        viewModel.AddDestinationPathCommand.Execute(null);
+        var additionalDestination = Assert.Single(viewModel.AdditionalDestinationPaths);
+        additionalDestination.Path = secondDestinationPath;
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 2 && viewModel.AllFilesCount == 2).ConfigureAwait(true);
+
+        Assert.True(viewModel.IsDriveLocationColumnVisible);
+        Assert.Equal(2, viewModel.NewFiles.Select(row => row.DestinationPath).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.Contains(viewModel.NewFiles, row => row.DriveLocation == "Drive destination");
+        Assert.Contains(viewModel.NewFiles, row => row.DriveLocation == "Drive destination-two");
+
+        viewModel.AreAllNewFilesSelected = true;
+        viewModel.ToggleSyncCommand.Execute(null);
+        await WaitForAsync(() =>
+            File.Exists(Path.Combine(workspace.DestinationPath, "shared.txt")) &&
+            File.Exists(Path.Combine(secondDestinationPath, "shared.txt")) &&
+            !viewModel.IsSyncRunning).ConfigureAwait(true);
+
+        Assert.Equal("payload", await File.ReadAllTextAsync(Path.Combine(workspace.DestinationPath, "shared.txt")).ConfigureAwait(true));
+        Assert.Equal("payload", await File.ReadAllTextAsync(Path.Combine(secondDestinationPath, "shared.txt")).ConfigureAwait(true));
+    }
+
+    [Fact]
+    public async Task PreviewColumnFilter_BuildsDriveLocationOptions_AndTracksActiveFilterState()
+    {
+        using var workspace = new SyncTestWorkspace();
+        var secondDestinationPath = workspace.CreateAdditionalDestination("destination-two");
+        workspace.WriteSourceFile("shared.txt", "payload");
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            driveDisplayNameService: new StubDriveDisplayNameService())
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+            DryRun = false,
+        };
+
+        viewModel.AddDestinationPathCommand.Execute(null);
+        var additionalDestination = Assert.Single(viewModel.AdditionalDestinationPaths);
+        additionalDestination.Path = secondDestinationPath;
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 2).ConfigureAwait(true);
+
+        viewModel.OpenPreviewColumnFilter(
+            PreviewTabKind.NewFiles,
+            new PreviewColumnHeader { Title = "Drive location", ColumnKey = PreviewColumnKey.DriveLocation });
+        viewModel.SetAllVisiblePreviewFilterOptions(false);
+        Assert.Contains(viewModel.PreviewFilterOptions, option => option.Value == "Drive destination");
+        var secondDriveOption = Assert.Single(viewModel.PreviewFilterOptions.Where(option => option.Value == "Drive destination-two"));
+        secondDriveOption.IsSelected = true;
+
+        viewModel.ApplyActivePreviewColumnFilter();
+
+        Assert.True(viewModel.HasActivePreviewFilters);
+        Assert.False(viewModel.PreviewFilterOptions.First(option => option.Value == "Drive destination").IsSelected);
+        Assert.True(secondDriveOption.IsSelected);
+    }
+
+    [Fact]
+    public async Task ClearActivePreviewColumnFilter_ClearsActiveFilterState()
+    {
+        using var workspace = new SyncTestWorkspace();
+        var secondDestinationPath = workspace.CreateAdditionalDestination("destination-two");
+        workspace.WriteSourceFile("shared.txt", "payload");
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            driveDisplayNameService: new StubDriveDisplayNameService())
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+            DryRun = false,
+        };
+
+        viewModel.AddDestinationPathCommand.Execute(null);
+        var additionalDestination = Assert.Single(viewModel.AdditionalDestinationPaths);
+        additionalDestination.Path = secondDestinationPath;
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 2).ConfigureAwait(true);
+
+        viewModel.OpenPreviewColumnFilter(
+            PreviewTabKind.NewFiles,
+            new PreviewColumnHeader { Title = "Drive location", ColumnKey = PreviewColumnKey.DriveLocation });
+        viewModel.SetAllVisiblePreviewFilterOptions(false);
+        var secondDriveOption = Assert.Single(viewModel.PreviewFilterOptions.Where(option => option.Value == "Drive destination-two"));
+        secondDriveOption.IsSelected = true;
+        viewModel.ApplyActivePreviewColumnFilter();
+
+        viewModel.OpenPreviewColumnFilter(
+            PreviewTabKind.NewFiles,
+            new PreviewColumnHeader { Title = "Drive location", ColumnKey = PreviewColumnKey.DriveLocation });
+        viewModel.ClearActivePreviewColumnFilter();
+
+        Assert.False(viewModel.HasActivePreviewFilters);
+        Assert.All(viewModel.PreviewFilterOptions, option => Assert.True(option.IsSelected));
+    }
+
+    [Fact]
+    public async Task PreviewColumnFilter_DeselectNonShown_OnlyClearsFilteredOutOptions()
+    {
+        using var workspace = new SyncTestWorkspace();
+        var secondDestinationPath = workspace.CreateAdditionalDestination("destination-two");
+        workspace.WriteSourceFile("shared.txt", "payload");
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            driveDisplayNameService: new StubDriveDisplayNameService())
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+            DryRun = false,
+        };
+
+        viewModel.AddDestinationPathCommand.Execute(null);
+        var additionalDestination = Assert.Single(viewModel.AdditionalDestinationPaths);
+        additionalDestination.Path = secondDestinationPath;
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 2).ConfigureAwait(true);
+
+        viewModel.OpenPreviewColumnFilter(
+            PreviewTabKind.NewFiles,
+            new PreviewColumnHeader { Title = "Drive location", ColumnKey = PreviewColumnKey.DriveLocation });
+        viewModel.PreviewFilterSearchText = "two";
+
+        viewModel.SetAllNonShownPreviewFilterOptions(false);
+
+        Assert.True(viewModel.PreviewFilterOptions.Single(option => option.Value == "Drive destination-two").IsSelected);
+        Assert.False(viewModel.PreviewFilterOptions.Single(option => option.Value == "Drive destination").IsSelected);
+    }
+
+    [Fact]
+    public async Task SortActivePreviewColumn_SortsPreviewRowsBySourceFileDirection()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("b.txt", "two");
+        workspace.WriteSourceFile("a.txt", "one");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+            DryRun = false,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 2).ConfigureAwait(true);
+
+        viewModel.OpenPreviewColumnFilter(
+            PreviewTabKind.NewFiles,
+            new PreviewColumnHeader { Title = "Source File", ColumnKey = PreviewColumnKey.SourceFile });
+        viewModel.SortActivePreviewColumn(ListSortDirection.Ascending);
+        Assert.Equal("a.txt", viewModel.NewFiles[0].RelativePath);
+        Assert.Equal("b.txt", viewModel.NewFiles[1].RelativePath);
+
+        viewModel.SortActivePreviewColumn(ListSortDirection.Descending);
+        Assert.Equal("b.txt", viewModel.NewFiles[0].RelativePath);
+        Assert.Equal("a.txt", viewModel.NewFiles[1].RelativePath);
     }
 
     [Fact]
@@ -1256,6 +1473,8 @@ public sealed class MainWindowViewModelTests
         {
             "F:\\" => "XTIVIA (F:)",
             "D:\\" => "Backup Drive (D:)",
+            var drivePath when drivePath.EndsWith("destination", StringComparison.OrdinalIgnoreCase) => $"Drive {Path.GetFileName(drivePath)}",
+            var drivePath when drivePath.EndsWith("destination-two", StringComparison.OrdinalIgnoreCase) => $"Drive {Path.GetFileName(drivePath)}",
             _ => path,
         };
     }
@@ -1306,6 +1525,13 @@ public sealed class MainWindowViewModelTests
             var fullPath = Path.Combine(SourcePath, relativePath);
             Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
             File.WriteAllText(fullPath, contents);
+        }
+
+        public string CreateAdditionalDestination(string name)
+        {
+            var path = Path.Combine(_rootPath, name);
+            Directory.CreateDirectory(path);
+            return path;
         }
 
         public void Dispose()
