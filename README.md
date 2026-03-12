@@ -30,7 +30,7 @@ UsbFileSync is a Windows desktop file synchronization tool built with WPF and .N
 
 ### Comparison Preview Modes
 
-Every file type in the comparison dialog has a **Previewer** dropdown at the top-right corner of each pane. The built-in viewer for that file type is selected by default. A **Shell Preview** alternative is shown only when a Windows Shell preview handler is registered on the system for that file type.
+Every supported file type in the comparison dialog has a **Previewer** dropdown at the top-right corner of each pane. The default selection depends on the file type, and additional modes appear when they are supported for that format.
 
 | File type | Default mode | Description |
 |---|---|---|
@@ -38,8 +38,9 @@ Every file type in the comparison dialog has a **Previewer** dropdown at the top
 | **Image** | Image Viewer | Renders the image with zoom in/out support. |
 | **PDF** | PDF Viewer | Displays the PDF using an embedded WebView2 control. |
 | **Media** | Media Player | Plays the audio or video file with play/pause/stop controls. |
+| **Office** | Shell Preview when available, otherwise Open XML | Uses the Windows Shell preview handler when installed; otherwise falls back to built-in text extraction, with Office Interop also available when Microsoft Office is installed. |
 
-All four types above also offer **Shell Preview** as a second option when a Windows Shell preview handler is registered for that file type. When selected, the pane loads the same preview you see in File Explorer's preview pane. If no handler is registered, the option is hidden from the dropdown.
+Text, image, PDF, and media files offer **Shell Preview** as a second option when a Windows Shell preview handler is registered for that file type. When selected, the pane loads the same preview you see in File Explorer's preview pane. If no handler is registered, the option is hidden from the dropdown.
 
 ### Office Document Preview Modes
 
