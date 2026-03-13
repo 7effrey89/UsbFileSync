@@ -8,9 +8,9 @@ UsbFileSync now routes sync IO through a volume abstraction instead of assuming 
 
 - **Windows mounted volumes** (`WindowsMountedVolume`): read/write using normal `System.IO` paths.
 - **Linux ext volumes** (`ExtVolumeSource`): read/write through the same sync engine abstraction, so ext-backed sources and destinations can participate in copy, overwrite, delete, directory creation, and metadata updates.
-- **macOS APFS and HFS+ volumes**: **read-only by design**. On Windows, UsbFileSync can probe drive roots such as `D:\` as macOS-formatted sources. APFS volumes are read through the bundled Paragon `apfsutil` helper, and HFS+ (`Mac OS Extended (Journaled)`) volumes are read through an embedded DiscUtils HFS+ backend. Any write attempt against a macOS volume target is still rejected before the sync can modify the volume.
+- **macOS HFS+ volumes**: **read-only by design**. On Windows, UsbFileSync can probe drive roots such as `D:\` as HFS+ (`Mac OS Extended (Journaled)`) sources through an embedded DiscUtils HFS+ backend. Any write attempt against an HFS+ target is still rejected before the sync can modify the volume.
 
-The macOS backends intentionally enforce read-only behavior so the application does not expose unsupported write-back flows. The source-side browse flow also uses a shell-free drive picker so selecting an unreadable macOS/removable drive does not invoke the standard Windows folder browser and its format-disk prompt first.
+The HFS+ backend intentionally enforces read-only behavior so the application does not expose unsupported write-back flows. The source-side browse flow also uses a shell-free drive picker so selecting an unreadable macOS/removable drive does not invoke the standard Windows folder browser and its format-disk prompt first.
 
 ## Current Capabilities
 
@@ -28,7 +28,7 @@ The macOS backends intentionally enforce read-only behavior so the application d
 - Optional SHA-256 checksum validation for each copied file.
 - Configurable parallel file copy count, including `0` for adaptive auto parallelism.
 - Settings persistence between runs.
-- Browse buttons for selecting the source folder/drive and one or more destination folders. The source picker lists drive roots directly before falling back to a normal folder browser.
+- Browse buttons for selecting the source folder/drive and one or more destination folders. The source picker now uses a custom browser that can navigate normal Windows folders and HFS+ source folders from one UI.
 - Read-only source and destination path fields that show Explorer-style drive names such as `XTIVIA (F:)` when unfocused, and the raw path when focused for easy copy/select behavior.
 - Custom application and window icon tailored to the sync workflow.
 - Windows shell file icons in the preview so items match Explorer more closely.
@@ -181,6 +181,7 @@ The settings dialog currently supports:
 
 - `Parallel copies`: number of file copy operations allowed to run at the same time.
 - `0` enables auto mode, which estimates a starting parallelism and adjusts it during the copy batch.
+- `Hide macOS system files in HFS+ preview and sync planning`: filters common filesystem metadata such as `.Spotlight-V100`, `.fseventsd`, `.journal`, and `HFS+ Private Data` out of the HFS+ sync view.
 
 The main sync settings area also supports:
 
@@ -234,9 +235,8 @@ The solution includes automated coverage for:
 - Cancellation is safe, but it is not a true resume system. Restarting synchronization re-analyzes the file set and starts the interrupted file from the beginning.
 - One-way and two-way sync both persist pairwise metadata inside `.sync-metadata`, but two-way conflict resolution still falls back to last write times when both sides changed the same file between sync sessions.
 - The app is currently Windows-only.
-- APFS and HFS+ volumes are intentionally treated as read-only targets and will throw a read-only volume error if selected as a write destination.
-- APFS source access depends on a working Paragon `apfsutil.exe` build. UsbFileSync looks first for the `USBFILESYNC_APFSUTIL_PATH` environment variable and otherwise uses the repo build output under `vendor/paragon_apfs_sdk_ce/.build/bin/RelWithDebInfo/apfsutil.exe` when present.
-- If neither backend can open the selected drive, analyze/sync will stop with the combined macOS-volume error. UsbFileSync does not bypass filesystem-consistency or media-level failures reported by the APFS helper or low-level HFS+ read failures.
+- HFS+ volumes are intentionally treated as read-only targets and will throw a read-only volume error if selected as a write destination.
+- If the HFS+ backend cannot open the selected drive, analyze and sync will stop with the HFS+ volume error reported by the app.
 
 ## Development Notes
 

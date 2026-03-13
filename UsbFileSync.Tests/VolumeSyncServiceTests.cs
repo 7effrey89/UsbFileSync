@@ -44,13 +44,13 @@ public sealed class VolumeSyncServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteAsync_CopiesFromReadOnlyApfsSourceWithoutWritingMetadataToSource()
+    public async Task ExecuteAsync_CopiesFromReadOnlyMacSourceWithoutWritingMetadataToSource()
     {
-        var sourceBackingPath = CreateDirectory("apfs-source");
+        var sourceBackingPath = CreateDirectory("hfs-source");
         var destinationBackingPath = CreateDirectory("windows-destination");
         WriteFile(sourceBackingPath, "album/song.txt", "music", new DateTime(2024, 5, 2, 0, 0, 0, DateTimeKind.Utc));
 
-        var sourceVolume = new ApfsVolumeSource("mac-usb", "APFS USB", sourceBackingPath);
+        var sourceVolume = new ReadOnlyMacVolumeSource("mac-usb", "Mac USB", sourceBackingPath);
         var destinationVolume = new WindowsMountedVolume(destinationBackingPath);
         var service = new SyncService();
 
@@ -70,14 +70,14 @@ public sealed class VolumeSyncServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteAsync_RejectsReadOnlyApfsDestination()
+    public async Task ExecuteAsync_RejectsReadOnlyMacDestination()
     {
         var sourceBackingPath = CreateDirectory("windows-source");
-        var destinationBackingPath = CreateDirectory("apfs-destination");
+        var destinationBackingPath = CreateDirectory("hfs-destination");
         WriteFile(sourceBackingPath, "photo.jpg", "image", new DateTime(2024, 5, 3, 0, 0, 0, DateTimeKind.Utc));
 
         var sourceVolume = new WindowsMountedVolume(sourceBackingPath);
-        var destinationVolume = new ApfsVolumeSource("mac-destination", "APFS Backup", destinationBackingPath);
+        var destinationVolume = new ReadOnlyMacVolumeSource("mac-destination", "Mac Backup", destinationBackingPath);
         var service = new SyncService();
 
         await Assert.ThrowsAsync<ReadOnlyVolumeException>(() => service.ExecuteAsync(new SyncConfiguration
@@ -117,5 +117,20 @@ public sealed class VolumeSyncServiceTests : IDisposable
 
         File.WriteAllText(fullPath, contents);
         File.SetLastWriteTimeUtc(fullPath, lastWriteTimeUtc);
+    }
+
+    private sealed class ReadOnlyMacVolumeSource : DirectoryBackedVolumeSource
+    {
+        public ReadOnlyMacVolumeSource(string id, string displayName, string backingRoot, string? root = null)
+            : base(
+                id,
+                displayName,
+                fileSystemType: "HFS+",
+                isReadOnly: true,
+                root: string.IsNullOrWhiteSpace(root) ? $"hfs://{id}" : root,
+                backingRoot,
+                useWindowsDisplayPaths: false)
+        {
+        }
     }
 }

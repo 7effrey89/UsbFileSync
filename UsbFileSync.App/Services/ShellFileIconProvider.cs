@@ -35,6 +35,16 @@ public sealed class ShellFileIconProvider : IFileIconProvider
         return _cache.GetOrAdd(cacheKey, _ => ExtractIcon(path, isDirectory));
     }
 
+    public ImageSource? GetDriveIcon(string rootPath)
+    {
+        var normalizedRootPath = string.IsNullOrWhiteSpace(rootPath)
+            ? "__drive"
+            : Path.GetPathRoot(rootPath) ?? rootPath;
+
+        var cacheKey = $"__drive::{normalizedRootPath}";
+        return _cache.GetOrAdd(cacheKey, _ => ExtractDriveIcon(normalizedRootPath) ?? ExtractIcon(rootPath, isDirectory: true));
+    }
+
     private static ImageSource? ExtractIcon(string path, bool isDirectory)
     {
         var attributes = isDirectory ? FileAttributeDirectory : FileAttributeNormal;
@@ -44,7 +54,7 @@ public sealed class ShellFileIconProvider : IFileIconProvider
         if (isDirectory)
         {
             flags |= ShgfiUseFileAttributes;
-            lookupPath = string.IsNullOrWhiteSpace(path) ? "folder" : path;
+            lookupPath = "folder";
         }
         else if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
         {
@@ -59,6 +69,28 @@ public sealed class ShellFileIconProvider : IFileIconProvider
 
         var fileInfo = new SHFILEINFO();
         var result = SHGetFileInfo(lookupPath, attributes, ref fileInfo, (uint)Marshal.SizeOf<SHFILEINFO>(), flags);
+        if (result == IntPtr.Zero || fileInfo.hIcon == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        try
+        {
+            var bitmapSource = Imaging.CreateBitmapSourceFromHIcon(fileInfo.hIcon, Int32Rect.Empty, BitmapSizeOptions.FromWidthAndHeight(16, 16));
+            bitmapSource.Freeze();
+            return bitmapSource;
+        }
+        finally
+        {
+            DestroyIcon(fileInfo.hIcon);
+        }
+    }
+
+    private static ImageSource? ExtractDriveIcon(string rootPath)
+    {
+        var fileInfo = new SHFILEINFO();
+        var lookupPath = string.IsNullOrWhiteSpace(rootPath) ? "C:\\" : rootPath;
+        var result = SHGetFileInfo(lookupPath, 0, ref fileInfo, (uint)Marshal.SizeOf<SHFILEINFO>(), ShgfiIcon | ShgfiSmallIcon);
         if (result == IntPtr.Zero || fileInfo.hIcon == IntPtr.Zero)
         {
             return null;

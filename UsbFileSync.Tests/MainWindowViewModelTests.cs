@@ -69,18 +69,18 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
-    public async Task ToggleSyncCommand_CopiesFilesFromResolvedApfsSourceVolume()
+    public async Task ToggleSyncCommand_CopiesFilesFromResolvedHfsPlusSourceVolume()
     {
         using var workspace = new SyncTestWorkspace();
-        using var apfsWorkspace = new SyncTestWorkspace();
-        apfsWorkspace.WriteSourceFile("song.txt", "music");
+        using var hfsWorkspace = new SyncTestWorkspace();
+        hfsWorkspace.WriteSourceFile("song.txt", "music");
 
-        var apfsSourceVolume = new StubVolumeSource("D:\\", apfsWorkspace.SourcePath, isReadOnly: true, fileSystemType: "APFS");
+        var hfsSourceVolume = new StubVolumeSource("D:\\", hfsWorkspace.SourcePath, isReadOnly: true, fileSystemType: "HFS+");
         using var viewModel = new MainWindowViewModel(
             new SyncService(),
             settingsStore: null,
             folderPickerService: new StubFolderPickerService(null),
-            sourceVolumeService: new StubSourceVolumeService(apfsSourceVolume))
+            sourceVolumeService: new StubSourceVolumeService(hfsSourceVolume))
         {
             SourcePath = "D:\\",
             DestinationPath = workspace.DestinationPath,
@@ -99,14 +99,14 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
-    public void ToggleSyncCommand_ShowsApfsValidationError_WhenApfsHelperCannotOpenDrive()
+    public void ToggleSyncCommand_ShowsHfsPlusValidationError_WhenHfsVolumeCannotOpenDrive()
     {
         using var workspace = new SyncTestWorkspace();
         using var viewModel = new MainWindowViewModel(
             new SyncService(),
             settingsStore: null,
             folderPickerService: new StubFolderPickerService(null),
-            sourceVolumeService: new StubSourceVolumeService(null, "The Paragon APFS helper reported an inconsistent file system."))
+            sourceVolumeService: new StubSourceVolumeService(null, "The selected drive 'D:\\' does not appear to contain an HFS+ volume."))
         {
             SourcePath = "D:\\",
             DestinationPath = workspace.DestinationPath,
@@ -115,7 +115,7 @@ public sealed class MainWindowViewModelTests
 
         viewModel.ToggleSyncCommand.Execute(null);
 
-        Assert.Equal("Source macOS volume could not be opened. The Paragon APFS helper reported an inconsistent file system.", viewModel.StatusMessage);
+        Assert.Equal("Source macOS volume could not be opened. The selected drive 'D:\\' does not appear to contain an HFS+ volume.", viewModel.StatusMessage);
         Assert.False(viewModel.IsSyncRunning);
     }
 

@@ -22,7 +22,7 @@ public sealed class VolumePathTests
     [InlineData("D:\\Backup", true)]
     [InlineData("\\\\server\\share", true)]
     [InlineData("ext4://disk1", false)]
-    [InlineData("apfs://disk2", false)]
+    [InlineData("hfs://disk2", false)]
     public void LooksLikeWindowsPath_DetectsExpectedFormats(string path, bool expected)
     {
         Assert.Equal(expected, VolumePath.LooksLikeWindowsPath(path));

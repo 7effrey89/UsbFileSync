@@ -32,12 +32,11 @@
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
     <Compile Remove="ImagePreviewZoomCalculatorTests.cs" />
-    <Compile Remove="MacVolumeServiceTests.cs" />
     <Compile Remove="MainWindowViewModelTests.cs" />
-    <Compile Remove="ParagonApfsVolumeServiceTests.cs" />
     <Compile Remove="QueueActionViewModelTests.cs" />
     <Compile Remove="SettingsDialogTests.cs" />
     <Compile Remove="SyncPreviewRowViewModelTests.cs" />
+    <Compile Remove="UniversalSourceLocationPickerDialogTests.cs" />
   </ItemGroup>
 
 </Project>

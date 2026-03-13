@@ -13,18 +13,40 @@ public sealed class HfsPlusVolumeService : ISourceVolumeService
         volume = null;
         failureReason = null;
 
-        if (!OperatingSystem.IsWindows() || !LooksLikeDriveRoot(path))
+        if (!OperatingSystem.IsWindows() || string.IsNullOrWhiteSpace(path))
         {
             return false;
         }
 
-        var normalizedRootPath = NormalizeRootPath(path);
+        string normalizedFullPath;
+        string normalizedRootPath;
+        string relativeDirectoryPath;
+        try
+        {
+            normalizedFullPath = Path.GetFullPath(path);
+            normalizedRootPath = NormalizeRootPath(path);
+            relativeDirectoryPath = NormalizeRelativeDirectoryPath(normalizedFullPath, normalizedRootPath);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+
         try
         {
             using var stream = OpenRawVolumeStream(normalizedRootPath);
             using var fileSystem = new HfsPlusFileSystem(stream);
-            _ = fileSystem.GetFileSystemEntries(string.Empty);
-            volume = new HfsPlusVolumeSource(normalizedRootPath);
+            var internalRelativeDirectoryPath = ToInternalPath(relativeDirectoryPath);
+            if (!string.IsNullOrEmpty(internalRelativeDirectoryPath) && !fileSystem.DirectoryExists(internalRelativeDirectoryPath))
+            {
+                failureReason = $"The selected HFS+ folder '{normalizedFullPath}' does not exist.";
+                return false;
+            }
+
+            var rootVolume = new HfsPlusVolumeSource(normalizedRootPath);
+            volume = string.IsNullOrEmpty(relativeDirectoryPath)
+                ? rootVolume
+                : new SubdirectoryVolumeSource(rootVolume, relativeDirectoryPath);
             return true;
         }
         catch (FileNotFoundException)
@@ -61,30 +83,17 @@ public sealed class HfsPlusVolumeService : ISourceVolumeService
     private static string BuildUnsupportedMessage(string path) =>
         $"The selected drive '{path}' does not appear to contain an HFS+ volume.";
 
-    private static bool LooksLikeDriveRoot(string path)
+    private static string NormalizeRelativeDirectoryPath(string fullPath, string rootPath)
     {
-        if (string.IsNullOrWhiteSpace(path))
+        if (string.Equals(fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), rootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
         {
-            return false;
+            return string.Empty;
         }
 
-        try
-        {
-            var rootPath = Path.GetPathRoot(path);
-            if (string.IsNullOrWhiteSpace(rootPath))
-            {
-                return false;
-            }
-
-            return string.Equals(
-                NormalizeRootPath(path),
-                NormalizeRootPath(rootPath),
-                StringComparison.OrdinalIgnoreCase);
-        }
-        catch (Exception)
-        {
-            return false;
-        }
+        return fullPath[rootPath.Length..]
+            .Replace(Path.DirectorySeparatorChar, '/')
+            .Replace(Path.AltDirectorySeparatorChar, '/')
+            .Trim('/');
     }
 
     private static string NormalizeRootPath(string path)
@@ -100,6 +109,21 @@ public sealed class HfsPlusVolumeService : ISourceVolumeService
     {
         var devicePath = $@"\\.\{rootPath.TrimEnd(Path.DirectorySeparatorChar)}";
         return new FileStream(devicePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+    }
+
+    private static string ToInternalPath(string? relativePath) =>
+        NormalizeRelativePath(relativePath).Replace('/', '\\');
+
+    private static string NormalizeRelativePath(string? relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+        {
+            return string.Empty;
+        }
+
+        return relativePath
+            .Replace('\\', '/')
+            .Trim('/');
     }
 
     private sealed class HfsPlusVolumeSource(string deviceRootPath) : IVolumeSource
@@ -266,9 +290,6 @@ public sealed class HfsPlusVolumeService : ISourceVolumeService
                 ? normalizedParent
                 : normalizedParent + "/" + normalizedEntryPath;
         }
-
-        private static string ToInternalPath(string? relativePath) =>
-            NormalizeRelativePath(relativePath).Replace('/', '\\');
 
         private static string NormalizeRelativePath(string? relativePath)
         {

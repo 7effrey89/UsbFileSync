@@ -79,7 +79,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _suppressSelectionUpdates;
 
     public MainWindowViewModel()
-        : this(new SyncService(), CreateDefaultSettingsStore(), new WindowsFolderPickerService(), new WindowsFileLauncherService(), new WindowsDriveDisplayNameService(), new MacVolumeService())
+        : this(new SyncService(), CreateDefaultSettingsStore(), new WindowsFolderPickerService(), new WindowsFileLauncherService(), new WindowsDriveDisplayNameService(), new HfsPlusVolumeService())
     {
     }
 
@@ -94,7 +94,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _syncService = syncService;
         _settingsStore = settingsStore;
         _folderPickerService = folderPickerService ?? new WindowsFolderPickerService();
-        _sourceVolumeService = sourceVolumeService ?? new MacVolumeService();
+        _sourceVolumeService = sourceVolumeService ?? new HfsPlusVolumeService();
         _fileLauncherService = fileLauncherService ?? new WindowsFileLauncherService();
         _driveDisplayNameService = driveDisplayNameService ?? new WindowsDriveDisplayNameService();
         _dispatcher = Dispatcher.CurrentDispatcher;
@@ -532,7 +532,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void BrowseSourcePath()
     {
-        var selectedPath = WindowsSourceLocationPickerService.PickSourceLocation(SourcePath, _folderPickerService);
+        var selectedPath = WindowsSourceLocationPickerService.PickSourceLocation(SourcePath, _folderPickerService, _sourceVolumeService);
         if (!string.IsNullOrWhiteSpace(selectedPath))
         {
             SourcePath = selectedPath;
