@@ -25,7 +25,7 @@ public partial class MainWindow : Window
 
     private void OnOpenSettingsClicked(object sender, RoutedEventArgs e)
     {
-        var dialog = new SettingsDialog(_viewModel.ParallelCopyCount, _viewModel.GetPreviewProviderMappings())
+        var dialog = new SettingsDialog(_viewModel.ParallelCopyCount, _viewModel.HideMacOsSystemFiles, _viewModel.GetPreviewProviderMappings())
         {
             Owner = this,
         };
@@ -33,6 +33,7 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() == true)
         {
             _viewModel.UpdateParallelCopyCount(dialog.ParallelCopyCount);
+            _viewModel.UpdateHideMacOsSystemFiles(dialog.HideMacOsSystemFiles);
             _viewModel.UpdatePreviewProviderMappings(dialog.PreviewProviderMappings);
         }
     }

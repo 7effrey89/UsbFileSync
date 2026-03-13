@@ -9,6 +9,7 @@ using UsbFileSync.App.Commands;
 using UsbFileSync.App.Services;
 using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Services;
+using UsbFileSync.Core.Volumes;
 
 namespace UsbFileSync.App.ViewModels;
 
@@ -35,6 +36,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private readonly SyncService _syncService;
     private readonly ISyncSettingsStore? _settingsStore;
     private readonly IFolderPickerService _folderPickerService;
+    private readonly ISourceVolumeService _sourceVolumeService;
     private readonly IFileLauncherService _fileLauncherService;
     private readonly IDriveDisplayNameService _driveDisplayNameService;
     private readonly Dispatcher _dispatcher;
@@ -57,6 +59,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _detectMoves = true;
     private bool _dryRun = true;
     private bool _verifyChecksums;
+    private bool _hideMacOsSystemFiles = true;
     private Dictionary<string, string> _previewProviderMappings = PreviewProviderDefaults.CreateSerializableMapping();
     private bool _isBusy;
     private bool _isSyncRunning;
@@ -76,7 +79,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _suppressSelectionUpdates;
 
     public MainWindowViewModel()
-        : this(new SyncService(), CreateDefaultSettingsStore(), new WindowsFolderPickerService(), new WindowsFileLauncherService(), new WindowsDriveDisplayNameService())
+        : this(new SyncService(), CreateDefaultSettingsStore(), new WindowsFolderPickerService(), new WindowsFileLauncherService(), new WindowsDriveDisplayNameService(), new MacVolumeService())
     {
     }
 
@@ -85,11 +88,13 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ISyncSettingsStore? settingsStore = null,
         IFolderPickerService? folderPickerService = null,
         IFileLauncherService? fileLauncherService = null,
-        IDriveDisplayNameService? driveDisplayNameService = null)
+        IDriveDisplayNameService? driveDisplayNameService = null,
+        ISourceVolumeService? sourceVolumeService = null)
     {
         _syncService = syncService;
         _settingsStore = settingsStore;
         _folderPickerService = folderPickerService ?? new WindowsFolderPickerService();
+        _sourceVolumeService = sourceVolumeService ?? new MacVolumeService();
         _fileLauncherService = fileLauncherService ?? new WindowsFileLauncherService();
         _driveDisplayNameService = driveDisplayNameService ?? new WindowsDriveDisplayNameService();
         _dispatcher = Dispatcher.CurrentDispatcher;
@@ -371,6 +376,18 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    public bool HideMacOsSystemFiles
+    {
+        get => _hideMacOsSystemFiles;
+        set
+        {
+            if (SetProperty(ref _hideMacOsSystemFiles, value))
+            {
+                HandleConfigurationChanged();
+            }
+        }
+    }
+
     public bool IsBusy
     {
         get => _isBusy;
@@ -515,7 +532,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void BrowseSourcePath()
     {
-        var selectedPath = _folderPickerService.PickFolder("Select the source drive or folder", SourcePath);
+        var selectedPath = WindowsSourceLocationPickerService.PickSourceLocation(SourcePath, _folderPickerService);
         if (!string.IsNullOrWhiteSpace(selectedPath))
         {
             SourcePath = selectedPath;
@@ -644,12 +661,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private SyncConfiguration CreateConfiguration() => new()
     {
         SourcePath = SourcePath,
+        SourceVolume = ResolveSourceVolume(),
         DestinationPath = DestinationPath,
         DestinationPaths = GetDestinationPaths().ToList(),
         Mode = SelectedMode,
         DetectMoves = DetectMoves,
         DryRun = DryRun,
         VerifyChecksums = VerifyChecksums,
+        HideMacOsSystemFiles = HideMacOsSystemFiles,
         ParallelCopyCount = ParallelCopyCount,
         PreviewProviderMappings = new Dictionary<string, string>(_previewProviderMappings, StringComparer.OrdinalIgnoreCase),
     };
@@ -670,6 +689,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _previewProviderMappings = new Dictionary<string, string>(mappings, StringComparer.OrdinalIgnoreCase);
         HandleConfigurationChanged();
         AddLog("Settings", $"Preview provider mappings updated for {_previewProviderMappings.Count} file extensions.");
+    }
+
+    public void UpdateHideMacOsSystemFiles(bool hideMacOsSystemFiles)
+    {
+        HideMacOsSystemFiles = hideMacOsSystemFiles;
+        AddLog("Settings", HideMacOsSystemFiles
+            ? "HFS+ macOS system files will be hidden from preview and sync."
+            : "HFS+ macOS system files will be shown in preview and included in sync planning.");
     }
 
     public void SelectAllInTab(PreviewTabKind tabKind)
@@ -1138,7 +1165,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         return true;
     }
 
-    private static bool TryValidateSyncPath(string path, string label, bool requireExistingDirectory, out string validationMessage)
+    private static bool TryValidateSyncPathCore(string path, string label, bool requireExistingDirectory, out string validationMessage)
     {
         try
         {
@@ -1164,6 +1191,55 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             validationMessage = $"{label} path is invalid.";
             return false;
         }
+    }
+
+    private IVolumeSource? ResolveSourceVolume()
+    {
+        return _sourceVolumeService.TryCreateVolume(SourcePath, out var volume, out _)
+            ? volume
+            : null;
+    }
+
+    private bool TryValidateSyncPath(string path, string label, bool requireExistingDirectory, out string validationMessage)
+    {
+        if (!string.Equals(label, "Source", StringComparison.OrdinalIgnoreCase) || !requireExistingDirectory)
+        {
+            return TryValidateSyncPathCore(path, label, requireExistingDirectory, out validationMessage);
+        }
+
+        try
+        {
+            var fullPath = Path.GetFullPath(path);
+            if (Directory.Exists(fullPath))
+            {
+                validationMessage = string.Empty;
+                return true;
+            }
+        }
+        catch (Exception) when (path is not null)
+        {
+            if (_sourceVolumeService.TryCreateVolume(path, out _, out var sourceFailureReason))
+            {
+                validationMessage = string.Empty;
+                return true;
+            }
+
+            validationMessage = string.IsNullOrWhiteSpace(sourceFailureReason)
+                ? $"{label} path is invalid."
+                : $"{label} macOS volume could not be opened. {sourceFailureReason}";
+            return false;
+        }
+
+        if (_sourceVolumeService.TryCreateVolume(path, out _, out var failureReason))
+        {
+            validationMessage = string.Empty;
+            return true;
+        }
+
+        validationMessage = string.IsNullOrWhiteSpace(failureReason)
+            ? $"{label} path does not exist."
+            : $"{label} macOS volume could not be opened. {failureReason}";
+        return false;
     }
 
     private static bool HasAccessibleExistingAncestor(string fullPath)
@@ -1225,6 +1301,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             DetectMoves = savedConfiguration.DetectMoves;
             DryRun = savedConfiguration.DryRun;
             VerifyChecksums = savedConfiguration.VerifyChecksums;
+            HideMacOsSystemFiles = savedConfiguration.HideMacOsSystemFiles;
             ParallelCopyCount = savedConfiguration.ParallelCopyCount;
             _previewProviderMappings = savedConfiguration.PreviewProviderMappings?.Count > 0
                 ? new Dictionary<string, string>(savedConfiguration.PreviewProviderMappings, StringComparer.OrdinalIgnoreCase)

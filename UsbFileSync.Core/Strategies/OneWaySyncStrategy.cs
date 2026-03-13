@@ -13,10 +13,10 @@ public sealed class OneWaySyncStrategy : ISyncStrategy
 
         var sourceVolume = configuration.ResolveSourceVolume();
         var destinationVolume = configuration.ResolveDestinationVolumes().Single();
-        var sourceFiles = DirectorySnapshotBuilder.Build(sourceVolume);
-        var destinationFiles = DirectorySnapshotBuilder.Build(destinationVolume);
-        var sourceDirectories = DirectorySnapshotBuilder.BuildDirectories(sourceVolume);
-        var destinationDirectories = DirectorySnapshotBuilder.BuildDirectories(destinationVolume);
+        var sourceFiles = DirectorySnapshotBuilder.Build(sourceVolume, configuration.HideMacOsSystemFiles);
+        var destinationFiles = DirectorySnapshotBuilder.Build(destinationVolume, configuration.HideMacOsSystemFiles);
+        var sourceDirectories = DirectorySnapshotBuilder.BuildDirectories(sourceVolume, configuration.HideMacOsSystemFiles);
+        var destinationDirectories = DirectorySnapshotBuilder.BuildDirectories(destinationVolume, configuration.HideMacOsSystemFiles);
         var actions = new List<SyncAction>();
 
         foreach (var directory in sourceDirectories

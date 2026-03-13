@@ -8,11 +8,13 @@ namespace UsbFileSync.App;
 
 public partial class SettingsDialog : Window
 {
-    public SettingsDialog(int parallelCopyCount, IReadOnlyDictionary<string, string>? previewProviderMappings = null)
+    public SettingsDialog(int parallelCopyCount, bool hideMacOsSystemFiles, IReadOnlyDictionary<string, string>? previewProviderMappings = null)
     {
         InitializeComponent();
         ParallelCopyCount = Math.Max(0, parallelCopyCount);
+        HideMacOsSystemFiles = hideMacOsSystemFiles;
         ParallelCopyCountTextBox.Text = ParallelCopyCount.ToString(CultureInfo.InvariantCulture);
+        HideMacOsSystemFilesCheckBox.IsChecked = HideMacOsSystemFiles;
         ProviderOptions = Enum.GetValues<PreviewProviderKind>();
         PreviewProviderMappingItems = CreateMappingItems(previewProviderMappings);
         PreviewProviderMappingsDataGrid.ItemsSource = PreviewProviderMappingItems;
@@ -29,6 +31,8 @@ public partial class SettingsDialog : Window
 
     public int ParallelCopyCount { get; private set; }
 
+    public bool HideMacOsSystemFiles { get; private set; }
+
     public ObservableCollection<PreviewProviderMappingViewModel> PreviewProviderMappingItems { get; }
 
     public Array ProviderOptions { get; }
@@ -37,7 +41,6 @@ public partial class SettingsDialog : Window
     {
         if (!TryParseParallelCopyCount(ParallelCopyCountTextBox.Text, out var value))
         {
-
             System.Windows.MessageBox.Show(this, "Enter a whole number that is 0 or greater. Use 0 to let UsbFileSync automatically assess the best amount of parallelism.", "Invalid parallel copies value", MessageBoxButton.OK, MessageBoxImage.Warning);
             ParallelCopyCountTextBox.Focus();
             ParallelCopyCountTextBox.SelectAll();
@@ -45,6 +48,7 @@ public partial class SettingsDialog : Window
         }
 
         ParallelCopyCount = value;
+        HideMacOsSystemFiles = HideMacOsSystemFilesCheckBox.IsChecked != false;
         if (!TryCreateSerializableMappings(PreviewProviderMappingItems, out var mappings, out var errorMessage))
         {
             System.Windows.MessageBox.Show(this, errorMessage, "Invalid preview mapping", MessageBoxButton.OK, MessageBoxImage.Warning);

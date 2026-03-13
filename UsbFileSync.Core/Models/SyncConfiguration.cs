@@ -30,6 +30,8 @@ public sealed class SyncConfiguration
 
     public bool VerifyChecksums { get; init; }
 
+    public bool HideMacOsSystemFiles { get; init; } = true;
+
     public int ParallelCopyCount { get; init; } = 1;
 
     public Dictionary<string, string> PreviewProviderMappings { get; init; } = new(StringComparer.OrdinalIgnoreCase);

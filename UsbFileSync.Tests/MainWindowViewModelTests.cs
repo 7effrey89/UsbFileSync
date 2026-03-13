@@ -8,6 +8,7 @@ using UsbFileSync.App.ViewModels;
 using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Services;
 using UsbFileSync.Core.Strategies;
+using UsbFileSync.Core.Volumes;
 using SpreadsheetText = DocumentFormat.OpenXml.Spreadsheet.Text;
 using WordRun = DocumentFormat.OpenXml.Wordprocessing.Run;
 using WordText = DocumentFormat.OpenXml.Wordprocessing.Text;
@@ -65,6 +66,57 @@ public sealed class MainWindowViewModelTests
         viewModel.BrowseDestinationPathCommand.Execute(additionalDestination);
 
         Assert.Equal("G:\\Archive", additionalDestination.Path);
+    }
+
+    [Fact]
+    public async Task ToggleSyncCommand_CopiesFilesFromResolvedApfsSourceVolume()
+    {
+        using var workspace = new SyncTestWorkspace();
+        using var apfsWorkspace = new SyncTestWorkspace();
+        apfsWorkspace.WriteSourceFile("song.txt", "music");
+
+        var apfsSourceVolume = new StubVolumeSource("D:\\", apfsWorkspace.SourcePath, isReadOnly: true, fileSystemType: "APFS");
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            sourceVolumeService: new StubSourceVolumeService(apfsSourceVolume))
+        {
+            SourcePath = "D:\\",
+            DestinationPath = workspace.DestinationPath,
+            DryRun = false,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 1).ConfigureAwait(true);
+        viewModel.SelectAllInTab(PreviewTabKind.NewFiles);
+
+        viewModel.ToggleSyncCommand.Execute(null);
+
+        await WaitForAsync(() => !viewModel.IsSyncRunning && File.Exists(Path.Combine(workspace.DestinationPath, "song.txt"))).ConfigureAwait(true);
+
+        Assert.Equal("music", await File.ReadAllTextAsync(Path.Combine(workspace.DestinationPath, "song.txt")).ConfigureAwait(true));
+    }
+
+    [Fact]
+    public void ToggleSyncCommand_ShowsApfsValidationError_WhenApfsHelperCannotOpenDrive()
+    {
+        using var workspace = new SyncTestWorkspace();
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            sourceVolumeService: new StubSourceVolumeService(null, "The Paragon APFS helper reported an inconsistent file system."))
+        {
+            SourcePath = "D:\\",
+            DestinationPath = workspace.DestinationPath,
+            DryRun = false,
+        };
+
+        viewModel.ToggleSyncCommand.Execute(null);
+
+        Assert.Equal("Source macOS volume could not be opened. The Paragon APFS helper reported an inconsistent file system.", viewModel.StatusMessage);
+        Assert.False(viewModel.IsSyncRunning);
     }
 
     [Fact]
@@ -1322,6 +1374,163 @@ public sealed class MainWindowViewModelTests
     private sealed class StubFolderPickerService(string? selectedPath) : IFolderPickerService
     {
         public string? PickFolder(string title, string? initialPath) => selectedPath;
+    }
+
+    private sealed class StubSourceVolumeService(IVolumeSource? volume, string? failureReason = null) : ISourceVolumeService
+    {
+        public bool TryCreateVolume(string path, out IVolumeSource? resolvedVolume, out string? resolvedFailureReason)
+        {
+            resolvedVolume = volume;
+            resolvedFailureReason = volume is null ? failureReason : null;
+            return volume is not null;
+        }
+    }
+
+    private sealed class StubVolumeSource : IVolumeSource
+    {
+        private readonly string _backingRoot;
+        private readonly string _root;
+
+        public StubVolumeSource(string root, string backingRoot, bool isReadOnly, string fileSystemType)
+        {
+            _root = root;
+            _backingRoot = backingRoot;
+            Id = $"stub::{root}";
+            DisplayName = root;
+            FileSystemType = fileSystemType;
+            IsReadOnly = isReadOnly;
+            Root = root;
+        }
+
+        public string Id { get; }
+
+        public string DisplayName { get; }
+
+        public string FileSystemType { get; }
+
+        public bool IsReadOnly { get; }
+
+        public string Root { get; }
+
+        public IFileEntry GetEntry(string path)
+        {
+            var normalizedRelativePath = NormalizeRelativePath(path);
+            var backingPath = ToBackingPath(normalizedRelativePath);
+            var displayPath = ToDisplayPath(normalizedRelativePath);
+            var name = string.IsNullOrEmpty(normalizedRelativePath)
+                ? _root
+                : Path.GetFileName(normalizedRelativePath.Replace('/', Path.DirectorySeparatorChar));
+
+            if (Directory.Exists(backingPath))
+            {
+                var directoryInfo = new DirectoryInfo(backingPath);
+                return new StubFileEntry(displayPath, name, true, null, directoryInfo.LastWriteTimeUtc, true);
+            }
+
+            if (File.Exists(backingPath))
+            {
+                var fileInfo = new FileInfo(backingPath);
+                return new StubFileEntry(displayPath, name, false, fileInfo.Length, fileInfo.LastWriteTimeUtc, true);
+            }
+
+            return new StubFileEntry(displayPath, name, false, null, null, false);
+        }
+
+        public IEnumerable<IFileEntry> Enumerate(string path)
+        {
+            var normalizedRelativePath = NormalizeRelativePath(path);
+            var directoryPath = ToBackingPath(normalizedRelativePath);
+            if (!Directory.Exists(directoryPath))
+            {
+                return Array.Empty<IFileEntry>();
+            }
+
+            return Directory.EnumerateFileSystemEntries(directoryPath)
+                .Select(entryPath =>
+                {
+                    var relativePath = Path.GetRelativePath(_backingRoot, entryPath)
+                        .Replace(Path.DirectorySeparatorChar, '/')
+                        .Replace(Path.AltDirectorySeparatorChar, '/');
+                    return GetEntry(relativePath);
+                })
+                .ToArray();
+        }
+
+        public Stream OpenRead(string path)
+        {
+            var entry = GetEntry(path);
+            if (!entry.Exists || entry.IsDirectory)
+            {
+                throw new FileNotFoundException($"The file '{entry.FullPath}' does not exist.", entry.FullPath);
+            }
+
+            return new FileStream(ToBackingPath(path), FileMode.Open, FileAccess.Read, FileShare.Read);
+        }
+
+        public Stream OpenWrite(string path, bool overwrite = true) => throw new ReadOnlyVolumeException(DisplayName);
+
+        public void CreateDirectory(string path) => throw new ReadOnlyVolumeException(DisplayName);
+
+        public void DeleteFile(string path) => throw new ReadOnlyVolumeException(DisplayName);
+
+        public void DeleteDirectory(string path) => throw new ReadOnlyVolumeException(DisplayName);
+
+        public void Move(string sourcePath, string destinationPath, bool overwrite = false) => throw new ReadOnlyVolumeException(DisplayName);
+
+        public void SetLastWriteTimeUtc(string path, DateTime lastWriteTimeUtc) => throw new ReadOnlyVolumeException(DisplayName);
+
+        private string ToBackingPath(string? relativePath)
+        {
+            var normalizedRelativePath = NormalizeRelativePath(relativePath);
+            if (string.IsNullOrEmpty(normalizedRelativePath))
+            {
+                return _backingRoot;
+            }
+
+            return Path.Combine(_backingRoot, normalizedRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        }
+
+        private string ToDisplayPath(string? relativePath)
+        {
+            var normalizedRelativePath = NormalizeRelativePath(relativePath);
+            if (string.IsNullOrEmpty(normalizedRelativePath))
+            {
+                return _root;
+            }
+
+            return Path.Combine(_root, normalizedRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        }
+
+        private string NormalizeRelativePath(string? relativePath)
+        {
+            if (string.IsNullOrWhiteSpace(relativePath))
+            {
+                return string.Empty;
+            }
+
+            var normalizedPath = relativePath.Replace('\\', '/');
+            var normalizedRoot = _root.Replace('\\', '/').TrimEnd('/');
+
+            if (string.Equals(normalizedPath.TrimEnd('/'), normalizedRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                return string.Empty;
+            }
+
+            if (normalizedPath.StartsWith(normalizedRoot + "/", StringComparison.OrdinalIgnoreCase))
+            {
+                normalizedPath = normalizedPath[(normalizedRoot.Length + 1)..];
+            }
+
+            return normalizedPath.Trim('/');
+        }
+
+        private sealed record StubFileEntry(
+            string FullPath,
+            string Name,
+            bool IsDirectory,
+            long? Size,
+            DateTime? LastWriteTimeUtc,
+            bool Exists) : IFileEntry;
     }
 
     private sealed class StubShellPreviewHandlerResolver(bool isAvailable) : IShellPreviewHandlerResolver

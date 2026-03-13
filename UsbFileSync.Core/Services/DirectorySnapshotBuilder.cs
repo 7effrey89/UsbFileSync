@@ -12,10 +12,31 @@ internal static class DirectorySnapshotBuilder
         "System Volume Information",
     };
 
+    private static readonly HashSet<string> ExcludedMacOsRootEntries = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".DS_Store",
+        ".DocumentRevisions-V100",
+        ".fseventsd",
+        ".HFS+ Private Directory Data",
+        ".journal",
+        ".journal_info_block",
+        ".Spotlight-V100",
+        ".TemporaryItems",
+        ".Trashes",
+        ".VolumeIcon.icns",
+        "HFS+ Private Data",
+    };
+
     public static IReadOnlyDictionary<string, FileSnapshot> Build(string rootPath) =>
         Build(new WindowsMountedVolume(rootPath));
 
+    public static IReadOnlyDictionary<string, FileSnapshot> Build(string rootPath, bool hideMacOsSystemFiles) =>
+        Build(new WindowsMountedVolume(rootPath), hideMacOsSystemFiles);
+
     public static IReadOnlyDictionary<string, FileSnapshot> Build(IVolumeSource volume)
+        => Build(volume, hideMacOsSystemFiles: false);
+
+    public static IReadOnlyDictionary<string, FileSnapshot> Build(IVolumeSource volume, bool hideMacOsSystemFiles)
     {
         ArgumentNullException.ThrowIfNull(volume);
 
@@ -25,7 +46,7 @@ internal static class DirectorySnapshotBuilder
             return new Dictionary<string, FileSnapshot>(StringComparer.OrdinalIgnoreCase);
         }
 
-        return EnumerateFileSnapshots(volume)
+        return EnumerateFileSnapshots(volume, hideMacOsSystemFiles)
             .OrderBy(snapshot => snapshot.RelativePath, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(snapshot => snapshot.RelativePath, snapshot => snapshot, StringComparer.OrdinalIgnoreCase);
     }
@@ -33,7 +54,13 @@ internal static class DirectorySnapshotBuilder
     public static IReadOnlySet<string> BuildDirectories(string rootPath) =>
         BuildDirectories(new WindowsMountedVolume(rootPath));
 
+    public static IReadOnlySet<string> BuildDirectories(string rootPath, bool hideMacOsSystemFiles) =>
+        BuildDirectories(new WindowsMountedVolume(rootPath), hideMacOsSystemFiles);
+
     public static IReadOnlySet<string> BuildDirectories(IVolumeSource volume)
+        => BuildDirectories(volume, hideMacOsSystemFiles: false);
+
+    public static IReadOnlySet<string> BuildDirectories(IVolumeSource volume, bool hideMacOsSystemFiles)
     {
         ArgumentNullException.ThrowIfNull(volume);
 
@@ -43,10 +70,10 @@ internal static class DirectorySnapshotBuilder
             return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
 
-        return EnumerateDirectories(volume).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return EnumerateDirectories(volume, hideMacOsSystemFiles).ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
-    private static IEnumerable<FileSnapshot> EnumerateFileSnapshots(IVolumeSource volume)
+    private static IEnumerable<FileSnapshot> EnumerateFileSnapshots(IVolumeSource volume, bool hideMacOsSystemFiles)
     {
         var pendingDirectories = new Stack<string>();
         pendingDirectories.Push(string.Empty);
@@ -59,7 +86,7 @@ internal static class DirectorySnapshotBuilder
             foreach (var entry in entries.Where(entry => !entry.IsDirectory))
             {
                 var relativePath = GetRelativePath(volume, entry);
-                if (IsExcludedRelativePath(relativePath) || entry.Size is null || entry.LastWriteTimeUtc is null)
+                if (IsExcludedRelativePath(volume, relativePath, hideMacOsSystemFiles) || entry.Size is null || entry.LastWriteTimeUtc is null)
                 {
                     continue;
                 }
@@ -70,7 +97,7 @@ internal static class DirectorySnapshotBuilder
             foreach (var entry in entries.Where(entry => entry.IsDirectory))
             {
                 var relativePath = GetRelativePath(volume, entry);
-                if (!IsExcludedRelativePath(relativePath))
+                if (!IsExcludedRelativePath(volume, relativePath, hideMacOsSystemFiles))
                 {
                     pendingDirectories.Push(relativePath);
                 }
@@ -78,7 +105,7 @@ internal static class DirectorySnapshotBuilder
         }
     }
 
-    private static IEnumerable<string> EnumerateDirectories(IVolumeSource volume)
+    private static IEnumerable<string> EnumerateDirectories(IVolumeSource volume, bool hideMacOsSystemFiles)
     {
         var pendingDirectories = new Stack<string>();
         pendingDirectories.Push(string.Empty);
@@ -89,7 +116,7 @@ internal static class DirectorySnapshotBuilder
             foreach (var entry in volume.Enumerate(currentDirectory).Where(entry => entry.IsDirectory))
             {
                 var relativePath = GetRelativePath(volume, entry);
-                if (IsExcludedRelativePath(relativePath))
+                if (IsExcludedRelativePath(volume, relativePath, hideMacOsSystemFiles))
                 {
                     continue;
                 }
@@ -100,7 +127,7 @@ internal static class DirectorySnapshotBuilder
         }
     }
 
-    private static bool IsExcludedRelativePath(string relativePath)
+    private static bool IsExcludedRelativePath(IVolumeSource volume, string relativePath, bool hideMacOsSystemFiles)
     {
         if (string.IsNullOrWhiteSpace(relativePath))
         {
@@ -109,7 +136,19 @@ internal static class DirectorySnapshotBuilder
 
         var firstSeparatorIndex = relativePath.IndexOf('/');
         var rootSegment = firstSeparatorIndex >= 0 ? relativePath[..firstSeparatorIndex] : relativePath;
-        return ExcludedRootDirectories.Contains(rootSegment);
+        if (ExcludedRootDirectories.Contains(rootSegment))
+        {
+            return true;
+        }
+
+        if (!hideMacOsSystemFiles || !string.Equals(volume.FileSystemType, "HFS+", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return ExcludedMacOsRootEntries.Contains(rootSegment)
+            || relativePath.StartsWith("._", StringComparison.OrdinalIgnoreCase)
+            || relativePath.Contains("/._", StringComparison.OrdinalIgnoreCase);
     }
 
     public static void EnsureConfigurationIsValid(SyncConfiguration configuration)

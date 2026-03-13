@@ -1,5 +1,6 @@
 using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Services;
+using UsbFileSync.Core.Volumes;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -258,6 +259,47 @@ public sealed class SyncServiceTests : IDisposable
         var action = Assert.Single(actions);
         Assert.Equal(SyncActionType.CopyToDestination, action.Type);
         Assert.Equal("user.txt", action.RelativePath);
+    }
+
+    [Fact]
+    public async Task AnalyzeChangesAsync_HfsPlusFiltering_HidesMacOsSystemEntriesWhenEnabled()
+    {
+        var sourceBackingRoot = CreateDirectory("source-hfs-backing");
+        var destination = CreateDirectory("destination");
+        WriteFile(sourceBackingRoot, "user.txt", "payload", new DateTime(2024, 4, 2, 0, 0, 0, DateTimeKind.Utc));
+        WriteFile(sourceBackingRoot, Path.Combine(".Spotlight-V100", "store.db"), "metadata", new DateTime(2024, 4, 2, 0, 0, 0, DateTimeKind.Utc));
+
+        var sourceVolume = new StubVolumeSource("F:\\", sourceBackingRoot, isReadOnly: true, fileSystemType: "HFS+");
+        var service = new SyncService();
+
+        var hiddenActions = await service.AnalyzeChangesAsync(new SyncConfiguration
+        {
+            SourcePath = sourceBackingRoot,
+            SourceVolume = sourceVolume,
+            DestinationPath = destination,
+            Mode = SyncMode.OneWay,
+            HideMacOsSystemFiles = true,
+        });
+
+        Assert.Collection(hiddenActions,
+            action =>
+            {
+                Assert.Equal(SyncActionType.CopyToDestination, action.Type);
+                Assert.Equal("user.txt", action.RelativePath);
+            });
+
+        var visibleActions = await service.AnalyzeChangesAsync(new SyncConfiguration
+        {
+            SourcePath = sourceBackingRoot,
+            SourceVolume = sourceVolume,
+            DestinationPath = destination,
+            Mode = SyncMode.OneWay,
+            HideMacOsSystemFiles = false,
+        });
+
+        Assert.Contains(visibleActions, action => action.RelativePath == "user.txt");
+        Assert.Contains(visibleActions, action => action.RelativePath == ".Spotlight-V100");
+        Assert.Contains(visibleActions, action => action.RelativePath == ".Spotlight-V100/store.db");
     }
 
     [Fact]
@@ -863,5 +905,152 @@ public sealed class SyncServiceTests : IDisposable
     private sealed class CallbackProgress<T>(Action<T> onReport) : IProgress<T>
     {
         public void Report(T value) => onReport(value);
+    }
+
+    private sealed class StubVolumeSource : IVolumeSource
+    {
+        private readonly string _backingRoot;
+        private readonly string _root;
+
+        public StubVolumeSource(string root, string backingRoot, bool isReadOnly, string fileSystemType)
+        {
+            _root = root;
+            _backingRoot = backingRoot;
+            Id = $"stub::{root}";
+            DisplayName = root;
+            FileSystemType = fileSystemType;
+            IsReadOnly = isReadOnly;
+            Root = root;
+        }
+
+        public string Id { get; }
+
+        public string DisplayName { get; }
+
+        public string FileSystemType { get; }
+
+        public bool IsReadOnly { get; }
+
+        public string Root { get; }
+
+        public IFileEntry GetEntry(string path)
+        {
+            var normalizedRelativePath = NormalizeRelativePath(path);
+            var backingPath = ToBackingPath(normalizedRelativePath);
+            var displayPath = ToDisplayPath(normalizedRelativePath);
+            var name = string.IsNullOrEmpty(normalizedRelativePath)
+                ? _root
+                : Path.GetFileName(normalizedRelativePath.Replace('/', Path.DirectorySeparatorChar));
+
+            if (Directory.Exists(backingPath))
+            {
+                var directoryInfo = new DirectoryInfo(backingPath);
+                return new StubFileEntry(displayPath, name, true, null, directoryInfo.LastWriteTimeUtc, true);
+            }
+
+            if (File.Exists(backingPath))
+            {
+                var fileInfo = new FileInfo(backingPath);
+                return new StubFileEntry(displayPath, name, false, fileInfo.Length, fileInfo.LastWriteTimeUtc, true);
+            }
+
+            return new StubFileEntry(displayPath, name, false, null, null, false);
+        }
+
+        public IEnumerable<IFileEntry> Enumerate(string path)
+        {
+            var normalizedRelativePath = NormalizeRelativePath(path);
+            var directoryPath = ToBackingPath(normalizedRelativePath);
+            if (!Directory.Exists(directoryPath))
+            {
+                return Array.Empty<IFileEntry>();
+            }
+
+            return Directory.EnumerateFileSystemEntries(directoryPath)
+                .Select(entryPath =>
+                {
+                    var relativePath = Path.GetRelativePath(_backingRoot, entryPath)
+                        .Replace(Path.DirectorySeparatorChar, '/')
+                        .Replace(Path.AltDirectorySeparatorChar, '/');
+                    return GetEntry(relativePath);
+                })
+                .ToArray();
+        }
+
+        public Stream OpenRead(string path)
+        {
+            var entry = GetEntry(path);
+            if (!entry.Exists || entry.IsDirectory)
+            {
+                throw new FileNotFoundException($"The file '{entry.FullPath}' does not exist.", entry.FullPath);
+            }
+
+            return new FileStream(ToBackingPath(path), FileMode.Open, FileAccess.Read, FileShare.Read);
+        }
+
+        public Stream OpenWrite(string path, bool overwrite = true) => throw new ReadOnlyVolumeException(DisplayName);
+
+        public void CreateDirectory(string path) => throw new ReadOnlyVolumeException(DisplayName);
+
+        public void DeleteFile(string path) => throw new ReadOnlyVolumeException(DisplayName);
+
+        public void DeleteDirectory(string path) => throw new ReadOnlyVolumeException(DisplayName);
+
+        public void Move(string sourcePath, string destinationPath, bool overwrite = false) => throw new ReadOnlyVolumeException(DisplayName);
+
+        public void SetLastWriteTimeUtc(string path, DateTime lastWriteTimeUtc) => throw new ReadOnlyVolumeException(DisplayName);
+
+        private string ToBackingPath(string? relativePath)
+        {
+            var normalizedRelativePath = NormalizeRelativePath(relativePath);
+            if (string.IsNullOrEmpty(normalizedRelativePath))
+            {
+                return _backingRoot;
+            }
+
+            return Path.Combine(_backingRoot, normalizedRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        }
+
+        private string ToDisplayPath(string? relativePath)
+        {
+            var normalizedRelativePath = NormalizeRelativePath(relativePath);
+            if (string.IsNullOrEmpty(normalizedRelativePath))
+            {
+                return _root;
+            }
+
+            return Path.Combine(_root, normalizedRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        }
+
+        private string NormalizeRelativePath(string? relativePath)
+        {
+            if (string.IsNullOrWhiteSpace(relativePath))
+            {
+                return string.Empty;
+            }
+
+            var normalizedPath = relativePath.Replace('\\', '/');
+            var normalizedRoot = _root.Replace('\\', '/').TrimEnd('/');
+
+            if (string.Equals(normalizedPath.TrimEnd('/'), normalizedRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                return string.Empty;
+            }
+
+            if (normalizedPath.StartsWith(normalizedRoot + "/", StringComparison.OrdinalIgnoreCase))
+            {
+                normalizedPath = normalizedPath[(normalizedRoot.Length + 1)..];
+            }
+
+            return normalizedPath.Trim('/');
+        }
+
+        private sealed record StubFileEntry(
+            string FullPath,
+            string Name,
+            bool IsDirectory,
+            long? Size,
+            DateTime? LastWriteTimeUtc,
+            bool Exists) : IFileEntry;
     }
 }
