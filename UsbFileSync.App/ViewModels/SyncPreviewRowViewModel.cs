@@ -50,6 +50,7 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
 
     private readonly SyncActionType? _actionType;
     private readonly bool _hasPlannedAction;
+    private bool _isApplied;
     private bool _isSelected;
     private double _progressValue;
     private PreviewTransferState _progressState;
@@ -114,7 +115,7 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
 
     public string IconGlyph { get; }
 
-    public bool CanSelect => _hasPlannedAction;
+    public bool CanSelect => _hasPlannedAction && !_isApplied;
 
     public bool IsSelected
     {
@@ -437,6 +438,21 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
         ProgressValue = 100;
         TransferSpeedText = "Done";
         SetProgressState(PreviewTransferState.Completed);
+    }
+
+    public void MarkApplied()
+    {
+        if (_hasPlannedAction && _isSelected)
+        {
+            SetProperty(ref _isSelected, false);
+        }
+
+        if (_hasPlannedAction && SetProperty(ref _isApplied, true))
+        {
+            RaisePropertyChanged(nameof(CanSelect));
+        }
+
+        MarkCompleted();
     }
 
     public void MarkPaused()

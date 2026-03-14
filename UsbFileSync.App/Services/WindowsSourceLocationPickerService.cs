@@ -25,7 +25,7 @@ public static class WindowsSourceLocationPickerService
         => PickLocation(
             initialPath,
             folderPickerService,
-            destinationVolumeService,
+            GetDestinationBrowseVolumeService(destinationVolumeService),
             fallbackTitle: "Select the destination drive or folder",
             dialogTextOptions: new UniversalSourceLocationPickerDialog.DialogTextOptions(
                 WindowTitle: "Select Destination Folder",
@@ -36,6 +36,21 @@ public static class WindowsSourceLocationPickerService
                 InvalidPathTitle: "Invalid destination folder",
                 FolderNotFoundMessage: "That folder was not found on the selected destination volume.",
                 FolderNotFoundTitle: "Folder not found"));
+
+    internal static ISourceVolumeService GetDestinationBrowseVolumeService(ISourceVolumeService destinationVolumeService) =>
+        GetDestinationBrowseVolumeService(destinationVolumeService, static () => new ExtVolumeService());
+
+    internal static ISourceVolumeService GetDestinationBrowseVolumeService(
+        ISourceVolumeService destinationVolumeService,
+        Func<ISourceVolumeService> readOnlyExtVolumeServiceFactory)
+    {
+        ArgumentNullException.ThrowIfNull(destinationVolumeService);
+        ArgumentNullException.ThrowIfNull(readOnlyExtVolumeServiceFactory);
+
+        return destinationVolumeService is ExtVolumeService
+            ? readOnlyExtVolumeServiceFactory()
+            : destinationVolumeService;
+    }
 
     private static string? PickLocation(
         string? initialPath,

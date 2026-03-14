@@ -1303,7 +1303,7 @@
                         <TextBlock Margin="0,16,0,0"
                                    HorizontalAlignment="Center"
                                    TextWrapping="Wrap"
-                                   Text="Loading preview..."
+                                   Text="{Binding BusyOverlayTitle}"
                                    FontSize="18"
                                    FontWeight="SemiBold"
                                    Foreground="{StaticResource HeaderTextBrush}" />
@@ -1311,8 +1311,13 @@
                                    HorizontalAlignment="Center"
                                    TextAlignment="Center"
                                    TextWrapping="Wrap"
-                                   Text="Building the synchronization preview."
+                                   Text="{Binding BusyOverlayDescription}"
                                    Foreground="{StaticResource SubtleTextBrush}" />
+                        <Button Margin="0,18,0,0"
+                                Width="110"
+                                HorizontalAlignment="Center"
+                                Command="{Binding CancelBusyOperationCommand}"
+                                Content="Cancel" />
                     </StackPanel>
                 </Border>
             </Border>

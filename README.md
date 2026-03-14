@@ -22,13 +22,15 @@ The HFS+ backend intentionally enforces read-only behavior so the application do
 - Folder creation and folder deletion synchronization.
 - Preview-first workflow with filtered tabs for new, changed, deleted, unchanged, and all items.
 - Per-row checkboxes in the preview so only selected planned items are synchronized.
+- The busy overlay now includes a `Cancel` action while preview analysis is running, so long preview builds can be stopped without waiting for completion.
+- Completed preview rows remain visible after synchronization and are marked done until the next analyze refresh, while already-applied rows are retired from future queue selection.
 - Per-file progress, transfer speed, queue visibility, and activity logging during synchronization.
 - Start and stop synchronization from the main window.
 - Safe cancellation for file copy operations.
 - Optional SHA-256 checksum validation for each copied file.
 - Configurable parallel file copy count, including `0` for adaptive auto parallelism.
 - Settings persistence between runs.
-- Browse buttons for selecting the source folder/drive and one or more destination folders. The custom browser now covers both flows from one UI: sources can navigate normal Windows folders, HFS+ source folders, and mounted ext source folders, while destinations can navigate normal Windows folders and mounted ext destination folders.
+- Browse buttons for selecting the source folder/drive and one or more destination folders. The custom browser now covers both flows from one UI: sources can navigate normal Windows folders, HFS+ source folders, and mounted ext source folders, while destinations can navigate normal Windows folders and mounted ext destination folders. Destination browsing uses lightweight ext-volume discovery so the picker opens quickly, while writable ext4 validation remains part of sync-time validation.
 - Read-only source and destination path fields that show Explorer-style drive names such as `XTIVIA (F:)` when unfocused, and the raw path when focused for easy copy/select behavior.
 - Custom application and window icon tailored to the sync workflow.
 - Windows shell file icons in the preview so items match Explorer more closely.
