@@ -2,6 +2,16 @@
 
 UsbFileSync is a Windows desktop file synchronization tool built with WPF and .NET 8. It is designed for synchronizing a source location and one or more destination locations with support for one-way and two-way sync, preview-first workflows, cancellation, and safe file copy behavior.
 
+## Supported Filesystems
+
+UsbFileSync now routes sync IO through a volume abstraction instead of assuming every source and destination is a plain Windows path.
+
+- **Windows mounted volumes** (`WindowsMountedVolume`): read/write using normal `System.IO` paths.
+- **Linux ext volumes**: UsbFileSync can browse mounted ext volumes without elevation when Windows exposes a readable raw mounted-volume handle such as `\\.\D:`. When a selected ext2/ext3/ext4 destination needs administrator rights for write access, the UI now launches a separate background sync worker as administrator so the main window, preview, and selection state stay in place while the privileged sync runs.
+- **macOS HFS+ volumes**: **read-only by design**. On Windows, UsbFileSync can probe drive roots such as `D:\` as HFS+ (`Mac OS Extended (Journaled)`) sources through an embedded DiscUtils HFS+ backend. Any write attempt against an HFS+ target is still rejected before the sync can modify the volume.
+
+The HFS+ backend intentionally enforces read-only behavior so the application does not expose unsupported write-back flows. The source-side browse flow also uses a shell-free drive picker so selecting an unreadable macOS/removable drive does not invoke the standard Windows folder browser and its format-disk prompt first.
+
 ## Current Capabilities
 
 - One-way synchronization from source to destination.
@@ -12,18 +22,22 @@ UsbFileSync is a Windows desktop file synchronization tool built with WPF and .N
 - Folder creation and folder deletion synchronization.
 - Preview-first workflow with filtered tabs for new, changed, deleted, unchanged, and all items.
 - Per-row checkboxes in the preview so only selected planned items are synchronized.
+- The busy overlay now includes a `Cancel` action while preview analysis is running, so long preview builds can be stopped without waiting for completion.
+- Completed preview rows remain visible after synchronization and are marked done until the next analyze refresh, while already-applied rows are retired from future queue selection.
+- Synchronization now runs in a separate background worker process, which allows ext4 write elevation without restarting the WPF UI.
 - Per-file progress, transfer speed, queue visibility, and activity logging during synchronization.
 - Start and stop synchronization from the main window.
 - Safe cancellation for file copy operations.
 - Optional SHA-256 checksum validation for each copied file.
 - Configurable parallel file copy count, including `0` for adaptive auto parallelism.
 - Settings persistence between runs.
-- Browse buttons for selecting the source folder and one or more destination folders.
+- Browse buttons for selecting the source folder/drive and one or more destination folders. The custom browser now covers both flows from one UI: sources can navigate normal Windows folders, HFS+ source folders, and mounted ext source folders, while destinations can navigate normal Windows folders and mounted ext destination folders. Destination browsing uses lightweight ext-volume discovery so the picker opens quickly, while writable ext4 validation remains part of sync-time validation.
 - Read-only source and destination path fields that show Explorer-style drive names such as `XTIVIA (F:)` when unfocused, and the raw path when focused for easy copy/select behavior.
 - Custom application and window icon tailored to the sync workflow.
 - Windows shell file icons in the preview so items match Explorer more closely.
 - Clickable source and destination preview paths that open Explorer and select the file when possible, plus a right-click menu with `Open file` and `Open file folder` actions.
 - A `Show comparison` action on the source preview item context menu that opens a side-by-side source/destination comparison dialog with metadata and file previews.
+- Sync planning and execution through pluggable `IVolumeSource` backends so non-mounted filesystems can be integrated without rewriting the core planner.
 - Embedded PDF preview in the comparison dialog using WebView2, plus an embedded media player for common audio and video formats when the local Windows codecs support them.
 - Office document preview for `docx`, `pptx`, `xlsx`, and related macro-enabled/template variants using built-in text extraction, with a Microsoft Office application fallback for Word, PowerPoint, and Excel files that cannot be parsed directly on the local machine.
 - A **Previewer** dropdown on every comparison pane that lets you switch between the built-in viewer and the Windows Shell preview handler. Office documents offer additional Open XML and Office Interop modes.
@@ -170,6 +184,7 @@ The settings dialog currently supports:
 
 - `Parallel copies`: number of file copy operations allowed to run at the same time.
 - `0` enables auto mode, which estimates a starting parallelism and adjusts it during the copy batch.
+- `Hide macOS system files in HFS+ preview and sync planning`: filters common filesystem metadata such as `.Spotlight-V100`, `.fseventsd`, `.journal`, and `HFS+ Private Data` out of the HFS+ sync view.
 
 The main sync settings area also supports:
 
@@ -179,7 +194,9 @@ The main sync settings area also supports:
 
 ## Project Structure
 
-- `UsbFileSync.App`: WPF desktop application, views, dialogs, and view models.
+- `UsbFileSync.App`: WPF desktop application, views, dialogs, view models, and the headless worker mode used for background sync execution.
+- `UsbFileSync.Contracts`: shared worker-process message contracts and JSON protocol helpers for communication between the UI host and sync worker session.
+- `UsbFileSync.Platform.Windows`: shared Windows-specific volume access, ext4/HFS+ probing, and sync-preparation services used by both the UI and the worker.
 - `UsbFileSync.Core`: synchronization models, strategies, services, and settings persistence contracts.
 - `UsbFileSync.Tests`: xUnit test project covering core logic and selected UI-facing behavior.
 
@@ -223,8 +240,14 @@ The solution includes automated coverage for:
 - Cancellation is safe, but it is not a true resume system. Restarting synchronization re-analyzes the file set and starts the interrupted file from the beginning.
 - One-way and two-way sync both persist pairwise metadata inside `.sync-metadata`, but two-way conflict resolution still falls back to last write times when both sides changed the same file between sync sessions.
 - The app is currently Windows-only.
+- Linux volumes still depend on the bundled SharpExt4 backend for write access. If the app is not elevated, or if the selected drive cannot be reopened through `PhysicalDriveN`, UsbFileSync falls back to read-only ext browsing for that volume.
+- HFS+ volumes are intentionally treated as read-only targets and will throw a read-only volume error if selected as a write destination.
+- If the HFS+ backend cannot open the selected drive, analyze and sync will stop with the HFS+ volume error reported by the app.
 
 ## Development Notes
 
 - New functionality should include or update automated tests.
 - New functionality should also be reflected in this README so the documented feature set stays current.
+
+## Windows Defender
+writable ext4 support here requires raw disk access, so Defender features like Controlled folder access can still block it. That warning is not the app trying to write normal files behind your back; it is Windows objecting to low-level sector access required for ext4 writes on Windows. Enable this behaviour when Defender blocks it. 

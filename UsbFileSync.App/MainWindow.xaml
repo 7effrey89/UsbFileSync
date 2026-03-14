@@ -247,6 +247,11 @@
             <Setter Property="VerticalAlignment" Value="Center" />
             <Setter Property="Foreground" Value="{Binding ForegroundBrush}" />
         </Style>
+        <Style x:Key="ActivityLogMessageTextStyle" TargetType="TextBlock" BasedOn="{StaticResource ActivityLogTextStyle}">
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="ToolTip" Value="{Binding Message}" />
+            <Setter Property="ToolTipService.ShowDuration" Value="60000" />
+        </Style>
         <Style x:Key="RoundedProgressBarStyle" TargetType="ProgressBar">
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Background" Value="#ECEFF1" />
@@ -1241,7 +1246,7 @@
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="Time" Binding="{Binding Time}" Width="90" ElementStyle="{StaticResource ActivityLogTextStyle}" />
                                     <DataGridTextColumn Header="State" Binding="{Binding State}" Width="120" ElementStyle="{StaticResource ActivityLogTextStyle}" />
-                                    <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="*" ElementStyle="{StaticResource ActivityLogTextStyle}" />
+                                    <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="*" ElementStyle="{StaticResource ActivityLogMessageTextStyle}" />
                                 </DataGrid.Columns>
                             </DataGrid>
                         </Grid>
@@ -1281,7 +1286,7 @@
 
             <Border Grid.RowSpan="3"
                     Background="#CCFFFFFF"
-                    Visibility="{Binding IsBusy, Converter={StaticResource BooleanToVisibilityConverter}}"
+                    Visibility="{Binding IsBusyOverlayVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                     Panel.ZIndex="20">
                 <Border HorizontalAlignment="Center"
                         VerticalAlignment="Center"
@@ -1298,7 +1303,7 @@
                         <TextBlock Margin="0,16,0,0"
                                    HorizontalAlignment="Center"
                                    TextWrapping="Wrap"
-                                   Text="Loading preview..."
+                                   Text="{Binding BusyOverlayTitle}"
                                    FontSize="18"
                                    FontWeight="SemiBold"
                                    Foreground="{StaticResource HeaderTextBrush}" />
@@ -1306,8 +1311,13 @@
                                    HorizontalAlignment="Center"
                                    TextAlignment="Center"
                                    TextWrapping="Wrap"
-                                   Text="Building the synchronization preview."
+                                   Text="{Binding BusyOverlayDescription}"
                                    Foreground="{StaticResource SubtleTextBrush}" />
+                        <Button Margin="0,18,0,0"
+                                Width="110"
+                                HorizontalAlignment="Center"
+                                Command="{Binding CancelBusyOperationCommand}"
+                                Content="Cancel" />
                     </StackPanel>
                 </Border>
             </Border>

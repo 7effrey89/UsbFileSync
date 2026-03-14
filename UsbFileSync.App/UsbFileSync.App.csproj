@@ -9,10 +9,13 @@
     <UseWindowsForms>true</UseWindowsForms>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
+    <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\UsbFileSync.Core\UsbFileSync.Core.csproj" />
+    <ProjectReference Include="..\UsbFileSync.Contracts\UsbFileSync.Contracts.csproj" />
+    <ProjectReference Include="..\UsbFileSync.Platform.Windows\UsbFileSync.Platform.Windows.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -23,6 +26,13 @@
 
   <ItemGroup>
     <Resource Include="Assets\AppIcon.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="lib\Ijwhost.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <TargetPath>Ijwhost.dll</TargetPath>
+    </Content>
   </ItemGroup>
 
 </Project>

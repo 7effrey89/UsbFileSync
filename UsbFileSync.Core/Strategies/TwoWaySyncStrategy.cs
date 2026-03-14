@@ -1,5 +1,6 @@
 using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Services;
+using UsbFileSync.Core.Volumes;
 
 namespace UsbFileSync.Core.Strategies;
 
@@ -12,15 +13,17 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
         DirectorySnapshotBuilder.EnsureConfigurationIsValid(configuration);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var sourceMetadata = _metadataStore.Load(configuration.SourcePath);
-        var destinationMetadata = _metadataStore.Load(configuration.DestinationPath);
+        var sourceVolume = configuration.ResolveSourceVolume();
+        var destinationVolume = configuration.ResolveDestinationVolumes().Single();
+        var sourceMetadata = _metadataStore.Load(sourceVolume);
+        var destinationMetadata = _metadataStore.Load(destinationVolume);
         var sourceRootId = _metadataStore.GetOrCreateRootId(sourceMetadata);
         var destinationRootId = _metadataStore.GetOrCreateRootId(destinationMetadata);
         var peerState = _metadataStore.GetSharedPeerState(sourceMetadata, destinationRootId, destinationMetadata, sourceRootId);
-        var sourceFiles = DirectorySnapshotBuilder.Build(configuration.SourcePath);
-        var destinationFiles = DirectorySnapshotBuilder.Build(configuration.DestinationPath);
-        var sourceDirectories = DirectorySnapshotBuilder.BuildDirectories(configuration.SourcePath);
-        var destinationDirectories = DirectorySnapshotBuilder.BuildDirectories(configuration.DestinationPath);
+        var sourceFiles = DirectorySnapshotBuilder.Build(sourceVolume, configuration.HideMacOsSystemFiles);
+        var destinationFiles = DirectorySnapshotBuilder.Build(destinationVolume, configuration.HideMacOsSystemFiles);
+        var sourceDirectories = DirectorySnapshotBuilder.BuildDirectories(sourceVolume, configuration.HideMacOsSystemFiles);
+        var destinationDirectories = DirectorySnapshotBuilder.BuildDirectories(destinationVolume, configuration.HideMacOsSystemFiles);
         var actions = new List<SyncAction>();
 
         foreach (var directory in sourceDirectories
@@ -31,7 +34,7 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
                 SyncActionType.CreateDirectoryOnDestination,
                 directory,
                 null,
-                Path.Combine(configuration.DestinationPath, directory)));
+                VolumePath.CombineDisplayPath(destinationVolume, directory)));
         }
 
         foreach (var directory in destinationDirectories
@@ -41,7 +44,7 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
             actions.Add(new SyncAction(
                 SyncActionType.CreateDirectoryOnSource,
                 directory,
-                Path.Combine(configuration.SourcePath, directory),
+                VolumePath.CombineDisplayPath(sourceVolume, directory),
                 null));
         }
 
@@ -119,7 +122,7 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
                     copyActionType: SyncActionType.CopyToDestination,
                     deleteActionType: SyncActionType.DeleteFromSource,
                     existingFullPath: currentSourceFile.FullPath,
-                    missingFullPath: Path.Combine(configuration.DestinationPath, relativePath)));
+                    missingFullPath: VolumePath.CombineDisplayPath(destinationVolume, relativePath)));
             }
             else if (hasDestination)
             {
@@ -131,7 +134,7 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
                     copyActionType: SyncActionType.CopyToSource,
                     deleteActionType: SyncActionType.DeleteFromDestination,
                     existingFullPath: currentDestinationFile.FullPath,
-                    missingFullPath: Path.Combine(configuration.SourcePath, relativePath)));
+                    missingFullPath: VolumePath.CombineDisplayPath(sourceVolume, relativePath)));
             }
         }
 

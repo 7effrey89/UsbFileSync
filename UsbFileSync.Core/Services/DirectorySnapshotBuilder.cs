@@ -1,4 +1,5 @@
 using UsbFileSync.Core.Models;
+using UsbFileSync.Core.Volumes;
 
 namespace UsbFileSync.Core.Services;
 
@@ -11,176 +12,175 @@ internal static class DirectorySnapshotBuilder
         "System Volume Information",
     };
 
-    public static IReadOnlyDictionary<string, FileSnapshot> Build(string rootPath)
+    private static readonly HashSet<string> ExcludedMacOsRootEntries = new(StringComparer.OrdinalIgnoreCase)
     {
-        if (string.IsNullOrWhiteSpace(rootPath))
-        {
-            throw new ArgumentException("A sync path is required.", nameof(rootPath));
-        }
+        ".DS_Store",
+        ".DocumentRevisions-V100",
+        ".fseventsd",
+        ".HFS+ Private Directory Data",
+        ".journal",
+        ".journal_info_block",
+        ".Spotlight-V100",
+        ".TemporaryItems",
+        ".Trashes",
+        ".VolumeIcon.icns",
+        "HFS+ Private Data",
+    };
 
-        if (!Directory.Exists(rootPath))
+    public static IReadOnlyDictionary<string, FileSnapshot> Build(string rootPath) =>
+        Build(new WindowsMountedVolume(rootPath));
+
+    public static IReadOnlyDictionary<string, FileSnapshot> Build(string rootPath, bool hideMacOsSystemFiles) =>
+        Build(new WindowsMountedVolume(rootPath), hideMacOsSystemFiles);
+
+    public static IReadOnlyDictionary<string, FileSnapshot> Build(IVolumeSource volume)
+        => Build(volume, hideMacOsSystemFiles: false);
+
+    public static IReadOnlyDictionary<string, FileSnapshot> Build(IVolumeSource volume, bool hideMacOsSystemFiles)
+    {
+        ArgumentNullException.ThrowIfNull(volume);
+
+        var rootEntry = volume.GetEntry(string.Empty);
+        if (!rootEntry.Exists || !rootEntry.IsDirectory)
         {
             return new Dictionary<string, FileSnapshot>(StringComparer.OrdinalIgnoreCase);
         }
 
-        var files = EnumerateFileSnapshots(rootPath)
+        return EnumerateFileSnapshots(volume, hideMacOsSystemFiles)
             .OrderBy(snapshot => snapshot.RelativePath, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(snapshot => snapshot.RelativePath, snapshot => snapshot, StringComparer.OrdinalIgnoreCase);
-
-        return files;
     }
 
-    public static IReadOnlySet<string> BuildDirectories(string rootPath)
-    {
-        if (string.IsNullOrWhiteSpace(rootPath))
-        {
-            throw new ArgumentException("A sync path is required.", nameof(rootPath));
-        }
+    public static IReadOnlySet<string> BuildDirectories(string rootPath) =>
+        BuildDirectories(new WindowsMountedVolume(rootPath));
 
-        if (!Directory.Exists(rootPath))
+    public static IReadOnlySet<string> BuildDirectories(string rootPath, bool hideMacOsSystemFiles) =>
+        BuildDirectories(new WindowsMountedVolume(rootPath), hideMacOsSystemFiles);
+
+    public static IReadOnlySet<string> BuildDirectories(IVolumeSource volume)
+        => BuildDirectories(volume, hideMacOsSystemFiles: false);
+
+    public static IReadOnlySet<string> BuildDirectories(IVolumeSource volume, bool hideMacOsSystemFiles)
+    {
+        ArgumentNullException.ThrowIfNull(volume);
+
+        var rootEntry = volume.GetEntry(string.Empty);
+        if (!rootEntry.Exists || !rootEntry.IsDirectory)
         {
             return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
 
-        return EnumerateDirectories(rootPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return EnumerateDirectories(volume, hideMacOsSystemFiles).ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
-    private static IEnumerable<FileSnapshot> EnumerateFileSnapshots(string rootPath)
+    private static IEnumerable<FileSnapshot> EnumerateFileSnapshots(IVolumeSource volume, bool hideMacOsSystemFiles)
     {
         var pendingDirectories = new Stack<string>();
-        pendingDirectories.Push(rootPath);
+        pendingDirectories.Push(string.Empty);
 
         while (pendingDirectories.Count > 0)
         {
             var currentDirectory = pendingDirectories.Pop();
+            var entries = volume.Enumerate(currentDirectory).ToArray();
 
-            IEnumerable<string> filePaths;
-            try
+            foreach (var entry in entries.Where(entry => !entry.IsDirectory))
             {
-                filePaths = Directory.EnumerateFiles(currentDirectory);
-            }
-            catch (UnauthorizedAccessException)
-            {
-                continue;
-            }
-            catch (IOException)
-            {
-                continue;
-            }
-
-            foreach (var path in filePaths)
-            {
-                var relativePath = Path.GetRelativePath(rootPath, path);
-                if (IsExcludedRelativePath(relativePath))
+                var relativePath = GetRelativePath(volume, entry);
+                if (IsExcludedRelativePath(volume, relativePath, hideMacOsSystemFiles) || entry.Size is null || entry.LastWriteTimeUtc is null)
                 {
                     continue;
                 }
 
-                FileInfo info;
-                try
-                {
-                    info = new FileInfo(path);
-                }
-                catch (UnauthorizedAccessException)
-                {
-                    continue;
-                }
-                catch (IOException)
-                {
-                    continue;
-                }
-
-                yield return new FileSnapshot(relativePath, path, info.Length, info.LastWriteTimeUtc);
+                yield return new FileSnapshot(relativePath, entry.FullPath, entry.Size.Value, entry.LastWriteTimeUtc.Value);
             }
 
-            IEnumerable<string> subdirectories;
-            try
+            foreach (var entry in entries.Where(entry => entry.IsDirectory))
             {
-                subdirectories = Directory.EnumerateDirectories(currentDirectory);
-            }
-            catch (UnauthorizedAccessException)
-            {
-                continue;
-            }
-            catch (IOException)
-            {
-                continue;
-            }
-
-            foreach (var subdirectory in subdirectories)
-            {
-                var relativePath = Path.GetRelativePath(rootPath, subdirectory);
-                if (IsExcludedRelativePath(relativePath))
+                var relativePath = GetRelativePath(volume, entry);
+                if (!IsExcludedRelativePath(volume, relativePath, hideMacOsSystemFiles))
                 {
-                    continue;
+                    pendingDirectories.Push(relativePath);
                 }
-
-                pendingDirectories.Push(subdirectory);
             }
         }
     }
 
-    private static IEnumerable<string> EnumerateDirectories(string rootPath)
+    private static IEnumerable<string> EnumerateDirectories(IVolumeSource volume, bool hideMacOsSystemFiles)
     {
         var pendingDirectories = new Stack<string>();
-        pendingDirectories.Push(rootPath);
+        pendingDirectories.Push(string.Empty);
 
         while (pendingDirectories.Count > 0)
         {
             var currentDirectory = pendingDirectories.Pop();
-
-            IEnumerable<string> subdirectories;
-            try
+            foreach (var entry in volume.Enumerate(currentDirectory).Where(entry => entry.IsDirectory))
             {
-                subdirectories = Directory.EnumerateDirectories(currentDirectory);
-            }
-            catch (UnauthorizedAccessException)
-            {
-                continue;
-            }
-            catch (IOException)
-            {
-                continue;
-            }
-
-            foreach (var subdirectory in subdirectories)
-            {
-                var relativePath = Path.GetRelativePath(rootPath, subdirectory);
-                if (IsExcludedRelativePath(relativePath))
+                var relativePath = GetRelativePath(volume, entry);
+                if (IsExcludedRelativePath(volume, relativePath, hideMacOsSystemFiles))
                 {
                     continue;
                 }
 
                 yield return relativePath;
-                pendingDirectories.Push(subdirectory);
+                pendingDirectories.Push(relativePath);
             }
         }
     }
 
-    private static bool IsExcludedRelativePath(string relativePath)
+    private static bool IsExcludedRelativePath(IVolumeSource volume, string relativePath, bool hideMacOsSystemFiles)
     {
         if (string.IsNullOrWhiteSpace(relativePath))
         {
             return false;
         }
 
-        var firstSeparatorIndex = relativePath.IndexOfAny(['\\', '/']);
+        var firstSeparatorIndex = relativePath.IndexOf('/');
         var rootSegment = firstSeparatorIndex >= 0 ? relativePath[..firstSeparatorIndex] : relativePath;
-        return ExcludedRootDirectories.Contains(rootSegment);
+        if (ExcludedRootDirectories.Contains(rootSegment))
+        {
+            return true;
+        }
+
+        if (!hideMacOsSystemFiles || !string.Equals(volume.FileSystemType, "HFS+", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return ExcludedMacOsRootEntries.Contains(rootSegment)
+            || relativePath.StartsWith("._", StringComparison.OrdinalIgnoreCase)
+            || relativePath.Contains("/._", StringComparison.OrdinalIgnoreCase);
     }
 
     public static void EnsureConfigurationIsValid(SyncConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(configuration);
 
-        if (string.IsNullOrWhiteSpace(configuration.SourcePath))
+        if (configuration.SourceVolume is null && string.IsNullOrWhiteSpace(configuration.SourcePath))
         {
             throw new ArgumentException("SourcePath is required.", nameof(configuration));
         }
 
-        if (configuration.GetDestinationPaths().Count == 0)
+        if (configuration.GetDestinationPaths().Count == 0 && configuration.ResolveDestinationVolumes().Count == 0)
         {
             throw new ArgumentException("At least one destination path is required.", nameof(configuration));
         }
+    }
+
+    private static string GetRelativePath(IVolumeSource volume, IFileEntry entry)
+    {
+        var root = volume.Root.TrimEnd('/', '\\');
+        var fullPath = entry.FullPath.TrimEnd('/', '\\');
+        if (string.Equals(fullPath, root, StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Empty;
+        }
+
+        if (fullPath.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase) ||
+            fullPath.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase))
+        {
+            return VolumePath.NormalizeRelativePath(fullPath[(root.Length + 1)..]);
+        }
+
+        return VolumePath.NormalizeRelativePath(entry.FullPath);
     }
 }

@@ -28,14 +28,23 @@
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
     <ProjectReference Include="..\UsbFileSync.App\UsbFileSync.App.csproj" />
+    <ProjectReference Include="..\UsbFileSync.Platform.Windows\UsbFileSync.Platform.Windows.csproj" />
+    <Reference Include="SharpExt4">
+      <HintPath>..\UsbFileSync.App\lib\SharpExt4.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
+    <Compile Remove="ExtVolumeServiceTests.cs" />
     <Compile Remove="ImagePreviewZoomCalculatorTests.cs" />
     <Compile Remove="MainWindowViewModelTests.cs" />
     <Compile Remove="QueueActionViewModelTests.cs" />
     <Compile Remove="SettingsDialogTests.cs" />
     <Compile Remove="SyncPreviewRowViewModelTests.cs" />
+    <Compile Remove="UniversalSourceLocationPickerDialogTests.cs" />
+    <Compile Remove="WorkerSyncExecutionClientTests.cs" />
+    <Compile Remove="WindowsSourceLocationPickerServiceTests.cs" />
   </ItemGroup>
 
 </Project>

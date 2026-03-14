@@ -9,6 +9,8 @@ using UsbFileSync.App.Commands;
 using UsbFileSync.App.Services;
 using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Services;
+using UsbFileSync.Core.Volumes;
+using UsbFileSync.Platform.Windows;
 
 namespace UsbFileSync.App.ViewModels;
 
@@ -28,6 +30,13 @@ public enum PreviewSelectionTarget
     FullPath,
 }
 
+internal enum BusyOperationKind
+{
+    None,
+    Analyze,
+    Sync,
+}
+
 public sealed class MainWindowViewModel : ObservableObject, IDisposable
 {
     private static readonly TimeSpan SettingsSaveDelay = TimeSpan.FromMilliseconds(250);
@@ -35,6 +44,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private readonly SyncService _syncService;
     private readonly ISyncSettingsStore? _settingsStore;
     private readonly IFolderPickerService _folderPickerService;
+    private readonly ISourceVolumeService _sourceVolumeService;
+    private readonly ISourceVolumeService _destinationVolumeService;
+    private readonly ISyncExecutionClient _syncExecutionClient;
     private readonly IFileLauncherService _fileLauncherService;
     private readonly IDriveDisplayNameService _driveDisplayNameService;
     private readonly Dispatcher _dispatcher;
@@ -44,6 +56,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private readonly Dictionary<PreviewTabKind, ICollectionView> _previewViews = new();
     private readonly Dictionary<PreviewColumnKey, HashSet<string>> _activePreviewFilters = new();
     private CancellationTokenSource? _persistConfigurationCancellationTokenSource;
+    private CancellationTokenSource? _busyOperationCancellationTokenSource;
     private CancellationTokenSource? _syncCancellationTokenSource;
     private IReadOnlyList<SyncAction> _queuedActions = [];
     private int _completedQueuedActions;
@@ -57,6 +70,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _detectMoves = true;
     private bool _dryRun = true;
     private bool _verifyChecksums;
+    private bool _hideMacOsSystemFiles = true;
     private Dictionary<string, string> _previewProviderMappings = PreviewProviderDefaults.CreateSerializableMapping();
     private bool _isBusy;
     private bool _isSyncRunning;
@@ -66,6 +80,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _isStatusSuccess;
     private bool _isSourcePathFocused;
     private bool _isDestinationPathFocused;
+    private BusyOperationKind _busyOperationKind;
+    private string _busyOverlayTitle = "Working...";
+    private string _busyOverlayDescription = "Please wait.";
     private bool _isDriveLocationColumnVisible;
     private PreviewColumnKey? _activePreviewFilterColumn;
     private PreviewColumnKey? _activePreviewSortColumn;
@@ -76,7 +93,15 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _suppressSelectionUpdates;
 
     public MainWindowViewModel()
-        : this(new SyncService(), CreateDefaultSettingsStore(), new WindowsFolderPickerService(), new WindowsFileLauncherService(), new WindowsDriveDisplayNameService())
+        : this(
+            new SyncService(),
+            CreateDefaultSettingsStore(),
+            new WindowsFolderPickerService(),
+            new WindowsFileLauncherService(),
+            new WindowsDriveDisplayNameService(),
+            SyncVolumeServiceFactory.CreateSourceVolumeService(),
+            SyncVolumeServiceFactory.CreateDestinationVolumeService(),
+            new WorkerSyncExecutionClient())
     {
     }
 
@@ -85,11 +110,17 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ISyncSettingsStore? settingsStore = null,
         IFolderPickerService? folderPickerService = null,
         IFileLauncherService? fileLauncherService = null,
-        IDriveDisplayNameService? driveDisplayNameService = null)
+        IDriveDisplayNameService? driveDisplayNameService = null,
+        ISourceVolumeService? sourceVolumeService = null,
+        ISourceVolumeService? destinationVolumeService = null,
+        ISyncExecutionClient? syncExecutionClient = null)
     {
         _syncService = syncService;
         _settingsStore = settingsStore;
         _folderPickerService = folderPickerService ?? new WindowsFolderPickerService();
+        _sourceVolumeService = sourceVolumeService ?? SyncVolumeServiceFactory.CreateSourceVolumeService();
+        _destinationVolumeService = destinationVolumeService ?? SyncVolumeServiceFactory.CreateDestinationVolumeService();
+        _syncExecutionClient = syncExecutionClient ?? new InProcessSyncExecutionClient(syncService);
         _fileLauncherService = fileLauncherService ?? new WindowsFileLauncherService();
         _driveDisplayNameService = driveDisplayNameService ?? new WindowsDriveDisplayNameService();
         _dispatcher = Dispatcher.CurrentDispatcher;
@@ -123,6 +154,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         RemainingQueue = new ObservableCollection<QueueActionViewModel>();
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, CanExecuteSyncCommands);
         ToggleSyncCommand = new RelayCommand(ToggleSync, CanExecuteToggleSyncCommand);
+        CancelBusyOperationCommand = new RelayCommand(CancelBusyOperation, CanCancelBusyOperation);
         BrowseSourcePathCommand = new RelayCommand(BrowseSourcePath);
         AddDestinationPathCommand = new RelayCommand(AddDestinationPath);
         BrowseDestinationPathCommand = new ParameterizedRelayCommand(BrowseDestinationPath);
@@ -228,6 +260,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public AsyncRelayCommand AnalyzeCommand { get; }
 
     public RelayCommand ToggleSyncCommand { get; }
+
+    public RelayCommand CancelBusyOperationCommand { get; }
 
     public RelayCommand BrowseSourcePathCommand { get; }
 
@@ -371,6 +405,18 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    public bool HideMacOsSystemFiles
+    {
+        get => _hideMacOsSystemFiles;
+        set
+        {
+            if (SetProperty(ref _hideMacOsSystemFiles, value))
+            {
+                HandleConfigurationChanged();
+            }
+        }
+    }
+
     public bool IsBusy
     {
         get => _isBusy;
@@ -378,10 +424,26 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             if (SetProperty(ref _isBusy, value))
             {
+                RaisePropertyChanged(nameof(IsBusyOverlayVisible));
                 AnalyzeCommand.RaiseCanExecuteChanged();
                 ToggleSyncCommand.RaiseCanExecuteChanged();
+                CancelBusyOperationCommand.RaiseCanExecuteChanged();
             }
         }
+    }
+
+    public bool IsBusyOverlayVisible => IsBusy && _busyOperationKind == BusyOperationKind.Analyze;
+
+    public string BusyOverlayTitle
+    {
+        get => _busyOverlayTitle;
+        private set => SetProperty(ref _busyOverlayTitle, value);
+    }
+
+    public string BusyOverlayDescription
+    {
+        get => _busyOverlayDescription;
+        private set => SetProperty(ref _busyOverlayDescription, value);
     }
 
     public bool IsSyncRunning
@@ -515,7 +577,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void BrowseSourcePath()
     {
-        var selectedPath = _folderPickerService.PickFolder("Select the source drive or folder", SourcePath);
+        var selectedPath = WindowsSourceLocationPickerService.PickSourceLocation(SourcePath, _folderPickerService, _sourceVolumeService);
         if (!string.IsNullOrWhiteSpace(selectedPath))
         {
             SourcePath = selectedPath;
@@ -534,7 +596,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         var destinationPath = parameter is DestinationPathEntryViewModel entry
             ? entry.Path
             : DestinationPath;
-        var selectedPath = _folderPickerService.PickFolder("Select the destination drive or folder", destinationPath);
+        var selectedPath = WindowsSourceLocationPickerService.PickDestinationLocation(destinationPath, _folderPickerService, _destinationVolumeService);
         if (!string.IsNullOrWhiteSpace(selectedPath))
         {
             if (parameter is DestinationPathEntryViewModel destinationEntry)
@@ -628,6 +690,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private bool CanExecuteToggleSyncCommand() => IsSyncRunning || (!IsBusy && IsConfigurationComplete());
 
+    private bool CanCancelBusyOperation() => _busyOperationCancellationTokenSource is { IsCancellationRequested: false };
+
     private void ToggleSync()
     {
         if (IsSyncRunning)
@@ -641,18 +705,48 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _ = StartSyncAsync();
     }
 
-    private SyncConfiguration CreateConfiguration() => new()
+    private void CancelBusyOperation()
     {
-        SourcePath = SourcePath,
-        DestinationPath = DestinationPath,
-        DestinationPaths = GetDestinationPaths().ToList(),
-        Mode = SelectedMode,
-        DetectMoves = DetectMoves,
-        DryRun = DryRun,
-        VerifyChecksums = VerifyChecksums,
-        ParallelCopyCount = ParallelCopyCount,
-        PreviewProviderMappings = new Dictionary<string, string>(_previewProviderMappings, StringComparer.OrdinalIgnoreCase),
-    };
+        var cancellationTokenSource = _busyOperationCancellationTokenSource;
+        if (cancellationTokenSource is null || cancellationTokenSource.IsCancellationRequested)
+        {
+            return;
+        }
+
+        cancellationTokenSource.Cancel();
+
+        switch (_busyOperationKind)
+        {
+            case BusyOperationKind.Analyze:
+                StatusMessage = "Cancelling preview generation...";
+                AddLog("Analyze", "Cancel requested while building the preview.", SyncLogSeverity.Warning);
+                break;
+            case BusyOperationKind.Sync:
+                StatusMessage = "Stopping synchronization...";
+                AddLog("Sync", "Stop requested by user.");
+                break;
+        }
+    }
+
+    private SyncConfiguration CreateConfiguration()
+    {
+        return SyncVolumeServiceFactory.ResolveConfiguration(
+            new SyncConfiguration
+            {
+                SourcePath = SourcePath,
+                DestinationPath = DestinationPath,
+                DestinationPaths = GetDestinationPaths().ToList(),
+                Mode = SelectedMode,
+                DetectMoves = DetectMoves,
+                DryRun = DryRun,
+                VerifyChecksums = VerifyChecksums,
+                HideMacOsSystemFiles = HideMacOsSystemFiles,
+                ParallelCopyCount = ParallelCopyCount,
+                PreviewProviderMappings = new Dictionary<string, string>(_previewProviderMappings, StringComparer.OrdinalIgnoreCase),
+            },
+            _sourceVolumeService,
+            _destinationVolumeService);
+    }
 
     public void UpdateParallelCopyCount(int parallelCopyCount)
     {
@@ -670,6 +764,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _previewProviderMappings = new Dictionary<string, string>(mappings, StringComparer.OrdinalIgnoreCase);
         HandleConfigurationChanged();
         AddLog("Settings", $"Preview provider mappings updated for {_previewProviderMappings.Count} file extensions.");
+    }
+
+    public void UpdateHideMacOsSystemFiles(bool hideMacOsSystemFiles)
+    {
+        HideMacOsSystemFiles = hideMacOsSystemFiles;
+        AddLog("Settings", HideMacOsSystemFiles
+            ? "HFS+ macOS system files will be hidden from preview and sync."
+            : "HFS+ macOS system files will be shown in preview and included in sync planning.");
     }
 
     public void SelectAllInTab(PreviewTabKind tabKind)
@@ -842,6 +944,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             return;
         }
 
+        var cancellationTokenSource = new CancellationTokenSource();
+        SetBusyOperation(cancellationTokenSource, BusyOperationKind.Analyze);
+
         await RunBusyOperationAsync(async () =>
         {
             var configuration = CreateConfiguration();
@@ -849,10 +954,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
             var analysisResult = await Task.Run(async () =>
             {
-                var actions = await _syncService.AnalyzeChangesAsync(configuration).ConfigureAwait(false);
-                var preview = _syncService.BuildPreview(configuration, actions);
+                var actions = await _syncService.AnalyzeChangesAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(false);
+                var preview = _syncService.BuildPreview(configuration, actions, cancellationTokenSource.Token);
                 return new AnalyzePreviewResult(actions, preview);
-            }).ConfigureAwait(true);
+            }, cancellationTokenSource.Token).ConfigureAwait(true);
 
             var actions = analysisResult.Actions;
             var preview = analysisResult.Preview;
@@ -868,7 +973,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             CurrentTransferItem = actions.Count == 0 ? "No file operations required." : "Preview ready.";
             CurrentTransferDetails = QueueSummary;
             AddLog("Analyze", StatusMessage);
-        }).ConfigureAwait(true);
+        }, cancellationTokenSource.Token).ConfigureAwait(true);
+
+        ClearBusyOperation(cancellationTokenSource);
+        cancellationTokenSource.Dispose();
     }
 
     private async Task StartSyncAsync()
@@ -881,6 +989,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         var cancellationTokenSource = new CancellationTokenSource();
         _syncCancellationTokenSource = cancellationTokenSource;
+        SetBusyOperation(cancellationTokenSource, BusyOperationKind.Sync);
         IsSyncRunning = true;
 
         await RunBusyOperationAsync(async () =>
@@ -974,7 +1083,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 }
             });
 
-            var result = await _syncService.ExecutePlannedAsync(configuration, actions, progress, autoParallelism, cancellationTokenSource.Token).ConfigureAwait(true);
+            var result = await _syncExecutionClient.ExecuteAsync(configuration, actions, progress, autoParallelism, cancellationTokenSource.Token).ConfigureAwait(true);
             var verifiedCopyCount = configuration.VerifyChecksums
                 ? actions.Count(action => action.Type is
                     SyncActionType.CopyToDestination or
@@ -996,15 +1105,25 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
             CurrentTransferDetails = QueueSummary;
             AddLog("Sync", StatusMessage);
-            PlannedActions.Clear();
-            ReplaceQueue(Array.Empty<SyncAction>());
+
+            if (result.IsDryRun)
+            {
+                ReplaceQueue(GetSelectedActions());
+            }
+            else
+            {
+                RetireCompletedActionsFromPreview(actions);
+                ReplaceQueue(GetSelectedActions());
+            }
         }, cancellationTokenSource.Token).ConfigureAwait(true);
 
         if (ReferenceEquals(_syncCancellationTokenSource, cancellationTokenSource))
         {
-            _syncCancellationTokenSource.Dispose();
             _syncCancellationTokenSource = null;
         }
+
+        ClearBusyOperation(cancellationTokenSource);
+        cancellationTokenSource.Dispose();
 
         IsSyncRunning = false;
     }
@@ -1128,7 +1247,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             var label = destinationPaths.Count == 1
                 ? "Destination"
                 : $"Destination {index + 1}";
-            if (!TryValidateSyncPath(destinationPaths[index], label, requireExistingDirectory: false, out var destinationValidationMessage))
+            if (!TryValidateDestinationPath(destinationPaths[index], label, out var destinationValidationMessage))
             {
                 StatusMessage = destinationValidationMessage;
                 return false;
@@ -1138,7 +1257,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         return true;
     }
 
-    private static bool TryValidateSyncPath(string path, string label, bool requireExistingDirectory, out string validationMessage)
+    private static bool TryValidateSyncPathCore(string path, string label, bool requireExistingDirectory, out string validationMessage)
     {
         try
         {
@@ -1164,6 +1283,83 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             validationMessage = $"{label} path is invalid.";
             return false;
         }
+    }
+
+    private bool TryValidateSyncPath(string path, string label, bool requireExistingDirectory, out string validationMessage)
+    {
+        if (!string.Equals(label, "Source", StringComparison.OrdinalIgnoreCase) || !requireExistingDirectory)
+        {
+            return TryValidateSyncPathCore(path, label, requireExistingDirectory, out validationMessage);
+        }
+
+        try
+        {
+            var fullPath = Path.GetFullPath(path);
+            if (Directory.Exists(fullPath))
+            {
+                validationMessage = string.Empty;
+                return true;
+            }
+        }
+        catch (Exception) when (path is not null)
+        {
+            if (_sourceVolumeService.TryCreateVolume(path, out _, out var sourceFailureReason))
+            {
+                validationMessage = string.Empty;
+                return true;
+            }
+
+            validationMessage = string.IsNullOrWhiteSpace(sourceFailureReason)
+                ? $"{label} path is invalid."
+                : $"{label} macOS volume could not be opened. {sourceFailureReason}";
+            return false;
+        }
+
+        if (_sourceVolumeService.TryCreateVolume(path, out _, out var failureReason))
+        {
+            validationMessage = string.Empty;
+            return true;
+        }
+
+        validationMessage = string.IsNullOrWhiteSpace(failureReason)
+            ? $"{label} path does not exist."
+            : $"{label} macOS volume could not be opened. {failureReason}";
+        return false;
+    }
+
+    private bool TryValidateDestinationPath(string path, string label, out string validationMessage)
+    {
+        try
+        {
+            var fullPath = Path.GetFullPath(path);
+            if (HasAccessibleExistingAncestor(fullPath))
+            {
+                validationMessage = string.Empty;
+                return true;
+            }
+        }
+        catch (Exception) when (path is not null)
+        {
+        }
+
+        if (_destinationVolumeService.TryCreateVolume(path, out var volume, out var failureReason))
+        {
+            if (volume is not null &&
+                string.Equals(volume.FileSystemType, "ext4", StringComparison.OrdinalIgnoreCase) &&
+                volume.IsReadOnly)
+            {
+                validationMessage = string.Empty;
+                return true;
+            }
+
+            validationMessage = string.Empty;
+            return true;
+        }
+
+        validationMessage = string.IsNullOrWhiteSpace(failureReason)
+            ? $"{label} path does not exist or is not accessible."
+            : $"{label} Linux volume could not be opened. {failureReason}";
+        return false;
     }
 
     private static bool HasAccessibleExistingAncestor(string fullPath)
@@ -1225,6 +1421,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             DetectMoves = savedConfiguration.DetectMoves;
             DryRun = savedConfiguration.DryRun;
             VerifyChecksums = savedConfiguration.VerifyChecksums;
+            HideMacOsSystemFiles = savedConfiguration.HideMacOsSystemFiles;
             ParallelCopyCount = savedConfiguration.ParallelCopyCount;
             _previewProviderMappings = savedConfiguration.PreviewProviderMappings?.Count > 0
                 ? new Dictionary<string, string>(savedConfiguration.PreviewProviderMappings, StringComparer.OrdinalIgnoreCase)
@@ -1325,6 +1522,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _syncCancellationTokenSource?.Cancel();
         _syncCancellationTokenSource?.Dispose();
         _syncCancellationTokenSource = null;
+        if (_syncExecutionClient is IDisposable disposableSyncExecutionClient)
+        {
+            disposableSyncExecutionClient.Dispose();
+        }
 
         try
         {
@@ -1356,11 +1557,31 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            StatusMessage = "Synchronization stopped.";
+            StatusMessage = _busyOperationKind switch
+            {
+                BusyOperationKind.Analyze => "Preview loading cancelled.",
+                BusyOperationKind.Sync => "Synchronization stopped.",
+                _ => "Operation cancelled.",
+            };
+            CurrentTransferItem = _busyOperationKind switch
+            {
+                BusyOperationKind.Analyze => "Preview generation cancelled.",
+                BusyOperationKind.Sync => "No active transfer.",
+                _ => CurrentTransferItem,
+            };
             CurrentTransferDetails = QueueSummary;
             CurrentTransferProgressValue = 0;
-            PauseActivePreviewRows();
-            AddLog("Warning", "Synchronization cancelled.", SyncLogSeverity.Warning);
+            if (_busyOperationKind == BusyOperationKind.Sync)
+            {
+                PauseActivePreviewRows();
+            }
+
+            AddLog(
+                "Warning",
+                _busyOperationKind == BusyOperationKind.Analyze
+                    ? "Preview generation cancelled."
+                    : "Synchronization cancelled.",
+                SyncLogSeverity.Warning);
         }
         catch (Exception exception)
         {
@@ -1455,6 +1676,44 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         });
     }
 
+    private void RetireCompletedActionsFromPreview(IEnumerable<SyncAction> actions)
+    {
+        var completedKeys = actions
+            .Select(action => action.GetActionKey())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (completedKeys.Count == 0)
+        {
+            return;
+        }
+
+        RunOnDispatcher(() =>
+        {
+            foreach (var action in PlannedActions.Where(action => completedKeys.Contains(action.GetActionKey())).ToList())
+            {
+                PlannedActions.Remove(action);
+            }
+
+            _suppressSelectionUpdates = true;
+            try
+            {
+                foreach (var completedKey in completedKeys)
+                {
+                    if (_previewRowsByItemKey.TryGetValue(completedKey, out var row))
+                    {
+                        row.MarkApplied();
+                    }
+                }
+            }
+            finally
+            {
+                _suppressSelectionUpdates = false;
+            }
+
+            UpdateSelectedQueue();
+        });
+    }
+
     private IReadOnlyList<SyncAction> GetSelectedActions()
     {
         var selectedKeys = _previewRowsByItemKey.Values
@@ -1498,7 +1757,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void OnPreviewRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (!_suppressSelectionUpdates && e.PropertyName == nameof(SyncPreviewRowViewModel.IsSelected))
+        if (!_suppressSelectionUpdates &&
+            (e.PropertyName == nameof(SyncPreviewRowViewModel.IsSelected) ||
+             e.PropertyName == nameof(SyncPreviewRowViewModel.CanSelect)))
         {
             UpdateSelectedQueue();
             return;
@@ -1854,6 +2115,35 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 }
             }
         });
+    }
+
+    private void SetBusyOperation(CancellationTokenSource cancellationTokenSource, BusyOperationKind busyOperationKind)
+    {
+        _busyOperationCancellationTokenSource = cancellationTokenSource;
+        _busyOperationKind = busyOperationKind;
+        RaisePropertyChanged(nameof(IsBusyOverlayVisible));
+        (BusyOverlayTitle, BusyOverlayDescription) = busyOperationKind switch
+        {
+            BusyOperationKind.Analyze => ("Loading preview...", "Building the synchronization preview."),
+            BusyOperationKind.Sync => ("Synchronizing...", "Applying the selected file operations."),
+            _ => ("Working...", "Please wait."),
+        };
+        CancelBusyOperationCommand.RaiseCanExecuteChanged();
+    }
+
+    private void ClearBusyOperation(CancellationTokenSource cancellationTokenSource)
+    {
+        if (!ReferenceEquals(_busyOperationCancellationTokenSource, cancellationTokenSource))
+        {
+            return;
+        }
+
+        _busyOperationCancellationTokenSource = null;
+        _busyOperationKind = BusyOperationKind.None;
+        RaisePropertyChanged(nameof(IsBusyOverlayVisible));
+        BusyOverlayTitle = "Working...";
+        BusyOverlayDescription = "Please wait.";
+        CancelBusyOperationCommand.RaiseCanExecuteChanged();
     }
 
     private void AddLog(string state, string message, SyncLogSeverity severity = SyncLogSeverity.Verbose)

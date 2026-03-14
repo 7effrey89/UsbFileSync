@@ -1,5 +1,6 @@
 using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Services;
+using UsbFileSync.Core.Volumes;
 
 namespace UsbFileSync.Core.Strategies;
 
@@ -10,10 +11,12 @@ public sealed class OneWaySyncStrategy : ISyncStrategy
         DirectorySnapshotBuilder.EnsureConfigurationIsValid(configuration);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var sourceFiles = DirectorySnapshotBuilder.Build(configuration.SourcePath);
-        var destinationFiles = DirectorySnapshotBuilder.Build(configuration.DestinationPath);
-        var sourceDirectories = DirectorySnapshotBuilder.BuildDirectories(configuration.SourcePath);
-        var destinationDirectories = DirectorySnapshotBuilder.BuildDirectories(configuration.DestinationPath);
+        var sourceVolume = configuration.ResolveSourceVolume();
+        var destinationVolume = configuration.ResolveDestinationVolumes().Single();
+        var sourceFiles = DirectorySnapshotBuilder.Build(sourceVolume, configuration.HideMacOsSystemFiles);
+        var destinationFiles = DirectorySnapshotBuilder.Build(destinationVolume, configuration.HideMacOsSystemFiles);
+        var sourceDirectories = DirectorySnapshotBuilder.BuildDirectories(sourceVolume, configuration.HideMacOsSystemFiles);
+        var destinationDirectories = DirectorySnapshotBuilder.BuildDirectories(destinationVolume, configuration.HideMacOsSystemFiles);
         var actions = new List<SyncAction>();
 
         foreach (var directory in sourceDirectories
@@ -24,7 +27,7 @@ public sealed class OneWaySyncStrategy : ISyncStrategy
                 SyncActionType.CreateDirectoryOnDestination,
                 directory,
                 null,
-                Path.Combine(configuration.DestinationPath, directory)));
+                VolumePath.CombineDisplayPath(destinationVolume, directory)));
         }
 
         var sourceOnly = sourceFiles.Values.Where(file => !destinationFiles.ContainsKey(file.RelativePath)).ToList();
@@ -32,7 +35,7 @@ public sealed class OneWaySyncStrategy : ISyncStrategy
 
         if (configuration.DetectMoves)
         {
-            PairMoves(configuration, sourceOnly, destinationOnly, actions);
+            PairMoves(destinationVolume, sourceOnly, destinationOnly, actions);
         }
 
         foreach (var file in sourceFiles.Values)
@@ -47,7 +50,7 @@ public sealed class OneWaySyncStrategy : ISyncStrategy
                         SyncActionType.OverwriteFileOnDestination,
                         file.RelativePath,
                         file.FullPath,
-                        Path.Combine(configuration.DestinationPath, file.RelativePath)));
+                        VolumePath.CombineDisplayPath(destinationVolume, file.RelativePath)));
                 }
             }
             else if (sourceOnly.Any(candidate => candidate.RelativePath.Equals(file.RelativePath, StringComparison.OrdinalIgnoreCase)))
@@ -56,7 +59,7 @@ public sealed class OneWaySyncStrategy : ISyncStrategy
                     SyncActionType.CopyToDestination,
                     file.RelativePath,
                     file.FullPath,
-                    Path.Combine(configuration.DestinationPath, file.RelativePath)));
+                    VolumePath.CombineDisplayPath(destinationVolume, file.RelativePath)));
             }
         }
 
@@ -80,7 +83,7 @@ public sealed class OneWaySyncStrategy : ISyncStrategy
                 SyncActionType.DeleteDirectoryFromDestination,
                 directory,
                 null,
-                Path.Combine(configuration.DestinationPath, directory)));
+                VolumePath.CombineDisplayPath(destinationVolume, directory)));
         }
 
         return Task.FromResult<IReadOnlyList<SyncAction>>(actions
@@ -101,7 +104,7 @@ public sealed class OneWaySyncStrategy : ISyncStrategy
     };
 
     private static void PairMoves(
-        SyncConfiguration configuration,
+        IVolumeSource destinationVolume,
         List<FileSnapshot> sourceOnly,
         List<FileSnapshot> destinationOnly,
         List<SyncAction> actions)
@@ -124,7 +127,7 @@ public sealed class OneWaySyncStrategy : ISyncStrategy
                 SyncActionType.MoveOnDestination,
                 sourceFile.RelativePath,
                 sourceFile.FullPath,
-                Path.Combine(configuration.DestinationPath, sourceFile.RelativePath),
+                VolumePath.CombineDisplayPath(destinationVolume, sourceFile.RelativePath),
                 destinationFile.RelativePath));
         }
     }

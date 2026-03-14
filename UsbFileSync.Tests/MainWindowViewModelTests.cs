@@ -8,6 +8,8 @@ using UsbFileSync.App.ViewModels;
 using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Services;
 using UsbFileSync.Core.Strategies;
+using UsbFileSync.Core.Volumes;
+using UsbFileSync.Platform.Windows;
 using SpreadsheetText = DocumentFormat.OpenXml.Spreadsheet.Text;
 using WordRun = DocumentFormat.OpenXml.Wordprocessing.Run;
 using WordText = DocumentFormat.OpenXml.Wordprocessing.Text;
@@ -65,6 +67,151 @@ public sealed class MainWindowViewModelTests
         viewModel.BrowseDestinationPathCommand.Execute(additionalDestination);
 
         Assert.Equal("G:\\Archive", additionalDestination.Path);
+    }
+
+    [Fact]
+    public async Task AnalyzeCommand_CanBeCancelled_WhileBuildingPreview()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("pending.txt", "payload");
+        var completionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(new BlockingSyncStrategy(completionSource), new BlockingSyncStrategy(completionSource)),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+
+        await WaitForAsync(() => viewModel.IsBusy).ConfigureAwait(true);
+        Assert.True(viewModel.CancelBusyOperationCommand.CanExecute(null));
+
+        viewModel.CancelBusyOperationCommand.Execute(null);
+
+        await WaitForAsync(() => !viewModel.IsBusy).ConfigureAwait(true);
+
+        Assert.Equal("Preview loading cancelled.", viewModel.StatusMessage);
+        Assert.Empty(viewModel.PlannedActions);
+        Assert.Empty(viewModel.AllFiles);
+    }
+
+    [Fact]
+    public async Task ToggleSyncCommand_CopiesFilesFromResolvedHfsPlusSourceVolume()
+    {
+        using var workspace = new SyncTestWorkspace();
+        using var hfsWorkspace = new SyncTestWorkspace();
+        hfsWorkspace.WriteSourceFile("song.txt", "music");
+
+        var hfsSourceVolume = new StubVolumeSource("D:\\", hfsWorkspace.SourcePath, isReadOnly: true, fileSystemType: "HFS+");
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            sourceVolumeService: new StubSourceVolumeService(hfsSourceVolume))
+        {
+            SourcePath = "D:\\",
+            DestinationPath = workspace.DestinationPath,
+            DryRun = false,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 1).ConfigureAwait(true);
+        viewModel.SelectAllInTab(PreviewTabKind.NewFiles);
+
+        viewModel.ToggleSyncCommand.Execute(null);
+
+        await WaitForAsync(() => !viewModel.IsSyncRunning && File.Exists(Path.Combine(workspace.DestinationPath, "song.txt"))).ConfigureAwait(true);
+
+        Assert.Equal("music", await File.ReadAllTextAsync(Path.Combine(workspace.DestinationPath, "song.txt")).ConfigureAwait(true));
+    }
+
+    [Fact]
+    public async Task ToggleSyncCommand_CopiesFilesToResolvedExtDestinationVolume()
+    {
+        using var workspace = new SyncTestWorkspace();
+        using var extWorkspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("report.txt", "payload");
+
+        var extDestinationVolume = new StubVolumeSource("D:\\", extWorkspace.DestinationPath, isReadOnly: false, fileSystemType: "ext4");
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            destinationVolumeService: new StubSourceVolumeService(extDestinationVolume))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = "D:\\",
+            DryRun = false,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 1).ConfigureAwait(true);
+        viewModel.SelectAllInTab(PreviewTabKind.NewFiles);
+
+        viewModel.ToggleSyncCommand.Execute(null);
+
+        var copiedFile = Path.Combine(extWorkspace.DestinationPath, "report.txt");
+        await WaitForAsync(() => !viewModel.IsSyncRunning && File.Exists(copiedFile)).ConfigureAwait(true);
+
+        Assert.Equal("payload", await File.ReadAllTextAsync(copiedFile).ConfigureAwait(true));
+    }
+
+    [Fact]
+    public async Task ToggleSyncCommand_UsesExecutionClient_WhenExtDestinationRequiresElevation()
+    {
+        using var workspace = new SyncTestWorkspace();
+        using var extWorkspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("report.txt", "payload");
+
+        var readOnlyExtDestinationVolume = new StubVolumeSource("D:\\", extWorkspace.DestinationPath, isReadOnly: true, fileSystemType: "ext4");
+        var executionClient = new StubSyncExecutionClient();
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            destinationVolumeService: new StubSourceVolumeService(readOnlyExtDestinationVolume),
+            syncExecutionClient: executionClient)
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = "D:\\",
+            DryRun = false,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 1).ConfigureAwait(true);
+        viewModel.SelectAllInTab(PreviewTabKind.NewFiles);
+
+        viewModel.ToggleSyncCommand.Execute(null);
+
+        await WaitForAsync(() => !viewModel.IsSyncRunning && executionClient.InvocationCount == 1).ConfigureAwait(true);
+
+        Assert.Equal(1, executionClient.InvocationCount);
+        Assert.Contains("Synchronization complete.", viewModel.StatusMessage);
+        Assert.False(viewModel.IsSyncRunning);
+    }
+
+    [Fact]
+    public void ToggleSyncCommand_ShowsHfsPlusValidationError_WhenHfsVolumeCannotOpenDrive()
+    {
+        using var workspace = new SyncTestWorkspace();
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            sourceVolumeService: new StubSourceVolumeService(null, "The selected drive 'D:\\' does not appear to contain an HFS+ volume."))
+        {
+            SourcePath = "D:\\",
+            DestinationPath = workspace.DestinationPath,
+            DryRun = false,
+        };
+
+        viewModel.ToggleSyncCommand.Execute(null);
+
+        Assert.Equal("Source macOS volume could not be opened. The selected drive 'D:\\' does not appear to contain an HFS+ volume.", viewModel.StatusMessage);
+        Assert.False(viewModel.IsSyncRunning);
     }
 
     [Fact]
@@ -176,6 +323,37 @@ public sealed class MainWindowViewModelTests
         await WaitForAsync(() => !viewModel.IsSyncRunning).ConfigureAwait(true);
 
         Assert.Equal("Synchronize", viewModel.SyncButtonText);
+        Assert.Equal("Synchronization stopped.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task ToggleSyncCommand_CancelsExecutionClientSync()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("queued.txt", "payload");
+        var executionClient = new BlockingSyncExecutionClient();
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            syncExecutionClient: executionClient)
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+            DryRun = false,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 1).ConfigureAwait(true);
+        viewModel.SelectAllInTab(PreviewTabKind.NewFiles);
+
+        viewModel.ToggleSyncCommand.Execute(null);
+        await WaitForAsync(() => viewModel.IsSyncRunning && executionClient.Started).ConfigureAwait(true);
+
+        viewModel.ToggleSyncCommand.Execute(null);
+
+        await WaitForAsync(() => !viewModel.IsSyncRunning && executionClient.CancelObserved).ConfigureAwait(true);
+
         Assert.Equal("Synchronization stopped.", viewModel.StatusMessage);
     }
 
@@ -367,6 +545,57 @@ public sealed class MainWindowViewModelTests
 
         Assert.True(File.Exists(Path.Combine(workspace.DestinationPath, "one.txt")));
         Assert.False(File.Exists(Path.Combine(workspace.DestinationPath, "two.txt")));
+    }
+
+    [Fact]
+    public async Task ToggleSyncCommand_PreservesRemainingPreviewItems_AfterPartialSync()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("one.txt", "one");
+        workspace.WriteSourceFile("two.txt", "two");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+            DryRun = false,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 2 && viewModel.AllFilesCount == 2).ConfigureAwait(true);
+
+        var analyzeLogCount = viewModel.ActivityLog.Count(entry => entry.State == "Analyze");
+        viewModel.NewFiles.Single(row => row.RelativePath == "one.txt").IsSelected = true;
+
+        viewModel.ToggleSyncCommand.Execute(null);
+        await WaitForAsync(() => !viewModel.IsSyncRunning && File.Exists(Path.Combine(workspace.DestinationPath, "one.txt"))).ConfigureAwait(true);
+
+        var firstCompletedRow = Assert.Single(viewModel.NewFiles.Where(row => row.RelativePath == "one.txt"));
+        var remainingRow = Assert.Single(viewModel.NewFiles.Where(row => row.RelativePath == "two.txt"));
+
+        Assert.Single(viewModel.PlannedActions);
+        Assert.Equal(2, viewModel.NewFiles.Count);
+        Assert.False(firstCompletedRow.CanSelect);
+        Assert.False(firstCompletedRow.IsSelected);
+        Assert.Equal("Done", firstCompletedRow.ProgressStateText);
+        Assert.True(remainingRow.CanSelect);
+        Assert.Equal(analyzeLogCount, viewModel.ActivityLog.Count(entry => entry.State == "Analyze"));
+
+        remainingRow.IsSelected = true;
+        Assert.Single(viewModel.RemainingQueue);
+        Assert.Equal("two.txt", viewModel.RemainingQueue[0].RelativePath);
+
+        viewModel.ToggleSyncCommand.Execute(null);
+        await WaitForAsync(() => !viewModel.IsSyncRunning && File.Exists(Path.Combine(workspace.DestinationPath, "two.txt"))).ConfigureAwait(true);
+
+        Assert.Equal(analyzeLogCount, viewModel.ActivityLog.Count(entry => entry.State == "Analyze"));
+        Assert.Empty(viewModel.PlannedActions);
+        Assert.Equal(2, viewModel.NewFiles.Count);
+        Assert.All(viewModel.NewFiles, row =>
+        {
+            Assert.False(row.CanSelect);
+            Assert.Equal("Done", row.ProgressStateText);
+        });
+        Assert.Empty(viewModel.RemainingQueue);
     }
 
     [Fact]
@@ -793,8 +1022,8 @@ public sealed class MainWindowViewModelTests
         viewModel.AnalyzeCommand.Execute(null);
         var nestedRelativePath = Path.Combine("nested", "two.txt");
         await WaitForAsync(() =>
-            viewModel.NewFiles.Any(row => row.RelativePath == "one.txt") &&
-            viewModel.NewFiles.Any(row => row.RelativePath == nestedRelativePath)).ConfigureAwait(true);
+            viewModel.NewFiles.Any(row => RelativePathEquals(row.RelativePath, "one.txt")) &&
+            viewModel.NewFiles.Any(row => RelativePathEquals(row.RelativePath, nestedRelativePath))).ConfigureAwait(true);
 
         viewModel.SelectAllInTab(PreviewTabKind.NewFiles);
 
@@ -819,23 +1048,23 @@ public sealed class MainWindowViewModelTests
         var holidayRelativePath = Path.Combine("photos", "holiday-shot.txt");
         var notesRelativePath = Path.Combine("docs", "notes.txt");
         await WaitForAsync(() =>
-            viewModel.NewFiles.Any(row => row.RelativePath == holidayRelativePath) &&
-            viewModel.NewFiles.Any(row => row.RelativePath == notesRelativePath)).ConfigureAwait(true);
+            viewModel.NewFiles.Any(row => RelativePathEquals(row.RelativePath, holidayRelativePath)) &&
+            viewModel.NewFiles.Any(row => RelativePathEquals(row.RelativePath, notesRelativePath))).ConfigureAwait(true);
 
         var fileNameMatches = viewModel.SelectByPattern(PreviewTabKind.NewFiles, "holiday", PreviewSelectionTarget.FileName);
         Assert.Equal(1, fileNameMatches);
-        Assert.True(viewModel.NewFiles.Single(row => row.RelativePath == holidayRelativePath).IsSelected);
-        Assert.False(viewModel.NewFiles.Single(row => row.RelativePath == notesRelativePath).IsSelected);
+        Assert.True(viewModel.NewFiles.Single(row => RelativePathEquals(row.RelativePath, holidayRelativePath)).IsSelected);
+        Assert.False(viewModel.NewFiles.Single(row => RelativePathEquals(row.RelativePath, notesRelativePath)).IsSelected);
 
         var folderMatches = viewModel.SelectByPattern(PreviewTabKind.NewFiles, "docs", PreviewSelectionTarget.FileFolder);
         Assert.Equal(1, folderMatches);
-        Assert.False(viewModel.NewFiles.Single(row => row.RelativePath == holidayRelativePath).IsSelected);
-        Assert.True(viewModel.NewFiles.Single(row => row.RelativePath == notesRelativePath).IsSelected);
+        Assert.False(viewModel.NewFiles.Single(row => RelativePathEquals(row.RelativePath, holidayRelativePath)).IsSelected);
+        Assert.True(viewModel.NewFiles.Single(row => RelativePathEquals(row.RelativePath, notesRelativePath)).IsSelected);
 
         var fullPathMatches = viewModel.SelectByPattern(PreviewTabKind.NewFiles, "photos\\holiday-shot", PreviewSelectionTarget.FullPath);
         Assert.Equal(1, fullPathMatches);
-        Assert.True(viewModel.NewFiles.Single(row => row.RelativePath == holidayRelativePath).IsSelected);
-        Assert.False(viewModel.NewFiles.Single(row => row.RelativePath == notesRelativePath).IsSelected);
+        Assert.True(viewModel.NewFiles.Single(row => RelativePathEquals(row.RelativePath, holidayRelativePath)).IsSelected);
+        Assert.False(viewModel.NewFiles.Single(row => RelativePathEquals(row.RelativePath, notesRelativePath)).IsSelected);
     }
 
     [Fact]
@@ -1324,6 +1553,289 @@ public sealed class MainWindowViewModelTests
         public string? PickFolder(string title, string? initialPath) => selectedPath;
     }
 
+    private sealed class StubSourceVolumeService(IVolumeSource? volume, string? failureReason = null) : ISourceVolumeService
+    {
+        public bool TryCreateVolume(string path, out IVolumeSource? resolvedVolume, out string? resolvedFailureReason)
+        {
+            resolvedVolume = volume;
+            resolvedFailureReason = volume is null ? failureReason : null;
+            return volume is not null;
+        }
+    }
+
+    private sealed class StubSyncExecutionClient : ISyncExecutionClient
+    {
+        public int InvocationCount { get; private set; }
+
+        public CancellationToken LastCancellationToken { get; private set; }
+
+        public IReadOnlyList<SyncAction> LastActions { get; private set; } = Array.Empty<SyncAction>();
+
+        public Task<SyncResult> ExecuteAsync(
+            SyncConfiguration configuration,
+            IReadOnlyList<SyncAction> actions,
+            IProgress<SyncProgress>? progress,
+            IProgress<int>? autoParallelism,
+            CancellationToken cancellationToken)
+        {
+            InvocationCount++;
+            LastCancellationToken = cancellationToken;
+            LastActions = actions.ToList();
+            return Task.FromResult(new SyncResult(actions.ToList(), actions.Count, false));
+        }
+    }
+
+    private sealed class BlockingSyncExecutionClient : ISyncExecutionClient
+    {
+        private readonly TaskCompletionSource _completionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool Started { get; private set; }
+
+        public bool CancelObserved { get; private set; }
+
+        public async Task<SyncResult> ExecuteAsync(
+            SyncConfiguration configuration,
+            IReadOnlyList<SyncAction> actions,
+            IProgress<SyncProgress>? progress,
+            IProgress<int>? autoParallelism,
+            CancellationToken cancellationToken)
+        {
+            Started = true;
+            using var registration = cancellationToken.Register(() =>
+            {
+                CancelObserved = true;
+                _completionSource.TrySetCanceled(cancellationToken);
+            });
+
+            await _completionSource.Task.ConfigureAwait(false);
+            return new SyncResult(actions.ToList(), actions.Count, false);
+        }
+    }
+
+    private sealed class StubVolumeSource : IVolumeSource
+    {
+        private readonly string _backingRoot;
+        private readonly string _root;
+
+        public StubVolumeSource(string root, string backingRoot, bool isReadOnly, string fileSystemType)
+        {
+            _root = root;
+            _backingRoot = backingRoot;
+            Id = $"stub::{root}";
+            DisplayName = root;
+            FileSystemType = fileSystemType;
+            IsReadOnly = isReadOnly;
+            Root = root;
+        }
+
+        public string Id { get; }
+
+        public string DisplayName { get; }
+
+        public string FileSystemType { get; }
+
+        public bool IsReadOnly { get; }
+
+        public string Root { get; }
+
+        public IFileEntry GetEntry(string path)
+        {
+            var normalizedRelativePath = NormalizeRelativePath(path);
+            var backingPath = ToBackingPath(normalizedRelativePath);
+            var displayPath = ToDisplayPath(normalizedRelativePath);
+            var name = string.IsNullOrEmpty(normalizedRelativePath)
+                ? _root
+                : Path.GetFileName(normalizedRelativePath.Replace('/', Path.DirectorySeparatorChar));
+
+            if (Directory.Exists(backingPath))
+            {
+                var directoryInfo = new DirectoryInfo(backingPath);
+                return new StubFileEntry(displayPath, name, true, null, directoryInfo.LastWriteTimeUtc, true);
+            }
+
+            if (File.Exists(backingPath))
+            {
+                var fileInfo = new FileInfo(backingPath);
+                return new StubFileEntry(displayPath, name, false, fileInfo.Length, fileInfo.LastWriteTimeUtc, true);
+            }
+
+            return new StubFileEntry(displayPath, name, false, null, null, false);
+        }
+
+        public IEnumerable<IFileEntry> Enumerate(string path)
+        {
+            var normalizedRelativePath = NormalizeRelativePath(path);
+            var directoryPath = ToBackingPath(normalizedRelativePath);
+            if (!Directory.Exists(directoryPath))
+            {
+                return Array.Empty<IFileEntry>();
+            }
+
+            return Directory.EnumerateFileSystemEntries(directoryPath)
+                .Select(entryPath =>
+                {
+                    var relativePath = Path.GetRelativePath(_backingRoot, entryPath)
+                        .Replace(Path.DirectorySeparatorChar, '/')
+                        .Replace(Path.AltDirectorySeparatorChar, '/');
+                    return GetEntry(relativePath);
+                })
+                .ToArray();
+        }
+
+        public Stream OpenRead(string path)
+        {
+            var entry = GetEntry(path);
+            if (!entry.Exists || entry.IsDirectory)
+            {
+                throw new FileNotFoundException($"The file '{entry.FullPath}' does not exist.", entry.FullPath);
+            }
+
+            return new FileStream(ToBackingPath(path), FileMode.Open, FileAccess.Read, FileShare.Read);
+        }
+
+        public Stream OpenWrite(string path, bool overwrite = true)
+        {
+            EnsureWritable();
+            var backingPath = ToBackingPath(path);
+            Directory.CreateDirectory(Path.GetDirectoryName(backingPath)!);
+            return new FileStream(
+                backingPath,
+                overwrite ? FileMode.Create : FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None);
+        }
+
+        public void CreateDirectory(string path)
+        {
+            EnsureWritable();
+            Directory.CreateDirectory(ToBackingPath(path));
+        }
+
+        public void DeleteFile(string path)
+        {
+            EnsureWritable();
+            var backingPath = ToBackingPath(path);
+            if (File.Exists(backingPath))
+            {
+                File.Delete(backingPath);
+            }
+        }
+
+        public void DeleteDirectory(string path)
+        {
+            EnsureWritable();
+            var backingPath = ToBackingPath(path);
+            if (Directory.Exists(backingPath))
+            {
+                Directory.Delete(backingPath, recursive: true);
+            }
+        }
+
+        public void Move(string sourcePath, string destinationPath, bool overwrite = false)
+        {
+            EnsureWritable();
+            var sourceBackingPath = ToBackingPath(sourcePath);
+            var destinationBackingPath = ToBackingPath(destinationPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationBackingPath)!);
+
+            if (File.Exists(sourceBackingPath))
+            {
+                if (overwrite && File.Exists(destinationBackingPath))
+                {
+                    File.Delete(destinationBackingPath);
+                }
+
+                File.Move(sourceBackingPath, destinationBackingPath, overwrite);
+                return;
+            }
+
+            if (Directory.Exists(sourceBackingPath))
+            {
+                if (overwrite && Directory.Exists(destinationBackingPath))
+                {
+                    Directory.Delete(destinationBackingPath, recursive: true);
+                }
+
+                Directory.Move(sourceBackingPath, destinationBackingPath);
+            }
+        }
+
+        public void SetLastWriteTimeUtc(string path, DateTime lastWriteTimeUtc)
+        {
+            EnsureWritable();
+            var backingPath = ToBackingPath(path);
+            if (File.Exists(backingPath))
+            {
+                File.SetLastWriteTimeUtc(backingPath, lastWriteTimeUtc);
+            }
+            else if (Directory.Exists(backingPath))
+            {
+                Directory.SetLastWriteTimeUtc(backingPath, lastWriteTimeUtc);
+            }
+        }
+
+        private string ToBackingPath(string? relativePath)
+        {
+            var normalizedRelativePath = NormalizeRelativePath(relativePath);
+            if (string.IsNullOrEmpty(normalizedRelativePath))
+            {
+                return _backingRoot;
+            }
+
+            return Path.Combine(_backingRoot, normalizedRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        }
+
+        private string ToDisplayPath(string? relativePath)
+        {
+            var normalizedRelativePath = NormalizeRelativePath(relativePath);
+            if (string.IsNullOrEmpty(normalizedRelativePath))
+            {
+                return _root;
+            }
+
+            return Path.Combine(_root, normalizedRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        }
+
+        private string NormalizeRelativePath(string? relativePath)
+        {
+            if (string.IsNullOrWhiteSpace(relativePath))
+            {
+                return string.Empty;
+            }
+
+            var normalizedPath = relativePath.Replace('\\', '/');
+            var normalizedRoot = _root.Replace('\\', '/').TrimEnd('/');
+
+            if (string.Equals(normalizedPath.TrimEnd('/'), normalizedRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                return string.Empty;
+            }
+
+            if (normalizedPath.StartsWith(normalizedRoot + "/", StringComparison.OrdinalIgnoreCase))
+            {
+                normalizedPath = normalizedPath[(normalizedRoot.Length + 1)..];
+            }
+
+            return normalizedPath.Trim('/');
+        }
+
+        private void EnsureWritable()
+        {
+            if (IsReadOnly)
+            {
+                throw new ReadOnlyVolumeException(DisplayName);
+            }
+        }
+
+        private sealed record StubFileEntry(
+            string FullPath,
+            string Name,
+            bool IsDirectory,
+            long? Size,
+            DateTime? LastWriteTimeUtc,
+            bool Exists) : IFileEntry;
+    }
+
     private sealed class StubShellPreviewHandlerResolver(bool isAvailable) : IShellPreviewHandlerResolver
     {
         public bool TryGetPreviewHandlerClsid(string filePath, out Guid previewHandlerClsid)
@@ -1503,6 +2015,12 @@ public sealed class MainWindowViewModelTests
         Status: "New File",
         Category: SyncPreviewCategory.NewFiles,
         PlannedActionType: isDirectory ? SyncActionType.CreateDirectoryOnDestination : SyncActionType.CopyToDestination));
+
+    private static bool RelativePathEquals(string actualPath, string expectedPath) =>
+        string.Equals(
+            actualPath.Replace('\\', '/'),
+            expectedPath.Replace('\\', '/'),
+            StringComparison.OrdinalIgnoreCase);
 
     private sealed class SyncTestWorkspace : IDisposable
     {

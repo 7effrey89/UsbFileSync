@@ -31,6 +31,7 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
             DetectMoves = false,
             DryRun = true,
             VerifyChecksums = true,
+            HideMacOsSystemFiles = false,
             ParallelCopyCount = 4,
         };
 
@@ -44,6 +45,7 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
         Assert.Equal(configuration.DetectMoves, restored.DetectMoves);
         Assert.Equal(configuration.DryRun, restored.DryRun);
         Assert.Equal(configuration.VerifyChecksums, restored.VerifyChecksums);
+        Assert.Equal(configuration.HideMacOsSystemFiles, restored.HideMacOsSystemFiles);
         Assert.Equal(configuration.ParallelCopyCount, restored.ParallelCopyCount);
     }
 

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using UsbFileSync.Core.Volumes;
 
 namespace UsbFileSync.Core.Services;
 
@@ -14,17 +15,20 @@ internal sealed class SyncMetadataStore
         WriteIndented = true,
     };
 
-    public SyncMetadataDocument Load(string rootPath)
+    public SyncMetadataDocument Load(string rootPath) =>
+        Load(new WindowsMountedVolume(rootPath));
+
+    public SyncMetadataDocument Load(IVolumeSource volume)
     {
-        var filePath = GetFilePath(rootPath);
-        if (!File.Exists(filePath))
+        var fileEntry = volume.GetEntry(GetRelativeFilePath());
+        if (!fileEntry.Exists || fileEntry.IsDirectory)
         {
             return new SyncMetadataDocument();
         }
 
         try
         {
-            using var stream = File.OpenRead(filePath);
+            using var stream = volume.OpenRead(GetRelativeFilePath());
             return JsonSerializer.Deserialize<SyncMetadataDocument>(stream, SerializerOptions) ?? new SyncMetadataDocument();
         }
         catch (JsonException)
@@ -54,62 +58,10 @@ internal sealed class SyncMetadataStore
         return document.RootId;
     }
 
-    public string GetRootDisplayName(string rootPath)
-    {
-        if (string.IsNullOrWhiteSpace(rootPath))
-        {
-            return string.Empty;
-        }
+    public string GetRootDisplayName(string rootPath) =>
+        GetRootDisplayName(new WindowsMountedVolume(rootPath));
 
-        try
-        {
-            var fullPath = Path.GetFullPath(rootPath);
-            var root = Path.GetPathRoot(fullPath);
-            if (string.IsNullOrWhiteSpace(root))
-            {
-                return fullPath;
-            }
-
-            var normalizedFullPath = fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            var normalizedRoot = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            if (!string.Equals(normalizedFullPath, normalizedRoot, StringComparison.OrdinalIgnoreCase))
-            {
-                return fullPath;
-            }
-
-            var driveInfo = new DriveInfo(root);
-            var driveText = normalizedRoot;
-            var label = string.IsNullOrWhiteSpace(driveInfo.VolumeLabel)
-                ? GetDefaultDriveLabel(driveInfo.DriveType)
-                : driveInfo.VolumeLabel.Trim();
-
-            return string.IsNullOrWhiteSpace(label)
-                ? driveText
-                : $"{label} ({driveText})";
-        }
-        catch (IOException)
-        {
-            return rootPath;
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return rootPath;
-        }
-        catch (ArgumentException)
-        {
-            return rootPath;
-        }
-    }
-
-    private static string GetDefaultDriveLabel(DriveType driveType) => driveType switch
-    {
-        DriveType.Fixed => "Local Disk",
-        DriveType.Removable => "USB Drive",
-        DriveType.Network => "Network Drive",
-        DriveType.CDRom => "CD Drive",
-        DriveType.Ram => "RAM Disk",
-        _ => string.Empty,
-    };
+    public string GetRootDisplayName(IVolumeSource volume) => volume.DisplayName;
 
     public SyncPeerState? GetSharedPeerState(
         SyncMetadataDocument sourceDocument,
@@ -134,33 +86,38 @@ internal sealed class SyncMetadataStore
         };
     }
 
-    public void Save(string rootPath, SyncMetadataDocument document)
+    public void Save(string rootPath, SyncMetadataDocument document) =>
+        Save(new WindowsMountedVolume(rootPath), document);
+
+    public void Save(IVolumeSource volume, SyncMetadataDocument document)
     {
         ArgumentNullException.ThrowIfNull(document);
 
-        var metadataDirectory = Path.Combine(rootPath, MetadataDirectoryName);
-        Directory.CreateDirectory(metadataDirectory);
+        if (volume.IsReadOnly)
+        {
+            return;
+        }
 
-        var filePath = GetFilePath(rootPath);
+        var metadataDirectory = MetadataDirectoryName;
+        var filePath = GetRelativeFilePath();
         var temporaryPath = $"{filePath}.tmp";
+
+        volume.CreateDirectory(metadataDirectory);
 
         try
         {
-            using (var stream = File.Create(temporaryPath))
+            using (var stream = volume.OpenWrite(temporaryPath, overwrite: true))
             {
                 JsonSerializer.Serialize(stream, document, SerializerOptions);
             }
 
-            File.Move(temporaryPath, filePath, overwrite: true);
+            volume.Move(temporaryPath, filePath, overwrite: true);
         }
         finally
         {
             try
             {
-                if (File.Exists(temporaryPath))
-                {
-                    File.Delete(temporaryPath);
-                }
+                volume.DeleteFile(temporaryPath);
             }
             catch (IOException)
             {
@@ -171,7 +128,7 @@ internal sealed class SyncMetadataStore
         }
     }
 
-    private static string GetFilePath(string rootPath) => Path.Combine(rootPath, MetadataDirectoryName, FileIndexFileName);
+    private static string GetRelativeFilePath() => VolumePath.NormalizeRelativePath(Path.Combine(MetadataDirectoryName, FileIndexFileName));
 }
 
 internal sealed class SyncMetadataDocument
