@@ -3,7 +3,7 @@ using System.Diagnostics;
 using DiscUtils.Ext;
 using UsbFileSync.Core.Volumes;
 
-namespace UsbFileSync.App.Services;
+namespace UsbFileSync.Platform.Windows;
 
 public sealed class ExtVolumeService : ISourceVolumeService
 {

@@ -195,6 +195,8 @@ The main sync settings area also supports:
 ## Project Structure
 
 - `UsbFileSync.App`: WPF desktop application, views, dialogs, view models, and the headless worker mode used for background sync execution.
+- `UsbFileSync.Contracts`: shared worker-process message contracts and JSON protocol helpers for communication between the UI host and sync worker session.
+- `UsbFileSync.Platform.Windows`: shared Windows-specific volume access, ext4/HFS+ probing, and sync-preparation services used by both the UI and the worker.
 - `UsbFileSync.Core`: synchronization models, strategies, services, and settings persistence contracts.
 - `UsbFileSync.Tests`: xUnit test project covering core logic and selected UI-facing behavior.
 

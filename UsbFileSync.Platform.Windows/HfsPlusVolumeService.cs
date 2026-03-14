@@ -2,7 +2,7 @@ using System.IO;
 using DiscUtils.HfsPlus;
 using UsbFileSync.Core.Volumes;
 
-namespace UsbFileSync.App.Services;
+namespace UsbFileSync.Platform.Windows;
 
 public sealed class HfsPlusVolumeService : ISourceVolumeService
 {

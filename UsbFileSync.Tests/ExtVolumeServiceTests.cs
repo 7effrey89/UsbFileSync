@@ -1,4 +1,4 @@
-using UsbFileSync.App.Services;
+using UsbFileSync.Platform.Windows;
 
 namespace UsbFileSync.Tests;
 

@@ -3,7 +3,9 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Text;
+using UsbFileSync.Contracts;
 using UsbFileSync.Core.Models;
+using UsbFileSync.Platform.Windows;
 
 namespace UsbFileSync.App.Services;
 

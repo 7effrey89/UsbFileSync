@@ -1,9 +1,9 @@
 using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Volumes;
 
-namespace UsbFileSync.App.Services;
+namespace UsbFileSync.Platform.Windows;
 
-internal static class SyncVolumeServiceFactory
+public static class SyncVolumeServiceFactory
 {
     public static ISourceVolumeService CreateSourceVolumeService() =>
         new CompositeSourceVolumeService([new HfsPlusVolumeService(), new ExtVolumeService()]);

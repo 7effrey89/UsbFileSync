@@ -9,6 +9,7 @@ using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Services;
 using UsbFileSync.Core.Strategies;
 using UsbFileSync.Core.Volumes;
+using UsbFileSync.Platform.Windows;
 using SpreadsheetText = DocumentFormat.OpenXml.Spreadsheet.Text;
 using WordRun = DocumentFormat.OpenXml.Wordprocessing.Run;
 using WordText = DocumentFormat.OpenXml.Wordprocessing.Text;

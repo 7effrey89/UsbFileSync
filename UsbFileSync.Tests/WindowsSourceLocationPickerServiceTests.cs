@@ -1,5 +1,6 @@
 using UsbFileSync.App.Services;
 using UsbFileSync.Core.Services;
+using UsbFileSync.Platform.Windows;
 
 namespace UsbFileSync.Tests;
 

@@ -28,6 +28,7 @@
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
     <ProjectReference Include="..\UsbFileSync.App\UsbFileSync.App.csproj" />
+    <ProjectReference Include="..\UsbFileSync.Platform.Windows\UsbFileSync.Platform.Windows.csproj" />
     <Reference Include="SharpExt4">
       <HintPath>..\UsbFileSync.App\lib\SharpExt4.dll</HintPath>
       <Private>True</Private>

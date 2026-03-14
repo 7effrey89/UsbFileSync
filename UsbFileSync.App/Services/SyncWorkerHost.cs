@@ -1,7 +1,9 @@
 using System.IO.Pipes;
 using System.Text;
+using UsbFileSync.Contracts;
 using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Services;
+using UsbFileSync.Platform.Windows;
 
 namespace UsbFileSync.App.Services;
 

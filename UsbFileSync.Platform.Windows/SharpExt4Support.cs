@@ -1,9 +1,9 @@
 using System.IO;
 using System.Management;
-using System.Security.Principal;
 using System.Reflection;
+using System.Security.Principal;
 
-namespace UsbFileSync.App.Services;
+namespace UsbFileSync.Platform.Windows;
 
 internal static class SharpExt4DiskAccessor
 {
@@ -243,20 +243,20 @@ internal static class WindowsPhysicalDriveResolver
 
 internal static class WindowsDiskMetadata
 {
-    private static readonly System.Reflection.FieldInfo CapacityField =
-        typeof(SharpExt4.ExtDisk).GetField("capacity", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+    private static readonly FieldInfo CapacityField =
+        typeof(SharpExt4.ExtDisk).GetField("capacity", BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("Could not locate SharpExt4.ExtDisk.capacity field.");
 
-    private static readonly System.Reflection.FieldInfo PartitionsField =
-        typeof(SharpExt4.ExtDisk).GetField("partitions", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+    private static readonly FieldInfo PartitionsField =
+        typeof(SharpExt4.ExtDisk).GetField("partitions", BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("Could not locate SharpExt4.ExtDisk.partitions field.");
 
-    private static readonly System.Reflection.FieldInfo PartitionOffsetField =
-        typeof(SharpExt4.Partition).GetField("<backing_store>Offset", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+    private static readonly FieldInfo PartitionOffsetField =
+        typeof(SharpExt4.Partition).GetField("<backing_store>Offset", BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("Could not locate SharpExt4.Partition offset field.");
 
-    private static readonly System.Reflection.FieldInfo PartitionSizeField =
-        typeof(SharpExt4.Partition).GetField("<backing_store>Size", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+    private static readonly FieldInfo PartitionSizeField =
+        typeof(SharpExt4.Partition).GetField("<backing_store>Size", BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("Could not locate SharpExt4.Partition size field.");
 
     public static void TryRepairSharpExt4Metadata(int diskNumber, SharpExt4.ExtDisk disk, Action<string>? log = null)

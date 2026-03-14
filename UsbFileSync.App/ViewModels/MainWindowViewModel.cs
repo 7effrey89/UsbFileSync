@@ -10,6 +10,7 @@ using UsbFileSync.App.Services;
 using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Services;
 using UsbFileSync.Core.Volumes;
+using UsbFileSync.Platform.Windows;
 
 namespace UsbFileSync.App.ViewModels;
 

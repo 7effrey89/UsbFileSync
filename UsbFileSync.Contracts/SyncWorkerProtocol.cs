@@ -1,9 +1,9 @@
 using System.Text.Json;
 using UsbFileSync.Core.Models;
 
-namespace UsbFileSync.App.Services;
+namespace UsbFileSync.Contracts;
 
-internal static class SyncWorkerMessageKinds
+public static class SyncWorkerMessageKinds
 {
     public const string Start = "start";
     public const string Cancel = "cancel";
@@ -15,7 +15,7 @@ internal static class SyncWorkerMessageKinds
     public const string Faulted = "faulted";
 }
 
-internal sealed class SyncWorkerMessage
+public sealed class SyncWorkerMessage
 {
     public string Kind { get; init; } = string.Empty;
 
@@ -30,18 +30,18 @@ internal sealed class SyncWorkerMessage
     public string? ErrorMessage { get; init; }
 }
 
-internal sealed record SyncWorkerRequest(
+public sealed record SyncWorkerRequest(
     SyncConfiguration Configuration,
     IReadOnlyList<SyncAction> Actions);
 
-internal static class SyncWorkerProtocol
+public static class SyncWorkerProtocol
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true,
     };
 
-    public static async Task WriteAsync(System.IO.StreamWriter writer, SyncWorkerMessage message, CancellationToken cancellationToken = default)
+    public static async Task WriteAsync(StreamWriter writer, SyncWorkerMessage message, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(writer);
         ArgumentNullException.ThrowIfNull(message);
@@ -51,7 +51,7 @@ internal static class SyncWorkerProtocol
         await writer.FlushAsync().ConfigureAwait(false);
     }
 
-    public static async Task<SyncWorkerMessage?> ReadAsync(System.IO.StreamReader reader, CancellationToken cancellationToken = default)
+    public static async Task<SyncWorkerMessage?> ReadAsync(StreamReader reader, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(reader);
 
@@ -62,9 +62,9 @@ internal static class SyncWorkerProtocol
     }
 }
 
-internal sealed class SyncWorkerMessageWriter(System.IO.StreamWriter writer)
+public sealed class SyncWorkerMessageWriter(StreamWriter writer)
 {
-    private readonly System.IO.StreamWriter _writer = writer ?? throw new ArgumentNullException(nameof(writer));
+    private readonly StreamWriter _writer = writer ?? throw new ArgumentNullException(nameof(writer));
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     public async Task WriteAsync(SyncWorkerMessage message, CancellationToken cancellationToken = default)

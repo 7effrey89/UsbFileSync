@@ -1,5 +1,6 @@
 using System.IO;
 using UsbFileSync.Core.Volumes;
+using UsbFileSync.Platform.Windows;
 
 namespace UsbFileSync.App.Services;
 
