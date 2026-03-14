@@ -246,3 +246,6 @@ The solution includes automated coverage for:
 
 - New functionality should include or update automated tests.
 - New functionality should also be reflected in this README so the documented feature set stays current.
+
+## Windows Defender
+writable ext4 support here requires raw disk access, so Defender features like Controlled folder access can still block it. That warning is not the app trying to write normal files behind your back; it is Windows objecting to low-level sector access required for ext4 writes on Windows. Enable this behaviour when Defender blocks it. 
