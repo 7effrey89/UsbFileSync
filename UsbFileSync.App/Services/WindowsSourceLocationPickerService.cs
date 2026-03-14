@@ -1,5 +1,4 @@
 using System.IO;
-using UsbFileSync.Core.Services;
 using UsbFileSync.Core.Volumes;
 using UsbFileSync.Platform.Windows;
 
@@ -15,7 +14,7 @@ public static class WindowsSourceLocationPickerService
             fallbackTitle: "Select the source drive or folder",
             dialogTextOptions: new UniversalSourceLocationPickerDialog.DialogTextOptions(
                 WindowTitle: "Select Source Folder",
-                Heading: "Browse source folders across Windows, cloud, Linux ext, and HFS+ volumes",
+                Heading: "Browse source folders across Windows, Linux ext, and HFS+ volumes",
                 Description: "Select a root on the left, browse folders on the right, and choose the current folder as the source location.",
                 NoRootsMessage: "No source volumes are currently available.",
                 InvalidPathMessage: "Enter a valid source folder path under one of the available roots.",
@@ -31,7 +30,7 @@ public static class WindowsSourceLocationPickerService
             fallbackTitle: "Select the destination drive or folder",
             dialogTextOptions: new UniversalSourceLocationPickerDialog.DialogTextOptions(
                 WindowTitle: "Select Destination Folder",
-                Heading: "Browse destination folders across Windows, cloud, and Linux ext volumes",
+                Heading: "Browse destination folders across Windows and Linux ext volumes",
                 Description: "Select a root on the left, browse folders on the right, and choose the current folder as the destination location.",
                 NoRootsMessage: "No destination volumes are currently available.",
                 InvalidPathMessage: "Enter a valid destination folder path under one of the available roots.",
@@ -49,22 +48,9 @@ public static class WindowsSourceLocationPickerService
         ArgumentNullException.ThrowIfNull(destinationVolumeService);
         ArgumentNullException.ThrowIfNull(readOnlyExtVolumeServiceFactory);
 
-        if (destinationVolumeService is ExtVolumeService)
-        {
-            return readOnlyExtVolumeServiceFactory();
-        }
-
-        if (destinationVolumeService is CompositeSourceVolumeService compositeVolumeService)
-        {
-            return new CompositeSourceVolumeService(
-                compositeVolumeService.Services
-                    .Select(service => service is ExtVolumeService
-                        ? readOnlyExtVolumeServiceFactory()
-                        : service)
-                    .ToArray());
-        }
-
-        return destinationVolumeService;
+        return destinationVolumeService is ExtVolumeService
+            ? readOnlyExtVolumeServiceFactory()
+            : destinationVolumeService;
     }
 
     private static string? PickLocation(
@@ -136,24 +122,6 @@ public static class WindowsSourceLocationPickerService
                 rootPath,
                 BuildSpecialVolumeDisplayText(rootPath, specialVolume),
                 specialVolume));
-        }
-
-        var cloudAccountStore = CloudAccountStoreFactory.CreateDefault();
-        foreach (var account in cloudAccountStore.Load()
-                     .OrderBy(account => account.Provider)
-                     .ThenBy(account => account.Login, StringComparer.OrdinalIgnoreCase))
-        {
-            var cloudRootPath = CloudPath.CreateRoot(account.Provider, account.Id);
-            if (!volumeService.TryCreateVolume(cloudRootPath, out var cloudVolume, out _)
-                || cloudVolume is null)
-            {
-                continue;
-            }
-
-            roots.Add(new UniversalSourceLocationPickerDialog.RootOption(
-                cloudRootPath,
-                cloudVolume.DisplayName,
-                cloudVolume));
         }
 
         return roots;

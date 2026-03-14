@@ -15,8 +15,6 @@ public sealed class CompositeSourceVolumeService : ISourceVolumeService
             .ToArray();
     }
 
-    public IReadOnlyList<ISourceVolumeService> Services => _services;
-
     public bool TryCreateVolume(string path, out IVolumeSource? volume, out string? failureReason)
     {
         volume = null;
