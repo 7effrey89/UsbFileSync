@@ -417,6 +417,16 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public void MoveMode_CanBeEnabled()
+    {
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null));
+
+        viewModel.MoveMode = true;
+
+        Assert.True(viewModel.MoveMode);
+    }
+
+    [Fact]
     public void DetectMoves_IsOnlyAvailableInOneWayMode()
     {
         using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null));
@@ -835,6 +845,61 @@ public sealed class MainWindowViewModelTests
         Assert.Equal("Synchronization complete. Applied 1 action(s). Checksum verification passed for 1 copied file(s).", viewModel.StatusMessage);
         Assert.Equal("Sync", viewModel.ActivityLog[0].State);
         Assert.Equal("Synchronization complete. Applied 1 action(s). Checksum verification passed for 1 copied file(s).", viewModel.ActivityLog[0].Message);
+    }
+
+    [Fact]
+    public async Task ToggleSyncCommand_MentionsChecksumVerification_WhenMoveModeIsEnabled()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("moved.txt", "payload");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+            DryRun = false,
+            MoveMode = true,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 1 && viewModel.AllFilesCount == 1).ConfigureAwait(true);
+        viewModel.AreAllNewFilesSelected = true;
+
+        viewModel.ToggleSyncCommand.Execute(null);
+        await WaitForAsync(() =>
+            File.Exists(Path.Combine(workspace.DestinationPath, "moved.txt")) &&
+            !File.Exists(Path.Combine(workspace.SourcePath, "moved.txt")) &&
+            viewModel.StatusMessage == "Synchronization complete. Applied 1 action(s). Checksum verification passed for 1 copied file(s)." &&
+            !viewModel.IsSyncRunning).ConfigureAwait(true);
+
+        Assert.Equal("Synchronization complete. Applied 1 action(s). Checksum verification passed for 1 copied file(s).", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task ToggleSyncCommand_PassesMoveModeToExecutionClient()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("queued.txt", "payload");
+        var executionClient = new StubSyncExecutionClient();
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            syncExecutionClient: executionClient)
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+            DryRun = false,
+            MoveMode = true,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 1 && viewModel.AllFilesCount == 1).ConfigureAwait(true);
+        viewModel.AreAllNewFilesSelected = true;
+
+        viewModel.ToggleSyncCommand.Execute(null);
+        await WaitForAsync(() => executionClient.InvocationCount == 1 && !viewModel.IsSyncRunning).ConfigureAwait(true);
+
+        Assert.True(executionClient.LastConfiguration!.MoveMode);
     }
 
     [Fact]
@@ -1571,6 +1636,8 @@ public sealed class MainWindowViewModelTests
 
         public IReadOnlyList<SyncAction> LastActions { get; private set; } = Array.Empty<SyncAction>();
 
+        public SyncConfiguration? LastConfiguration { get; private set; }
+
         public Task<SyncResult> ExecuteAsync(
             SyncConfiguration configuration,
             IReadOnlyList<SyncAction> actions,
@@ -1579,6 +1646,7 @@ public sealed class MainWindowViewModelTests
             CancellationToken cancellationToken)
         {
             InvocationCount++;
+            LastConfiguration = configuration;
             LastCancellationToken = cancellationToken;
             LastActions = actions.ToList();
             return Task.FromResult(new SyncResult(actions.ToList(), actions.Count, false));

@@ -739,9 +739,9 @@
 
             <Grid Grid.Row="0" Margin="0,0,0,16">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition x:Name="SourceLocationColumnDefinition" Width="1.35*" />
-                    <ColumnDefinition x:Name="SyncSettingsColumnDefinition" Width="360" />
-                    <ColumnDefinition x:Name="DestinationLocationColumnDefinition" Width="1.35*" />
+                    <ColumnDefinition x:Name="SourceLocationColumnDefinition" Width="1.25*" />
+                    <ColumnDefinition x:Name="SyncSettingsColumnDefinition" Width="400" />
+                    <ColumnDefinition x:Name="DestinationLocationColumnDefinition" Width="1.25*" />
                 </Grid.ColumnDefinitions>
 
                 <Border Grid.Column="0" Style="{StaticResource CardBorderStyle}" Padding="18" Margin="0,0,12,0">
@@ -818,6 +818,7 @@
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
 
                             <CheckBox Grid.Column="0"
@@ -836,6 +837,11 @@
                                       Content="Checksums"
                                       IsChecked="{Binding VerifyChecksums}"
                                       ToolTip="Calculate SHA-256 checksums for the source and copied file before committing each transfer. This improves integrity validation but makes transfers slower." />
+                            <CheckBox Grid.Column="3"
+                                      VerticalAlignment="Center"
+                                      Content="Move Mode"
+                                      IsChecked="{Binding MoveMode}"
+                                      ToolTip="After each copy or overwrite completes, UsbFileSync validates the copied file with SHA-256 and deletes the original only when the source and destination hashes match. This is intended for move-style transfer workflows." />
                         </Grid>
                         <Grid Margin="0,16,0,0">
                             <Grid.ColumnDefinitions>
