@@ -7,7 +7,7 @@ UsbFileSync is a Windows desktop file synchronization tool built with WPF and .N
 UsbFileSync now routes sync IO through a volume abstraction instead of assuming every source and destination is a plain Windows path.
 
 - **Windows mounted volumes** (`WindowsMountedVolume`): read/write using normal `System.IO` paths.
-- **Linux ext volumes** (`ExtVolumeSource`): read/write through the same sync engine abstraction, so ext-backed sources and destinations can participate in copy, overwrite, delete, directory creation, and metadata updates.
+- **Linux ext volumes**: UsbFileSync can browse mounted ext volumes without elevation when Windows exposes a readable raw mounted-volume handle such as `\\.\D:`. When UsbFileSync is launched elevated and can resolve the selected drive back to its underlying `PhysicalDriveN`, ext2/ext3/ext4 destinations can also be written through the bundled SharpExt4 backend. If you try to sync to an ext4 destination without elevation, the app will offer to relaunch itself as administrator.
 - **macOS HFS+ volumes**: **read-only by design**. On Windows, UsbFileSync can probe drive roots such as `D:\` as HFS+ (`Mac OS Extended (Journaled)`) sources through an embedded DiscUtils HFS+ backend. Any write attempt against an HFS+ target is still rejected before the sync can modify the volume.
 
 The HFS+ backend intentionally enforces read-only behavior so the application does not expose unsupported write-back flows. The source-side browse flow also uses a shell-free drive picker so selecting an unreadable macOS/removable drive does not invoke the standard Windows folder browser and its format-disk prompt first.
@@ -28,7 +28,7 @@ The HFS+ backend intentionally enforces read-only behavior so the application do
 - Optional SHA-256 checksum validation for each copied file.
 - Configurable parallel file copy count, including `0` for adaptive auto parallelism.
 - Settings persistence between runs.
-- Browse buttons for selecting the source folder/drive and one or more destination folders. The source picker now uses a custom browser that can navigate normal Windows folders and HFS+ source folders from one UI.
+- Browse buttons for selecting the source folder/drive and one or more destination folders. The custom browser now covers both flows from one UI: sources can navigate normal Windows folders, HFS+ source folders, and mounted ext source folders, while destinations can navigate normal Windows folders and mounted ext destination folders.
 - Read-only source and destination path fields that show Explorer-style drive names such as `XTIVIA (F:)` when unfocused, and the raw path when focused for easy copy/select behavior.
 - Custom application and window icon tailored to the sync workflow.
 - Windows shell file icons in the preview so items match Explorer more closely.
@@ -235,6 +235,7 @@ The solution includes automated coverage for:
 - Cancellation is safe, but it is not a true resume system. Restarting synchronization re-analyzes the file set and starts the interrupted file from the beginning.
 - One-way and two-way sync both persist pairwise metadata inside `.sync-metadata`, but two-way conflict resolution still falls back to last write times when both sides changed the same file between sync sessions.
 - The app is currently Windows-only.
+- Linux volumes still depend on the bundled SharpExt4 backend for write access. If the app is not elevated, or if the selected drive cannot be reopened through `PhysicalDriveN`, UsbFileSync falls back to read-only ext browsing for that volume.
 - HFS+ volumes are intentionally treated as read-only targets and will throw a read-only volume error if selected as a write destination.
 - If the HFS+ backend cannot open the selected drive, analyze and sync will stop with the HFS+ volume error reported by the app.
 

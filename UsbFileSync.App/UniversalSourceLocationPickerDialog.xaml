@@ -49,11 +49,11 @@
             </Style>
         </Grid.Resources>
 
-        <TextBlock Text="Browse source folders across Windows and HFS+ volumes" FontSize="18" FontWeight="SemiBold" />
-        <TextBlock Grid.Row="1"
+        <TextBlock x:Name="DialogHeadingTextBlock" Text="Browse folders across supported volumes" FontSize="18" FontWeight="SemiBold" />
+        <TextBlock x:Name="DialogDescriptionTextBlock" Grid.Row="1"
                    Margin="0,8,0,0"
                    Foreground="#616161"
-                   Text="Select a root on the left, browse folders on the right, and choose the current folder as the source location."
+               Text="Select a root on the left, browse folders on the right, and choose the current folder."
                    TextWrapping="Wrap" />
 
         <Grid Grid.Row="2" Margin="0,16,0,0">

@@ -99,6 +99,63 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public async Task ToggleSyncCommand_CopiesFilesToResolvedExtDestinationVolume()
+    {
+        using var workspace = new SyncTestWorkspace();
+        using var extWorkspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("report.txt", "payload");
+
+        var extDestinationVolume = new StubVolumeSource("D:\\", extWorkspace.DestinationPath, isReadOnly: false, fileSystemType: "ext4");
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            destinationVolumeService: new StubSourceVolumeService(extDestinationVolume))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = "D:\\",
+            DryRun = false,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 1).ConfigureAwait(true);
+        viewModel.SelectAllInTab(PreviewTabKind.NewFiles);
+
+        viewModel.ToggleSyncCommand.Execute(null);
+
+        var copiedFile = Path.Combine(extWorkspace.DestinationPath, "report.txt");
+        await WaitForAsync(() => !viewModel.IsSyncRunning && File.Exists(copiedFile)).ConfigureAwait(true);
+
+        Assert.Equal("payload", await File.ReadAllTextAsync(copiedFile).ConfigureAwait(true));
+    }
+
+    [Fact]
+    public void ToggleSyncCommand_ShowsValidationError_WhenExtDestinationIsReadOnly()
+    {
+        using var workspace = new SyncTestWorkspace();
+        using var extWorkspace = new SyncTestWorkspace();
+
+        var readOnlyExtDestinationVolume = new StubVolumeSource("D:\\", extWorkspace.DestinationPath, isReadOnly: true, fileSystemType: "ext4");
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            destinationVolumeService: new StubSourceVolumeService(readOnlyExtDestinationVolume))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = "D:\\",
+            DryRun = false,
+        };
+
+        viewModel.ToggleSyncCommand.Execute(null);
+
+        Assert.Equal(
+            "Destination Linux volume is currently only available in read-only mode. UsbFileSync must be running elevated, and the selected drive must be writable through the bundled ext4 backend before synchronization can continue.",
+            viewModel.StatusMessage);
+        Assert.False(viewModel.IsSyncRunning);
+    }
+
+    [Fact]
     public void ToggleSyncCommand_ShowsHfsPlusValidationError_WhenHfsVolumeCannotOpenDrive()
     {
         using var workspace = new SyncTestWorkspace();
@@ -419,6 +476,45 @@ public sealed class MainWindowViewModelTests
 
         Assert.True(File.Exists(Path.Combine(workspace.DestinationPath, "one.txt")));
         Assert.False(File.Exists(Path.Combine(workspace.DestinationPath, "two.txt")));
+    }
+
+    [Fact]
+    public async Task ToggleSyncCommand_PreservesRemainingPreviewItems_AfterPartialSync()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("one.txt", "one");
+        workspace.WriteSourceFile("two.txt", "two");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+            DryRun = false,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 2 && viewModel.AllFilesCount == 2).ConfigureAwait(true);
+
+        var analyzeLogCount = viewModel.ActivityLog.Count(entry => entry.State == "Analyze");
+        viewModel.NewFiles.Single(row => row.RelativePath == "one.txt").IsSelected = true;
+
+        viewModel.ToggleSyncCommand.Execute(null);
+        await WaitForAsync(() => !viewModel.IsSyncRunning && File.Exists(Path.Combine(workspace.DestinationPath, "one.txt"))).ConfigureAwait(true);
+
+        Assert.Single(viewModel.PlannedActions);
+        Assert.Single(viewModel.NewFiles);
+        Assert.Equal("two.txt", viewModel.NewFiles[0].RelativePath);
+        Assert.Equal(analyzeLogCount, viewModel.ActivityLog.Count(entry => entry.State == "Analyze"));
+
+        viewModel.NewFiles[0].IsSelected = true;
+        Assert.Single(viewModel.RemainingQueue);
+        Assert.Equal("two.txt", viewModel.RemainingQueue[0].RelativePath);
+
+        viewModel.ToggleSyncCommand.Execute(null);
+        await WaitForAsync(() => !viewModel.IsSyncRunning && File.Exists(Path.Combine(workspace.DestinationPath, "two.txt"))).ConfigureAwait(true);
+
+        Assert.Equal(analyzeLogCount, viewModel.ActivityLog.Count(entry => entry.State == "Analyze"));
+        Assert.Empty(viewModel.PlannedActions);
+        Assert.Empty(viewModel.NewFiles);
     }
 
     [Fact]
@@ -1467,17 +1563,86 @@ public sealed class MainWindowViewModelTests
             return new FileStream(ToBackingPath(path), FileMode.Open, FileAccess.Read, FileShare.Read);
         }
 
-        public Stream OpenWrite(string path, bool overwrite = true) => throw new ReadOnlyVolumeException(DisplayName);
+        public Stream OpenWrite(string path, bool overwrite = true)
+        {
+            EnsureWritable();
+            var backingPath = ToBackingPath(path);
+            Directory.CreateDirectory(Path.GetDirectoryName(backingPath)!);
+            return new FileStream(
+                backingPath,
+                overwrite ? FileMode.Create : FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None);
+        }
 
-        public void CreateDirectory(string path) => throw new ReadOnlyVolumeException(DisplayName);
+        public void CreateDirectory(string path)
+        {
+            EnsureWritable();
+            Directory.CreateDirectory(ToBackingPath(path));
+        }
 
-        public void DeleteFile(string path) => throw new ReadOnlyVolumeException(DisplayName);
+        public void DeleteFile(string path)
+        {
+            EnsureWritable();
+            var backingPath = ToBackingPath(path);
+            if (File.Exists(backingPath))
+            {
+                File.Delete(backingPath);
+            }
+        }
 
-        public void DeleteDirectory(string path) => throw new ReadOnlyVolumeException(DisplayName);
+        public void DeleteDirectory(string path)
+        {
+            EnsureWritable();
+            var backingPath = ToBackingPath(path);
+            if (Directory.Exists(backingPath))
+            {
+                Directory.Delete(backingPath, recursive: true);
+            }
+        }
 
-        public void Move(string sourcePath, string destinationPath, bool overwrite = false) => throw new ReadOnlyVolumeException(DisplayName);
+        public void Move(string sourcePath, string destinationPath, bool overwrite = false)
+        {
+            EnsureWritable();
+            var sourceBackingPath = ToBackingPath(sourcePath);
+            var destinationBackingPath = ToBackingPath(destinationPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationBackingPath)!);
 
-        public void SetLastWriteTimeUtc(string path, DateTime lastWriteTimeUtc) => throw new ReadOnlyVolumeException(DisplayName);
+            if (File.Exists(sourceBackingPath))
+            {
+                if (overwrite && File.Exists(destinationBackingPath))
+                {
+                    File.Delete(destinationBackingPath);
+                }
+
+                File.Move(sourceBackingPath, destinationBackingPath, overwrite);
+                return;
+            }
+
+            if (Directory.Exists(sourceBackingPath))
+            {
+                if (overwrite && Directory.Exists(destinationBackingPath))
+                {
+                    Directory.Delete(destinationBackingPath, recursive: true);
+                }
+
+                Directory.Move(sourceBackingPath, destinationBackingPath);
+            }
+        }
+
+        public void SetLastWriteTimeUtc(string path, DateTime lastWriteTimeUtc)
+        {
+            EnsureWritable();
+            var backingPath = ToBackingPath(path);
+            if (File.Exists(backingPath))
+            {
+                File.SetLastWriteTimeUtc(backingPath, lastWriteTimeUtc);
+            }
+            else if (Directory.Exists(backingPath))
+            {
+                Directory.SetLastWriteTimeUtc(backingPath, lastWriteTimeUtc);
+            }
+        }
 
         private string ToBackingPath(string? relativePath)
         {
@@ -1522,6 +1687,14 @@ public sealed class MainWindowViewModelTests
             }
 
             return normalizedPath.Trim('/');
+        }
+
+        private void EnsureWritable()
+        {
+            if (IsReadOnly)
+            {
+                throw new ReadOnlyVolumeException(DisplayName);
+            }
         }
 
         private sealed record StubFileEntry(

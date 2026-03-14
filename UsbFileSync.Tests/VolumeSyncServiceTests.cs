@@ -90,6 +90,34 @@ public sealed class VolumeSyncServiceTests : IDisposable
         }));
     }
 
+    [Fact]
+    public async Task ExecuteAsync_RejectsExt4DestinationWithoutElevatedAccess()
+    {
+        var sourceBackingPath = CreateDirectory("windows-source");
+        var destinationBackingPath = CreateDirectory("ext4-destination");
+        WriteFile(sourceBackingPath, "photo.jpg", "image", new DateTime(2024, 5, 4, 0, 0, 0, DateTimeKind.Utc));
+
+        var sourceVolume = new WindowsMountedVolume(sourceBackingPath);
+        var destinationVolume = new ExtVolumeSource(
+            "linux-destination",
+            "Linux Backup",
+            destinationBackingPath,
+            root: null,
+            hasRequiredWriteAccess: () => false);
+        var service = new SyncService();
+
+        var exception = await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.ExecuteAsync(new SyncConfiguration
+        {
+            SourcePath = sourceBackingPath,
+            SourceVolume = sourceVolume,
+            DestinationVolume = destinationVolume,
+            DestinationVolumes = [destinationVolume],
+            Mode = SyncMode.OneWay,
+        }));
+
+        Assert.Equal("Writing to ext4 volumes requires elevated access. Run UsbFileSync as administrator when an ext4 volume is a sync destination.", exception.Message);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_rootPath))

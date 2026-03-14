@@ -37,6 +37,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private readonly ISyncSettingsStore? _settingsStore;
     private readonly IFolderPickerService _folderPickerService;
     private readonly ISourceVolumeService _sourceVolumeService;
+    private readonly ISourceVolumeService _destinationVolumeService;
     private readonly IFileLauncherService _fileLauncherService;
     private readonly IDriveDisplayNameService _driveDisplayNameService;
     private readonly Dispatcher _dispatcher;
@@ -79,7 +80,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _suppressSelectionUpdates;
 
     public MainWindowViewModel()
-        : this(new SyncService(), CreateDefaultSettingsStore(), new WindowsFolderPickerService(), new WindowsFileLauncherService(), new WindowsDriveDisplayNameService(), new HfsPlusVolumeService())
+        : this(new SyncService(), CreateDefaultSettingsStore(), new WindowsFolderPickerService(), new WindowsFileLauncherService(), new WindowsDriveDisplayNameService(), CreateDefaultSourceVolumeService(), CreateDefaultDestinationVolumeService())
     {
     }
 
@@ -89,12 +90,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         IFolderPickerService? folderPickerService = null,
         IFileLauncherService? fileLauncherService = null,
         IDriveDisplayNameService? driveDisplayNameService = null,
-        ISourceVolumeService? sourceVolumeService = null)
+        ISourceVolumeService? sourceVolumeService = null,
+        ISourceVolumeService? destinationVolumeService = null)
     {
         _syncService = syncService;
         _settingsStore = settingsStore;
         _folderPickerService = folderPickerService ?? new WindowsFolderPickerService();
-        _sourceVolumeService = sourceVolumeService ?? new HfsPlusVolumeService();
+        _sourceVolumeService = sourceVolumeService ?? CreateDefaultSourceVolumeService();
+        _destinationVolumeService = destinationVolumeService ?? CreateDefaultDestinationVolumeService();
         _fileLauncherService = fileLauncherService ?? new WindowsFileLauncherService();
         _driveDisplayNameService = driveDisplayNameService ?? new WindowsDriveDisplayNameService();
         _dispatcher = Dispatcher.CurrentDispatcher;
@@ -530,6 +533,12 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         return new JsonSyncSettingsStore(settingsPath);
     }
 
+    private static ISourceVolumeService CreateDefaultSourceVolumeService() =>
+        new CompositeSourceVolumeService([new HfsPlusVolumeService(), new ExtVolumeService()]);
+
+    private static ISourceVolumeService CreateDefaultDestinationVolumeService() =>
+        new ExtVolumeService(allowWriteAccess: true);
+
     private void BrowseSourcePath()
     {
         var selectedPath = WindowsSourceLocationPickerService.PickSourceLocation(SourcePath, _folderPickerService, _sourceVolumeService);
@@ -551,7 +560,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         var destinationPath = parameter is DestinationPathEntryViewModel entry
             ? entry.Path
             : DestinationPath;
-        var selectedPath = _folderPickerService.PickFolder("Select the destination drive or folder", destinationPath);
+        var selectedPath = WindowsSourceLocationPickerService.PickDestinationLocation(destinationPath, _folderPickerService, _destinationVolumeService);
         if (!string.IsNullOrWhiteSpace(selectedPath))
         {
             if (parameter is DestinationPathEntryViewModel destinationEntry)
@@ -658,20 +667,28 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _ = StartSyncAsync();
     }
 
-    private SyncConfiguration CreateConfiguration() => new()
+    private SyncConfiguration CreateConfiguration()
     {
-        SourcePath = SourcePath,
-        SourceVolume = ResolveSourceVolume(),
-        DestinationPath = DestinationPath,
-        DestinationPaths = GetDestinationPaths().ToList(),
-        Mode = SelectedMode,
-        DetectMoves = DetectMoves,
-        DryRun = DryRun,
-        VerifyChecksums = VerifyChecksums,
-        HideMacOsSystemFiles = HideMacOsSystemFiles,
-        ParallelCopyCount = ParallelCopyCount,
-        PreviewProviderMappings = new Dictionary<string, string>(_previewProviderMappings, StringComparer.OrdinalIgnoreCase),
-    };
+        var destinationPaths = GetDestinationPaths().ToList();
+        var destinationVolumes = ResolveDestinationVolumes(destinationPaths);
+
+        return new SyncConfiguration
+        {
+            SourcePath = SourcePath,
+            SourceVolume = ResolveSourceVolume(),
+            DestinationPath = DestinationPath,
+            DestinationVolume = destinationVolumes.FirstOrDefault(),
+            DestinationPaths = destinationPaths,
+            DestinationVolumes = destinationVolumes,
+            Mode = SelectedMode,
+            DetectMoves = DetectMoves,
+            DryRun = DryRun,
+            VerifyChecksums = VerifyChecksums,
+            HideMacOsSystemFiles = HideMacOsSystemFiles,
+            ParallelCopyCount = ParallelCopyCount,
+            PreviewProviderMappings = new Dictionary<string, string>(_previewProviderMappings, StringComparer.OrdinalIgnoreCase),
+        };
+    }
 
     public void UpdateParallelCopyCount(int parallelCopyCount)
     {
@@ -1023,8 +1040,16 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
             CurrentTransferDetails = QueueSummary;
             AddLog("Sync", StatusMessage);
-            PlannedActions.Clear();
-            ReplaceQueue(Array.Empty<SyncAction>());
+
+            if (result.IsDryRun)
+            {
+                ReplaceQueue(GetSelectedActions());
+            }
+            else
+            {
+                RemoveCompletedActionsFromPreview(actions);
+                ReplaceQueue(GetSelectedActions());
+            }
         }, cancellationTokenSource.Token).ConfigureAwait(true);
 
         if (ReferenceEquals(_syncCancellationTokenSource, cancellationTokenSource))
@@ -1155,7 +1180,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             var label = destinationPaths.Count == 1
                 ? "Destination"
                 : $"Destination {index + 1}";
-            if (!TryValidateSyncPath(destinationPaths[index], label, requireExistingDirectory: false, out var destinationValidationMessage))
+            if (!TryValidateDestinationPath(destinationPaths[index], label, out var destinationValidationMessage))
             {
                 StatusMessage = destinationValidationMessage;
                 return false;
@@ -1200,6 +1225,18 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             : null;
     }
 
+    private IReadOnlyList<IVolumeSource> ResolveDestinationVolumes(IReadOnlyList<string> destinationPaths) =>
+        destinationPaths
+            .Select(path => ResolveDestinationVolume(path) ?? new WindowsMountedVolume(path))
+            .ToList();
+
+    private IVolumeSource? ResolveDestinationVolume(string path)
+    {
+        return _destinationVolumeService.TryCreateVolume(path, out var volume, out _)
+            ? volume
+            : null;
+    }
+
     private bool TryValidateSyncPath(string path, string label, bool requireExistingDirectory, out string validationMessage)
     {
         if (!string.Equals(label, "Source", StringComparison.OrdinalIgnoreCase) || !requireExistingDirectory)
@@ -1240,6 +1277,90 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             ? $"{label} path does not exist."
             : $"{label} macOS volume could not be opened. {failureReason}";
         return false;
+    }
+
+    private bool TryValidateDestinationPath(string path, string label, out string validationMessage)
+    {
+        try
+        {
+            var fullPath = Path.GetFullPath(path);
+            if (HasAccessibleExistingAncestor(fullPath))
+            {
+                validationMessage = string.Empty;
+                return true;
+            }
+        }
+        catch (Exception) when (path is not null)
+        {
+        }
+
+        if (_destinationVolumeService.TryCreateVolume(path, out var volume, out var failureReason))
+        {
+            if (volume is not null &&
+                string.Equals(volume.FileSystemType, "ext4", StringComparison.OrdinalIgnoreCase) &&
+                volume.IsReadOnly)
+            {
+                if (TryRelaunchElevated())
+                {
+                    validationMessage = "Relaunching with elevated privileges...";
+                    return false;
+                }
+
+                validationMessage = $"{label} Linux volume is currently only available in read-only mode. UsbFileSync must be running elevated, and the selected drive must be writable through the bundled ext4 backend before synchronization can continue.";
+                return false;
+            }
+
+            validationMessage = string.Empty;
+            return true;
+        }
+
+        validationMessage = string.IsNullOrWhiteSpace(failureReason)
+            ? $"{label} path does not exist or is not accessible."
+            : $"{label} Linux volume could not be opened. {failureReason}";
+        return false;
+    }
+
+    private static bool TryRelaunchElevated()
+    {
+        if (!OperatingSystem.IsWindows() || System.Windows.Application.Current is null)
+        {
+            return false;
+        }
+
+        var result = System.Windows.MessageBox.Show(
+            "Writing to Linux ext volumes requires administrator privileges.\n\nWould you like to relaunch UsbFileSync as administrator?",
+            "Elevation Required",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Question);
+
+        if (result != System.Windows.MessageBoxResult.Yes)
+        {
+            return false;
+        }
+
+        try
+        {
+            var exePath = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(exePath))
+            {
+                return false;
+            }
+
+            var startInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = exePath,
+                UseShellExecute = true,
+                Verb = "runas",
+            };
+
+            System.Diagnostics.Process.Start(startInfo);
+            System.Windows.Application.Current.Shutdown();
+            return true;
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            return false;
+        }
     }
 
     private static bool HasAccessibleExistingAncestor(string fullPath)
@@ -1529,6 +1650,48 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             }
 
             RaisePropertyChanged(nameof(QueueSummary));
+        });
+    }
+
+    private void RemoveCompletedActionsFromPreview(IEnumerable<SyncAction> actions)
+    {
+        var completedKeys = actions
+            .Select(action => action.GetActionKey())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (completedKeys.Count == 0)
+        {
+            return;
+        }
+
+        RunOnDispatcher(() =>
+        {
+            foreach (var action in PlannedActions.Where(action => completedKeys.Contains(action.GetActionKey())).ToList())
+            {
+                PlannedActions.Remove(action);
+            }
+
+            foreach (var completedKey in completedKeys)
+            {
+                if (!_previewRowsByItemKey.Remove(completedKey, out var row))
+                {
+                    continue;
+                }
+
+                row.PropertyChanged -= OnPreviewRowPropertyChanged;
+                NewFiles.Remove(row);
+                ChangedFiles.Remove(row);
+                DeletedFiles.Remove(row);
+                UnchangedFiles.Remove(row);
+                AllFiles.Remove(row);
+            }
+
+            RaisePropertyChanged(nameof(NewFilesCount));
+            RaisePropertyChanged(nameof(ChangedFilesCount));
+            RaisePropertyChanged(nameof(DeletedFilesCount));
+            RaisePropertyChanged(nameof(UnchangedFilesCount));
+            RaisePropertyChanged(nameof(AllFilesCount));
+            RaiseSelectionStateChanged();
         });
     }
 

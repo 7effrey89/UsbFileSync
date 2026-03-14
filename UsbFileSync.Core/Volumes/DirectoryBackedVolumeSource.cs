@@ -205,7 +205,7 @@ public abstract class DirectoryBackedVolumeSource : IVolumeSource
         return $"{Root.TrimEnd('/', '\\')}/{normalizedRelativePath}";
     }
 
-    private void EnsureWritable()
+    protected virtual void EnsureWritable()
     {
         if (IsReadOnly)
         {

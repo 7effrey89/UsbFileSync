@@ -11,19 +11,34 @@ namespace UsbFileSync.App;
 
 public partial class UniversalSourceLocationPickerDialog : Window
 {
+    private static readonly DialogTextOptions DefaultTextOptions = new(
+        WindowTitle: "Select Folder",
+        Heading: "Browse folders across supported volumes",
+        Description: "Select a root on the left, browse folders on the right, and choose the current folder.",
+        NoRootsMessage: "No supported volumes are currently available.",
+        InvalidPathMessage: "Enter a valid folder path under one of the available roots.",
+        InvalidPathTitle: "Invalid folder",
+        FolderNotFoundMessage: "That folder was not found on the selected volume.",
+        FolderNotFoundTitle: "Folder not found");
+
     private readonly List<RootOption> _roots;
     private readonly List<RootListItem> _rootItems;
     private readonly IFileIconProvider _iconProvider;
+    private readonly DialogTextOptions _textOptions;
     private RootOption? _currentRoot;
     private string _currentRelativePath = string.Empty;
 
-    public UniversalSourceLocationPickerDialog(IEnumerable<RootOption> roots, string? initialPath = null)
+    public UniversalSourceLocationPickerDialog(IEnumerable<RootOption> roots, string? initialPath = null, DialogTextOptions? textOptions = null)
     {
         InitializeComponent();
         _iconProvider = ShellFileIconProvider.Instance;
+        _textOptions = textOptions ?? DefaultTextOptions;
         _roots = roots.OrderBy(root => root.RootPath, StringComparer.OrdinalIgnoreCase).ToList();
         _rootItems = _roots.Select(root => new RootListItem(root, ShellFileIconProvider.Instance.GetDriveIcon(root.RootPath))).ToList();
         RootsListBox.ItemsSource = _rootItems;
+        Title = _textOptions.WindowTitle;
+        DialogHeadingTextBlock.Text = _textOptions.Heading;
+        DialogDescriptionTextBlock.Text = _textOptions.Description;
 
         Loaded += (_, _) => InitializeSelection(initialPath);
     }
@@ -34,7 +49,7 @@ public partial class UniversalSourceLocationPickerDialog : Window
     {
         if (_roots.Count == 0)
         {
-            FolderStatusTextBlock.Text = "No source volumes are currently available.";
+            FolderStatusTextBlock.Text = _textOptions.NoRootsMessage;
             return;
         }
 
@@ -186,8 +201,8 @@ public partial class UniversalSourceLocationPickerDialog : Window
         {
             System.Windows.MessageBox.Show(
                 this,
-                "Enter a valid source folder path under one of the available roots.",
-                "Invalid source folder",
+                _textOptions.InvalidPathMessage,
+                _textOptions.InvalidPathTitle,
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
             CurrentFolderTextBox.Focus();
@@ -209,8 +224,8 @@ public partial class UniversalSourceLocationPickerDialog : Window
         {
             System.Windows.MessageBox.Show(
                 this,
-                "That folder was not found on the selected source volume.",
-                "Folder not found",
+                _textOptions.FolderNotFoundMessage,
+                _textOptions.FolderNotFoundTitle,
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
             CurrentFolderTextBox.Focus();
@@ -387,6 +402,16 @@ public partial class UniversalSourceLocationPickerDialog : Window
     }
 
     public sealed record RootOption(string RootPath, string DisplayText, IVolumeSource Volume);
+
+    public sealed record DialogTextOptions(
+        string WindowTitle,
+        string Heading,
+        string Description,
+        string NoRootsMessage,
+        string InvalidPathMessage,
+        string InvalidPathTitle,
+        string FolderNotFoundMessage,
+        string FolderNotFoundTitle);
 
     internal sealed record BreadcrumbSegment(string DisplayText, string RelativePath);
 
