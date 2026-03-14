@@ -7,7 +7,7 @@ UsbFileSync is a Windows desktop file synchronization tool built with WPF and .N
 UsbFileSync now routes sync IO through a volume abstraction instead of assuming every source and destination is a plain Windows path.
 
 - **Windows mounted volumes** (`WindowsMountedVolume`): read/write using normal `System.IO` paths.
-- **Linux ext volumes**: UsbFileSync can browse mounted ext volumes without elevation when Windows exposes a readable raw mounted-volume handle such as `\\.\D:`. When UsbFileSync is launched elevated and can resolve the selected drive back to its underlying `PhysicalDriveN`, ext2/ext3/ext4 destinations can also be written through the bundled SharpExt4 backend. If you try to sync to an ext4 destination without elevation, the app will offer to relaunch itself as administrator.
+- **Linux ext volumes**: UsbFileSync can browse mounted ext volumes without elevation when Windows exposes a readable raw mounted-volume handle such as `\\.\D:`. When a selected ext2/ext3/ext4 destination needs administrator rights for write access, the UI now launches a separate background sync worker as administrator so the main window, preview, and selection state stay in place while the privileged sync runs.
 - **macOS HFS+ volumes**: **read-only by design**. On Windows, UsbFileSync can probe drive roots such as `D:\` as HFS+ (`Mac OS Extended (Journaled)`) sources through an embedded DiscUtils HFS+ backend. Any write attempt against an HFS+ target is still rejected before the sync can modify the volume.
 
 The HFS+ backend intentionally enforces read-only behavior so the application does not expose unsupported write-back flows. The source-side browse flow also uses a shell-free drive picker so selecting an unreadable macOS/removable drive does not invoke the standard Windows folder browser and its format-disk prompt first.
@@ -24,6 +24,7 @@ The HFS+ backend intentionally enforces read-only behavior so the application do
 - Per-row checkboxes in the preview so only selected planned items are synchronized.
 - The busy overlay now includes a `Cancel` action while preview analysis is running, so long preview builds can be stopped without waiting for completion.
 - Completed preview rows remain visible after synchronization and are marked done until the next analyze refresh, while already-applied rows are retired from future queue selection.
+- Synchronization now runs in a separate background worker process, which allows ext4 write elevation without restarting the WPF UI.
 - Per-file progress, transfer speed, queue visibility, and activity logging during synchronization.
 - Start and stop synchronization from the main window.
 - Safe cancellation for file copy operations.
@@ -193,7 +194,7 @@ The main sync settings area also supports:
 
 ## Project Structure
 
-- `UsbFileSync.App`: WPF desktop application, views, dialogs, and view models.
+- `UsbFileSync.App`: WPF desktop application, views, dialogs, view models, and the headless worker mode used for background sync execution.
 - `UsbFileSync.Core`: synchronization models, strategies, services, and settings persistence contracts.
 - `UsbFileSync.Tests`: xUnit test project covering core logic and selected UI-facing behavior.
 

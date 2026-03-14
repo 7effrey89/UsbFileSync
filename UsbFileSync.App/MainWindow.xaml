@@ -1286,7 +1286,7 @@
 
             <Border Grid.RowSpan="3"
                     Background="#CCFFFFFF"
-                    Visibility="{Binding IsBusy, Converter={StaticResource BooleanToVisibilityConverter}}"
+                    Visibility="{Binding IsBusyOverlayVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                     Panel.ZIndex="20">
                 <Border HorizontalAlignment="Center"
                         VerticalAlignment="Center"

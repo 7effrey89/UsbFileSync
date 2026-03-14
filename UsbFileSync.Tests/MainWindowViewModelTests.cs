@@ -159,28 +159,36 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
-    public void ToggleSyncCommand_ShowsValidationError_WhenExtDestinationIsReadOnly()
+    public async Task ToggleSyncCommand_UsesExecutionClient_WhenExtDestinationRequiresElevation()
     {
         using var workspace = new SyncTestWorkspace();
         using var extWorkspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("report.txt", "payload");
 
         var readOnlyExtDestinationVolume = new StubVolumeSource("D:\\", extWorkspace.DestinationPath, isReadOnly: true, fileSystemType: "ext4");
+        var executionClient = new StubSyncExecutionClient();
         using var viewModel = new MainWindowViewModel(
             new SyncService(),
             settingsStore: null,
             folderPickerService: new StubFolderPickerService(null),
-            destinationVolumeService: new StubSourceVolumeService(readOnlyExtDestinationVolume))
+            destinationVolumeService: new StubSourceVolumeService(readOnlyExtDestinationVolume),
+            syncExecutionClient: executionClient)
         {
             SourcePath = workspace.SourcePath,
             DestinationPath = "D:\\",
             DryRun = false,
         };
 
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 1).ConfigureAwait(true);
+        viewModel.SelectAllInTab(PreviewTabKind.NewFiles);
+
         viewModel.ToggleSyncCommand.Execute(null);
 
-        Assert.Equal(
-            "Destination Linux volume is currently only available in read-only mode. UsbFileSync must be running elevated, and the selected drive must be writable through the bundled ext4 backend before synchronization can continue.",
-            viewModel.StatusMessage);
+        await WaitForAsync(() => !viewModel.IsSyncRunning && executionClient.InvocationCount == 1).ConfigureAwait(true);
+
+        Assert.Equal(1, executionClient.InvocationCount);
+        Assert.Contains("Synchronization complete.", viewModel.StatusMessage);
         Assert.False(viewModel.IsSyncRunning);
     }
 
@@ -314,6 +322,37 @@ public sealed class MainWindowViewModelTests
         await WaitForAsync(() => !viewModel.IsSyncRunning).ConfigureAwait(true);
 
         Assert.Equal("Synchronize", viewModel.SyncButtonText);
+        Assert.Equal("Synchronization stopped.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task ToggleSyncCommand_CancelsExecutionClientSync()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("queued.txt", "payload");
+        var executionClient = new BlockingSyncExecutionClient();
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            syncExecutionClient: executionClient)
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+            DryRun = false,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 1).ConfigureAwait(true);
+        viewModel.SelectAllInTab(PreviewTabKind.NewFiles);
+
+        viewModel.ToggleSyncCommand.Execute(null);
+        await WaitForAsync(() => viewModel.IsSyncRunning && executionClient.Started).ConfigureAwait(true);
+
+        viewModel.ToggleSyncCommand.Execute(null);
+
+        await WaitForAsync(() => !viewModel.IsSyncRunning && executionClient.CancelObserved).ConfigureAwait(true);
+
         Assert.Equal("Synchronization stopped.", viewModel.StatusMessage);
     }
 
@@ -1520,6 +1559,55 @@ public sealed class MainWindowViewModelTests
             resolvedVolume = volume;
             resolvedFailureReason = volume is null ? failureReason : null;
             return volume is not null;
+        }
+    }
+
+    private sealed class StubSyncExecutionClient : ISyncExecutionClient
+    {
+        public int InvocationCount { get; private set; }
+
+        public CancellationToken LastCancellationToken { get; private set; }
+
+        public IReadOnlyList<SyncAction> LastActions { get; private set; } = Array.Empty<SyncAction>();
+
+        public Task<SyncResult> ExecuteAsync(
+            SyncConfiguration configuration,
+            IReadOnlyList<SyncAction> actions,
+            IProgress<SyncProgress>? progress,
+            IProgress<int>? autoParallelism,
+            CancellationToken cancellationToken)
+        {
+            InvocationCount++;
+            LastCancellationToken = cancellationToken;
+            LastActions = actions.ToList();
+            return Task.FromResult(new SyncResult(actions.ToList(), actions.Count, false));
+        }
+    }
+
+    private sealed class BlockingSyncExecutionClient : ISyncExecutionClient
+    {
+        private readonly TaskCompletionSource _completionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool Started { get; private set; }
+
+        public bool CancelObserved { get; private set; }
+
+        public async Task<SyncResult> ExecuteAsync(
+            SyncConfiguration configuration,
+            IReadOnlyList<SyncAction> actions,
+            IProgress<SyncProgress>? progress,
+            IProgress<int>? autoParallelism,
+            CancellationToken cancellationToken)
+        {
+            Started = true;
+            using var registration = cancellationToken.Register(() =>
+            {
+                CancelObserved = true;
+                _completionSource.TrySetCanceled(cancellationToken);
+            });
+
+            await _completionSource.Task.ConfigureAwait(false);
+            return new SyncResult(actions.ToList(), actions.Count, false);
         }
     }
 

@@ -45,6 +45,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private readonly IFolderPickerService _folderPickerService;
     private readonly ISourceVolumeService _sourceVolumeService;
     private readonly ISourceVolumeService _destinationVolumeService;
+    private readonly ISyncExecutionClient _syncExecutionClient;
     private readonly IFileLauncherService _fileLauncherService;
     private readonly IDriveDisplayNameService _driveDisplayNameService;
     private readonly Dispatcher _dispatcher;
@@ -91,7 +92,15 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _suppressSelectionUpdates;
 
     public MainWindowViewModel()
-        : this(new SyncService(), CreateDefaultSettingsStore(), new WindowsFolderPickerService(), new WindowsFileLauncherService(), new WindowsDriveDisplayNameService(), CreateDefaultSourceVolumeService(), CreateDefaultDestinationVolumeService())
+        : this(
+            new SyncService(),
+            CreateDefaultSettingsStore(),
+            new WindowsFolderPickerService(),
+            new WindowsFileLauncherService(),
+            new WindowsDriveDisplayNameService(),
+            SyncVolumeServiceFactory.CreateSourceVolumeService(),
+            SyncVolumeServiceFactory.CreateDestinationVolumeService(),
+            new WorkerSyncExecutionClient())
     {
     }
 
@@ -102,13 +111,15 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         IFileLauncherService? fileLauncherService = null,
         IDriveDisplayNameService? driveDisplayNameService = null,
         ISourceVolumeService? sourceVolumeService = null,
-        ISourceVolumeService? destinationVolumeService = null)
+        ISourceVolumeService? destinationVolumeService = null,
+        ISyncExecutionClient? syncExecutionClient = null)
     {
         _syncService = syncService;
         _settingsStore = settingsStore;
         _folderPickerService = folderPickerService ?? new WindowsFolderPickerService();
-        _sourceVolumeService = sourceVolumeService ?? CreateDefaultSourceVolumeService();
-        _destinationVolumeService = destinationVolumeService ?? CreateDefaultDestinationVolumeService();
+        _sourceVolumeService = sourceVolumeService ?? SyncVolumeServiceFactory.CreateSourceVolumeService();
+        _destinationVolumeService = destinationVolumeService ?? SyncVolumeServiceFactory.CreateDestinationVolumeService();
+        _syncExecutionClient = syncExecutionClient ?? new InProcessSyncExecutionClient(syncService);
         _fileLauncherService = fileLauncherService ?? new WindowsFileLauncherService();
         _driveDisplayNameService = driveDisplayNameService ?? new WindowsDriveDisplayNameService();
         _dispatcher = Dispatcher.CurrentDispatcher;
@@ -412,12 +423,15 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             if (SetProperty(ref _isBusy, value))
             {
+                RaisePropertyChanged(nameof(IsBusyOverlayVisible));
                 AnalyzeCommand.RaiseCanExecuteChanged();
                 ToggleSyncCommand.RaiseCanExecuteChanged();
                 CancelBusyOperationCommand.RaiseCanExecuteChanged();
             }
         }
     }
+
+    public bool IsBusyOverlayVisible => IsBusy && _busyOperationKind == BusyOperationKind.Analyze;
 
     public string BusyOverlayTitle
     {
@@ -559,12 +573,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         return new JsonSyncSettingsStore(settingsPath);
     }
-
-    private static ISourceVolumeService CreateDefaultSourceVolumeService() =>
-        new CompositeSourceVolumeService([new HfsPlusVolumeService(), new ExtVolumeService()]);
-
-    private static ISourceVolumeService CreateDefaultDestinationVolumeService() =>
-        new ExtVolumeService(allowWriteAccess: true);
 
     private void BrowseSourcePath()
     {
@@ -721,25 +729,22 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private SyncConfiguration CreateConfiguration()
     {
-        var destinationPaths = GetDestinationPaths().ToList();
-        var destinationVolumes = ResolveDestinationVolumes(destinationPaths);
-
-        return new SyncConfiguration
-        {
-            SourcePath = SourcePath,
-            SourceVolume = ResolveSourceVolume(),
-            DestinationPath = DestinationPath,
-            DestinationVolume = destinationVolumes.FirstOrDefault(),
-            DestinationPaths = destinationPaths,
-            DestinationVolumes = destinationVolumes,
-            Mode = SelectedMode,
-            DetectMoves = DetectMoves,
-            DryRun = DryRun,
-            VerifyChecksums = VerifyChecksums,
-            HideMacOsSystemFiles = HideMacOsSystemFiles,
-            ParallelCopyCount = ParallelCopyCount,
-            PreviewProviderMappings = new Dictionary<string, string>(_previewProviderMappings, StringComparer.OrdinalIgnoreCase),
-        };
+        return SyncVolumeServiceFactory.ResolveConfiguration(
+            new SyncConfiguration
+            {
+                SourcePath = SourcePath,
+                DestinationPath = DestinationPath,
+                DestinationPaths = GetDestinationPaths().ToList(),
+                Mode = SelectedMode,
+                DetectMoves = DetectMoves,
+                DryRun = DryRun,
+                VerifyChecksums = VerifyChecksums,
+                HideMacOsSystemFiles = HideMacOsSystemFiles,
+                ParallelCopyCount = ParallelCopyCount,
+                PreviewProviderMappings = new Dictionary<string, string>(_previewProviderMappings, StringComparer.OrdinalIgnoreCase),
+            },
+            _sourceVolumeService,
+            _destinationVolumeService);
     }
 
     public void UpdateParallelCopyCount(int parallelCopyCount)
@@ -1077,7 +1082,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 }
             });
 
-            var result = await _syncService.ExecutePlannedAsync(configuration, actions, progress, autoParallelism, cancellationTokenSource.Token).ConfigureAwait(true);
+            var result = await _syncExecutionClient.ExecuteAsync(configuration, actions, progress, autoParallelism, cancellationTokenSource.Token).ConfigureAwait(true);
             var verifiedCopyCount = configuration.VerifyChecksums
                 ? actions.Count(action => action.Type is
                     SyncActionType.CopyToDestination or
@@ -1279,25 +1284,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
-    private IVolumeSource? ResolveSourceVolume()
-    {
-        return _sourceVolumeService.TryCreateVolume(SourcePath, out var volume, out _)
-            ? volume
-            : null;
-    }
-
-    private IReadOnlyList<IVolumeSource> ResolveDestinationVolumes(IReadOnlyList<string> destinationPaths) =>
-        destinationPaths
-            .Select(path => ResolveDestinationVolume(path) ?? new WindowsMountedVolume(path))
-            .ToList();
-
-    private IVolumeSource? ResolveDestinationVolume(string path)
-    {
-        return _destinationVolumeService.TryCreateVolume(path, out var volume, out _)
-            ? volume
-            : null;
-    }
-
     private bool TryValidateSyncPath(string path, string label, bool requireExistingDirectory, out string validationMessage)
     {
         if (!string.Equals(label, "Source", StringComparison.OrdinalIgnoreCase) || !requireExistingDirectory)
@@ -1361,14 +1347,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 string.Equals(volume.FileSystemType, "ext4", StringComparison.OrdinalIgnoreCase) &&
                 volume.IsReadOnly)
             {
-                if (TryRelaunchElevated())
-                {
-                    validationMessage = "Relaunching with elevated privileges...";
-                    return false;
-                }
-
-                validationMessage = $"{label} Linux volume is currently only available in read-only mode. UsbFileSync must be running elevated, and the selected drive must be writable through the bundled ext4 backend before synchronization can continue.";
-                return false;
+                validationMessage = string.Empty;
+                return true;
             }
 
             validationMessage = string.Empty;
@@ -1379,49 +1359,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             ? $"{label} path does not exist or is not accessible."
             : $"{label} Linux volume could not be opened. {failureReason}";
         return false;
-    }
-
-    private static bool TryRelaunchElevated()
-    {
-        if (!OperatingSystem.IsWindows() || System.Windows.Application.Current is null)
-        {
-            return false;
-        }
-
-        var result = System.Windows.MessageBox.Show(
-            "Writing to Linux ext volumes requires administrator privileges.\n\nWould you like to relaunch UsbFileSync as administrator?",
-            "Elevation Required",
-            System.Windows.MessageBoxButton.YesNo,
-            System.Windows.MessageBoxImage.Question);
-
-        if (result != System.Windows.MessageBoxResult.Yes)
-        {
-            return false;
-        }
-
-        try
-        {
-            var exePath = Environment.ProcessPath;
-            if (string.IsNullOrWhiteSpace(exePath))
-            {
-                return false;
-            }
-
-            var startInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = exePath,
-                UseShellExecute = true,
-                Verb = "runas",
-            };
-
-            System.Diagnostics.Process.Start(startInfo);
-            System.Windows.Application.Current.Shutdown();
-            return true;
-        }
-        catch (System.ComponentModel.Win32Exception)
-        {
-            return false;
-        }
     }
 
     private static bool HasAccessibleExistingAncestor(string fullPath)
@@ -1584,6 +1521,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _syncCancellationTokenSource?.Cancel();
         _syncCancellationTokenSource?.Dispose();
         _syncCancellationTokenSource = null;
+        if (_syncExecutionClient is IDisposable disposableSyncExecutionClient)
+        {
+            disposableSyncExecutionClient.Dispose();
+        }
 
         try
         {
@@ -2179,6 +2120,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         _busyOperationCancellationTokenSource = cancellationTokenSource;
         _busyOperationKind = busyOperationKind;
+        RaisePropertyChanged(nameof(IsBusyOverlayVisible));
         (BusyOverlayTitle, BusyOverlayDescription) = busyOperationKind switch
         {
             BusyOperationKind.Analyze => ("Loading preview...", "Building the synchronization preview."),
@@ -2197,6 +2139,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         _busyOperationCancellationTokenSource = null;
         _busyOperationKind = BusyOperationKind.None;
+        RaisePropertyChanged(nameof(IsBusyOverlayVisible));
         BusyOverlayTitle = "Working...";
         BusyOverlayDescription = "Please wait.";
         CancelBusyOperationCommand.RaiseCanExecuteChanged();

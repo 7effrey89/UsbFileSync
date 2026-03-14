@@ -42,6 +42,7 @@
     <Compile Remove="SettingsDialogTests.cs" />
     <Compile Remove="SyncPreviewRowViewModelTests.cs" />
     <Compile Remove="UniversalSourceLocationPickerDialogTests.cs" />
+    <Compile Remove="WorkerSyncExecutionClientTests.cs" />
     <Compile Remove="WindowsSourceLocationPickerServiceTests.cs" />
   </ItemGroup>
 
