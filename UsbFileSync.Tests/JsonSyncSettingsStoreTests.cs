@@ -93,6 +93,28 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public void Save_ThenLoad_RoundTripsCloudBackedPaths()
+    {
+        Directory.CreateDirectory(_rootPath);
+        var settingsPath = Path.Combine(_rootPath, "settings.json");
+        var store = new JsonSyncSettingsStore(settingsPath);
+        var configuration = new SyncConfiguration
+        {
+            SourcePath = "cloud://googledrive/personal-root/Documents",
+            DestinationPath = "cloud://dropbox/work-root/Archive",
+            DestinationPaths = ["cloud://dropbox/work-root/Archive", @"F:\BackupDrive"],
+        };
+
+        store.Save(configuration);
+        var restored = store.Load();
+
+        Assert.NotNull(restored);
+        Assert.Equal(configuration.SourcePath, restored.SourcePath);
+        Assert.Equal(configuration.DestinationPath, restored.DestinationPath);
+        Assert.Equal(configuration.DestinationPaths, restored.DestinationPaths);
+    }
+
+    [Fact]
     public void Load_ReturnsNull_WhenSettingsFileContainsInvalidJson()
     {
         Directory.CreateDirectory(_rootPath);

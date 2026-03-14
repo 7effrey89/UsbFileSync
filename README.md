@@ -32,7 +32,8 @@ The HFS+ backend intentionally enforces read-only behavior so the application do
 - Optional `Move Mode` that deletes the original file only after the copy in the planned sync direction has been verified.
 - Configurable parallel file copy count, including `0` for adaptive auto parallelism.
 - Settings persistence between runs.
-- Browse buttons for selecting the source folder/drive and one or more destination folders. The custom browser now covers both flows from one UI: sources can navigate normal Windows folders, HFS+ source folders, and mounted ext source folders, while destinations can navigate normal Windows folders and mounted ext destination folders. Destination browsing uses lightweight ext-volume discovery so the picker opens quickly, while writable ext4 validation remains part of sync-time validation.
+- Registered Google Drive, Dropbox, and OneDrive account roots backed by locally synced folders, including multiple accounts per provider with persisted login labels.
+- Browse buttons for selecting the source folder/drive and one or more destination folders. The custom browser now covers both flows from one UI: sources can navigate normal Windows folders, registered Google Drive/Dropbox/OneDrive account folders, HFS+ source folders, and mounted ext source folders, while destinations can navigate normal Windows folders, registered cloud account folders, and mounted ext destination folders. Destination browsing uses lightweight ext-volume discovery so the picker opens quickly, while writable ext4 validation remains part of sync-time validation.
 - Read-only source and destination path fields that show Explorer-style drive names such as `XTIVIA (F:)` when unfocused, and the raw path when focused for easy copy/select behavior.
 - Custom application and window icon tailored to the sync workflow.
 - Windows shell file icons in the preview so items match Explorer more closely.
@@ -189,6 +190,7 @@ The settings dialog currently supports:
 - `Parallel copies`: number of file copy operations allowed to run at the same time.
 - `0` enables auto mode, which estimates a starting parallelism and adjusts it during the copy batch.
 - `Hide macOS system files in HFS+ preview and sync planning`: filters common filesystem metadata such as `.Spotlight-V100`, `.fseventsd`, `.journal`, and `HFS+ Private Data` out of the HFS+ sync view.
+- `Cloud accounts`: register one or more Google Drive, Dropbox, or OneDrive accounts by saving the login label and the corresponding local synced folder for each account. Registered accounts are persisted and appear in the source and destination folder pickers as dedicated cloud roots.
 
 The main sync settings area also supports:
 

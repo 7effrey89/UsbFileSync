@@ -1325,7 +1325,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
             validationMessage = string.IsNullOrWhiteSpace(sourceFailureReason)
                 ? $"{label} path is invalid."
-                : $"{label} macOS volume could not be opened. {sourceFailureReason}";
+                : $"{label} location could not be opened. {sourceFailureReason}";
             return false;
         }
 
@@ -1337,7 +1337,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         validationMessage = string.IsNullOrWhiteSpace(failureReason)
             ? $"{label} path does not exist."
-            : $"{label} macOS volume could not be opened. {failureReason}";
+            : $"{label} location could not be opened. {failureReason}";
         return false;
     }
 
@@ -1372,7 +1372,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         validationMessage = string.IsNullOrWhiteSpace(failureReason)
             ? $"{label} path does not exist or is not accessible."
-            : $"{label} Linux volume could not be opened. {failureReason}";
+            : $"{label} location could not be opened. {failureReason}";
         return false;
     }
 

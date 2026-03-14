@@ -33,6 +33,21 @@ public sealed class WindowsSourceLocationPickerServiceTests
         Assert.Same(originalService, browseService);
     }
 
+    [Fact]
+    public void GetDestinationBrowseVolumeService_ReplacesExtServiceInsideCompositeService()
+    {
+        var replacementService = new StubSourceVolumeService();
+        var originalCompositeService = new CompositeSourceVolumeService(new StubSourceVolumeService(), new ExtVolumeService(allowWriteAccess: true));
+
+        var browseService = WindowsSourceLocationPickerService.GetDestinationBrowseVolumeService(
+            originalCompositeService,
+            () => replacementService);
+
+        var compositeBrowseService = Assert.IsType<CompositeSourceVolumeService>(browseService);
+        Assert.Contains(replacementService, compositeBrowseService.Services);
+        Assert.DoesNotContain(compositeBrowseService.Services, service => service is ExtVolumeService);
+    }
+
     private sealed class StubSourceVolumeService : ISourceVolumeService
     {
         public bool TryCreateVolume(string path, out UsbFileSync.Core.Volumes.IVolumeSource? volume, out string? failureReason)

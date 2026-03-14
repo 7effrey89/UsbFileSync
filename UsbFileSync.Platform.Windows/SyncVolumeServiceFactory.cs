@@ -6,10 +6,10 @@ namespace UsbFileSync.Platform.Windows;
 public static class SyncVolumeServiceFactory
 {
     public static ISourceVolumeService CreateSourceVolumeService() =>
-        new CompositeSourceVolumeService([new HfsPlusVolumeService(), new ExtVolumeService()]);
+        new CompositeSourceVolumeService([new RegisteredCloudVolumeService(), new HfsPlusVolumeService(), new ExtVolumeService()]);
 
     public static ISourceVolumeService CreateDestinationVolumeService() =>
-        new ExtVolumeService(allowWriteAccess: true);
+        new CompositeSourceVolumeService([new RegisteredCloudVolumeService(), new ExtVolumeService(allowWriteAccess: true)]);
 
     public static SyncConfiguration ResolveConfiguration(
         SyncConfiguration configuration,
