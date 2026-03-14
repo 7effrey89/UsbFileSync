@@ -29,6 +29,7 @@ The HFS+ backend intentionally enforces read-only behavior so the application do
 - Start and stop synchronization from the main window.
 - Safe cancellation for file copy operations.
 - Optional SHA-256 checksum validation for each copied file.
+- Optional `Move Mode` that deletes the original file only after the copy in the planned sync direction has been verified.
 - Configurable parallel file copy count, including `0` for adaptive auto parallelism.
 - Settings persistence between runs.
 - Browse buttons for selecting the source folder/drive and one or more destination folders. The custom browser now covers both flows from one UI: sources can navigate normal Windows folders, HFS+ source folders, and mounted ext source folders, while destinations can navigate normal Windows folders and mounted ext destination folders. Destination browsing uses lightweight ext-volume discovery so the picker opens quickly, while writable ext4 validation remains part of sync-time validation.
@@ -87,6 +88,7 @@ UsbFileSync now uses a safe copy design for file transfers:
 - Copied files have their destination last-write timestamp reset to the source timestamp, and preview analysis tolerates small filesystem rounding differences such as the 2-second granularity common on some removable drives.
 - If synchronization is cancelled or a copy fails, the temporary file is deleted.
 - Interrupted overwrites do not corrupt the existing destination file.
+- In `Move Mode`, the original file is deleted only after the copied file has been hashed and matched successfully.
 
 This means stopping a synchronization does not leave half-written files behind at the final destination path.
 
@@ -104,6 +106,8 @@ In one-way mode, the source location is treated as the source of truth.
 - Optional `Detect moves` support can turn a matching delete-plus-create pair into a rename or move on the destination instead of recopying the file. 
 Detect moves only affects one-way planning. When the option is enabled, the planner looks for a file that exists only on the source and a matching file that exists only on the destination with the same fingerprint, then turns that into a MoveOnDestination action. That means instead of “copy the new path and delete the old path”, it can do “rename/move the existing destination file”.
 
+- When `Move Mode` is enabled, one-way actions still plan from source to destination, but each copied file is removed from the source only after the verified destination copy is committed.
+
 - Successful one-way sync also refreshes the shared `.sync-metadata` baseline so later two-way sync sessions have an up-to-date history.
 
 ### Two-Way
@@ -115,6 +119,7 @@ In two-way mode, the source and each configured destination are compared pair-by
 - New folders can be created on either side.
 - When multiple destinations are configured, each destination is analyzed and synchronized independently against the same source location during the same run.
 - `Detect moves` does not currently apply in two-way mode, so the checkbox is disabled in the UI when `TwoWay` is selected.
+- When `Move Mode` is enabled, two-way file transfers still follow the normal planned direction for that row, but the original side is deleted after verification so the file ends up on only the winning side.
 
 ## Metadata Model
 
@@ -160,8 +165,7 @@ The main window includes:
 
 - Source path selection plus add/remove controls for multiple destination paths.
 - Sync mode selection.
-- `Detect moves` and `Dry run` options with hover tooltips that explain their behavior.
-- Optional `Checksums` validation toggle with a tooltip describing the integrity/performance tradeoff.
+- `Detect moves`, `Dry run`, `Checksums`, and `Move Mode` options with hover tooltips that explain their behavior.
 - `Analyze` and `Synchronize` actions.
 - A large synchronization preview table.
 - Filter tabs for `New Files`, `Changed`, `Deleted`, `Unchanged`, and `All`.
@@ -191,6 +195,7 @@ The main sync settings area also supports:
 - `Checksums`: validates each copied file with SHA-256 before it is committed into place.
 - When checksum validation is enabled during a copy, UsbFileSync also stores the verified SHA-256 in metadata so later verified copies can skip recomputing the source hash when that source file is unchanged.
 - Successful checksum-enabled syncs also say that checksum verification passed, so the UI confirms the extra validation actually ran.
+- `Move Mode`: forces checksum validation for copy and overwrite actions, then deletes the original file only when the source and destination hashes match.
 
 ## Project Structure
 

@@ -70,6 +70,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _detectMoves = true;
     private bool _dryRun = true;
     private bool _verifyChecksums;
+    private bool _moveMode;
     private bool _hideMacOsSystemFiles = true;
     private Dictionary<string, string> _previewProviderMappings = PreviewProviderDefaults.CreateSerializableMapping();
     private bool _isBusy;
@@ -399,6 +400,18 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         set
         {
             if (SetProperty(ref _verifyChecksums, value))
+            {
+                HandleConfigurationChanged();
+            }
+        }
+    }
+
+    public bool MoveMode
+    {
+        get => _moveMode;
+        set
+        {
+            if (SetProperty(ref _moveMode, value))
             {
                 HandleConfigurationChanged();
             }
@@ -740,6 +753,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 DetectMoves = DetectMoves,
                 DryRun = DryRun,
                 VerifyChecksums = VerifyChecksums,
+                MoveMode = MoveMode,
                 HideMacOsSystemFiles = HideMacOsSystemFiles,
                 ParallelCopyCount = ParallelCopyCount,
                 PreviewProviderMappings = new Dictionary<string, string>(_previewProviderMappings, StringComparer.OrdinalIgnoreCase),
@@ -1084,7 +1098,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             });
 
             var result = await _syncExecutionClient.ExecuteAsync(configuration, actions, progress, autoParallelism, cancellationTokenSource.Token).ConfigureAwait(true);
-            var verifiedCopyCount = configuration.VerifyChecksums
+            var verifiedCopyCount = (configuration.VerifyChecksums || configuration.MoveMode)
                 ? actions.Count(action => action.Type is
                     SyncActionType.CopyToDestination or
                     SyncActionType.CopyToSource or
@@ -1094,7 +1108,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             SetStatusMessage(
                 result.IsDryRun
                     ? $"Dry run complete with {result.Actions.Count} planned action(s)."
-                    : BuildCompletionMessage(result.AppliedOperations, configuration.VerifyChecksums, verifiedCopyCount),
+                    : BuildCompletionMessage(result.AppliedOperations, configuration.VerifyChecksums || configuration.MoveMode, verifiedCopyCount),
                 isSuccess: true);
 
             if (!result.IsDryRun)
@@ -1421,6 +1435,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             DetectMoves = savedConfiguration.DetectMoves;
             DryRun = savedConfiguration.DryRun;
             VerifyChecksums = savedConfiguration.VerifyChecksums;
+            MoveMode = savedConfiguration.MoveMode;
             HideMacOsSystemFiles = savedConfiguration.HideMacOsSystemFiles;
             ParallelCopyCount = savedConfiguration.ParallelCopyCount;
             _previewProviderMappings = savedConfiguration.PreviewProviderMappings?.Count > 0

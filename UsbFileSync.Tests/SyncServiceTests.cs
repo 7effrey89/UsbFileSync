@@ -622,6 +622,50 @@ public sealed class SyncServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_WhenMoveModeIsEnabled_MovesFileToDestination()
+    {
+        var source = CreateDirectory("source");
+        var destination = CreateDirectory("destination");
+        WriteFile(source, "moved.bin", "payload", new DateTime(2024, 5, 6, 0, 0, 0, DateTimeKind.Utc));
+
+        var service = new SyncService();
+        var result = await service.ExecuteAsync(new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.OneWay,
+            MoveMode = true,
+        });
+
+        Assert.Equal(1, result.AppliedOperations);
+        Assert.False(File.Exists(Path.Combine(source, "moved.bin")));
+        Assert.True(File.Exists(Path.Combine(destination, "moved.bin")));
+        Assert.Equal("payload", await File.ReadAllTextAsync(Path.Combine(destination, "moved.bin")));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenMoveModeIsEnabled_MovesFileInThePlannedTwoWayDirection()
+    {
+        var source = CreateDirectory("source");
+        var destination = CreateDirectory("destination");
+        WriteFile(destination, "from-destination.txt", "payload", new DateTime(2024, 5, 6, 0, 0, 0, DateTimeKind.Utc));
+
+        var service = new SyncService();
+        var result = await service.ExecuteAsync(new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.TwoWay,
+            MoveMode = true,
+        });
+
+        Assert.Equal(1, result.AppliedOperations);
+        Assert.True(File.Exists(Path.Combine(source, "from-destination.txt")));
+        Assert.False(File.Exists(Path.Combine(destination, "from-destination.txt")));
+        Assert.Equal("payload", await File.ReadAllTextAsync(Path.Combine(source, "from-destination.txt")));
+    }
+
+    [Fact]
     public async Task ExecuteAsync_WhenChecksumValidationIsEnabled_PersistsChecksumInMetadata()
     {
         var source = CreateDirectory("source");
@@ -719,6 +763,46 @@ public sealed class SyncServiceTests : IDisposable
 
         var exception = await Assert.ThrowsAsync<IOException>(() => service.ExecuteAsync(configuration));
         Assert.Contains("Checksum validation failed", exception.Message);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenMoveModeIsEnabled_StillValidatesChecksumsBeforeDeletingOriginal()
+    {
+        var source = CreateDirectory("source");
+        var destination = CreateDirectory("destination");
+        WriteFile(source, "verified.bin", "verified content", new DateTime(2024, 5, 6, 0, 0, 0, DateTimeKind.Utc));
+
+        var service = new SyncService();
+        await service.ExecuteAsync(new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.OneWay,
+            VerifyChecksums = true,
+        });
+
+        using var sourceMetadata = await LoadMetadataAsync(source);
+        using var destinationMetadata = await LoadMetadataAsync(destination);
+        var sourceRootId = sourceMetadata.RootElement.GetProperty("RootId").GetString()!;
+        var destinationRootId = destinationMetadata.RootElement.GetProperty("RootId").GetString()!;
+
+        await SetStoredChecksumAsync(source, destinationRootId, "verified.bin", new string('0', 64));
+        await SetStoredChecksumAsync(destination, sourceRootId, "verified.bin", new string('0', 64));
+
+        WriteFile(destination, "verified.bin", "stale destination content", new DateTime(2024, 5, 5, 0, 0, 0, DateTimeKind.Utc));
+
+        var exception = await Assert.ThrowsAsync<IOException>(() => service.ExecuteAsync(new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.OneWay,
+            MoveMode = true,
+            VerifyChecksums = false,
+        }));
+
+        Assert.Contains("Checksum validation failed", exception.Message);
+        Assert.True(File.Exists(Path.Combine(source, "verified.bin")));
+        Assert.Equal("stale destination content", await File.ReadAllTextAsync(Path.Combine(destination, "verified.bin")));
     }
 
     [Fact]

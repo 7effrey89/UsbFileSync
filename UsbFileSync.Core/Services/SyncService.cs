@@ -242,6 +242,9 @@ public sealed class SyncService
         SyncActionType.OverwriteFileOnDestination or
         SyncActionType.OverwriteFileOnSource;
 
+    private static bool RequiresCopyVerification(SyncConfiguration configuration) =>
+        configuration.VerifyChecksums || configuration.MoveMode;
+
     private IReadOnlyList<SyncConfiguration> ExpandDestinationConfigurations(SyncConfiguration configuration)
     {
         var destinationVolumes = configuration.ResolveDestinationVolumes();
@@ -269,6 +272,7 @@ public sealed class SyncService
         DetectMoves = configuration.DetectMoves,
         DryRun = configuration.DryRun,
         VerifyChecksums = configuration.VerifyChecksums,
+        MoveMode = configuration.MoveMode,
         HideMacOsSystemFiles = configuration.HideMacOsSystemFiles,
         ParallelCopyCount = configuration.ParallelCopyCount,
         PreviewProviderMappings = new Dictionary<string, string>(configuration.PreviewProviderMappings, StringComparer.OrdinalIgnoreCase),
@@ -313,7 +317,7 @@ public sealed class SyncService
     {
         var appliedOperations = 0;
         var verifiedChecksumsByRelativePath = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var trackedChecksumEntriesByRelativePath = configuration.VerifyChecksums
+        var trackedChecksumEntriesByRelativePath = RequiresCopyVerification(configuration)
             ? LoadTrackedChecksumEntries(configuration)
             : new Dictionary<string, SyncFileIndexEntry>(StringComparer.OrdinalIgnoreCase);
         var sourceVolume = configuration.ResolveSourceVolume();
@@ -385,6 +389,7 @@ public sealed class SyncService
         int totalActions,
         CancellationToken cancellationToken)
     {
+        var verifyCopiedFiles = RequiresCopyVerification(configuration);
         var workItems = actions
             .Select(action =>
             {
@@ -400,7 +405,8 @@ public sealed class SyncService
                     action.RelativePath,
                     action.RelativePath,
                     sourceEntry.Size ?? 0,
-                    TryGetReusableSourceChecksum(copySourceVolume, action, trackedChecksumEntriesByRelativePath));
+                        TryGetReusableSourceChecksum(copySourceVolume, action, trackedChecksumEntriesByRelativePath),
+                        configuration.MoveMode);
             })
             .ToArray();
 
@@ -427,7 +433,7 @@ public sealed class SyncService
                 var workItem = workItems[nextWorkItemIndex++];
                 runningTasks.Add(CopyWorkItemAsync(
                     workItem,
-                    configuration.VerifyChecksums,
+                    verifyCopiedFiles,
                     progress,
                     () => completedOperations + Volatile.Read(ref completedInBatch),
                     totalActions,
@@ -489,6 +495,7 @@ public sealed class SyncService
             workItem.DestinationVolume,
             workItem.DestinationRelativePath,
             verifyChecksums,
+            workItem.DeleteSourceAfterCopy,
             workItem.ReusableSourceChecksum,
             progress,
             getCompletedOperations,
@@ -602,6 +609,7 @@ public sealed class SyncService
         IVolumeSource destinationVolume,
         string destinationRelativePath,
         bool verifyChecksums,
+        bool deleteSourceAfterCopy,
         string? reusableSourceChecksum,
         IProgress<SyncProgress>? progress,
         Func<int> getCompletedOperations,
@@ -674,6 +682,11 @@ public sealed class SyncService
             if (sourceLastWriteTimeUtc.HasValue)
             {
                 destinationVolume.SetLastWriteTimeUtc(destinationRelativePath, sourceLastWriteTimeUtc.Value);
+            }
+
+            if (deleteSourceAfterCopy)
+            {
+                sourceVolume.DeleteFile(sourceRelativePath);
             }
 
             return copiedChecksum;
@@ -937,7 +950,8 @@ public sealed class SyncService
         string SourceRelativePath,
         string DestinationRelativePath,
         long TotalBytes,
-        string? ReusableSourceChecksum);
+        string? ReusableSourceChecksum,
+        bool DeleteSourceAfterCopy);
 
     private sealed record CopyExecutionSample(
         SyncAction Action,
