@@ -38,6 +38,10 @@ public sealed class SyncConfiguration
 
     public Dictionary<string, string> PreviewProviderMappings { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
+    public bool UseCustomCloudProviderCredentials { get; init; }
+
+    public IReadOnlyList<CloudProviderAppRegistration> CloudProviderAppRegistrations { get; init; } = Array.Empty<CloudProviderAppRegistration>();
+
     public IReadOnlyList<string> GetDestinationPaths()
     {
         var normalized = DestinationPaths

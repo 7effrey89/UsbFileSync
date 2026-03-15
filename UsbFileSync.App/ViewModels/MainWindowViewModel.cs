@@ -72,7 +72,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _verifyChecksums;
     private bool _moveMode;
     private bool _hideMacOsSystemFiles = true;
+    private bool _useCustomCloudProviderCredentials;
     private Dictionary<string, string> _previewProviderMappings = PreviewProviderDefaults.CreateSerializableMapping();
+    private IReadOnlyList<CloudProviderAppRegistration> _cloudProviderAppRegistrations = Array.Empty<CloudProviderAppRegistration>();
     private bool _isBusy;
     private bool _isSyncRunning;
     private bool _isLoadingSavedConfiguration;
@@ -430,6 +432,18 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    public bool UseCustomCloudProviderCredentials
+    {
+        get => _useCustomCloudProviderCredentials;
+        set
+        {
+            if (SetProperty(ref _useCustomCloudProviderCredentials, value))
+            {
+                HandleConfigurationChanged();
+            }
+        }
+    }
+
     public bool IsBusy
     {
         get => _isBusy;
@@ -757,6 +771,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 HideMacOsSystemFiles = HideMacOsSystemFiles,
                 ParallelCopyCount = ParallelCopyCount,
                 PreviewProviderMappings = new Dictionary<string, string>(_previewProviderMappings, StringComparer.OrdinalIgnoreCase),
+                UseCustomCloudProviderCredentials = UseCustomCloudProviderCredentials,
+                CloudProviderAppRegistrations = _cloudProviderAppRegistrations.ToList(),
             },
             _sourceVolumeService,
             _destinationVolumeService);
@@ -773,11 +789,39 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public IReadOnlyDictionary<string, string> GetPreviewProviderMappings() =>
         new Dictionary<string, string>(_previewProviderMappings, StringComparer.OrdinalIgnoreCase);
 
+    public IReadOnlyList<CloudProviderAppRegistration> GetCloudProviderAppRegistrations() =>
+        _cloudProviderAppRegistrations.ToList();
+
+    public bool GetUseCustomCloudProviderCredentials() => UseCustomCloudProviderCredentials;
+
     public void UpdatePreviewProviderMappings(IReadOnlyDictionary<string, string> mappings)
     {
         _previewProviderMappings = new Dictionary<string, string>(mappings, StringComparer.OrdinalIgnoreCase);
         HandleConfigurationChanged();
         AddLog("Settings", $"Preview provider mappings updated for {_previewProviderMappings.Count} file extensions.");
+    }
+
+    public void UpdateCloudProviderAppRegistrations(IReadOnlyList<CloudProviderAppRegistration> registrations)
+    {
+        _cloudProviderAppRegistrations = (registrations ?? Array.Empty<CloudProviderAppRegistration>())
+            .OrderBy(registration => registration.Provider)
+            .ToList();
+        HandleConfigurationChanged();
+        AddLog(
+            "Settings",
+            _cloudProviderAppRegistrations.Count == 0
+                ? "Cloud provider app registrations cleared."
+                : $"Cloud provider app registrations updated for {_cloudProviderAppRegistrations.Count} provider(s).");
+    }
+
+    public void UpdateUseCustomCloudProviderCredentials(bool useCustomCloudProviderCredentials)
+    {
+        UseCustomCloudProviderCredentials = useCustomCloudProviderCredentials;
+        AddLog(
+            "Settings",
+            UseCustomCloudProviderCredentials
+                ? "Custom cloud provider credentials will be preferred over the built-in defaults."
+                : "Built-in cloud provider credentials will be preferred unless custom credentials are enabled.");
     }
 
     public void UpdateHideMacOsSystemFiles(bool hideMacOsSystemFiles)
@@ -1438,9 +1482,13 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             MoveMode = savedConfiguration.MoveMode;
             HideMacOsSystemFiles = savedConfiguration.HideMacOsSystemFiles;
             ParallelCopyCount = savedConfiguration.ParallelCopyCount;
+            UseCustomCloudProviderCredentials = savedConfiguration.UseCustomCloudProviderCredentials;
             _previewProviderMappings = savedConfiguration.PreviewProviderMappings?.Count > 0
                 ? new Dictionary<string, string>(savedConfiguration.PreviewProviderMappings, StringComparer.OrdinalIgnoreCase)
                 : PreviewProviderDefaults.CreateSerializableMapping();
+            _cloudProviderAppRegistrations = (savedConfiguration.CloudProviderAppRegistrations ?? Array.Empty<CloudProviderAppRegistration>())
+                .OrderBy(registration => registration.Provider)
+                .ToList();
             SetStatusMessage(
                 IsConfigurationComplete()
                     ? "Restored the previous sync configuration."

@@ -276,6 +276,8 @@ public sealed class SyncService
         HideMacOsSystemFiles = configuration.HideMacOsSystemFiles,
         ParallelCopyCount = configuration.ParallelCopyCount,
         PreviewProviderMappings = new Dictionary<string, string>(configuration.PreviewProviderMappings, StringComparer.OrdinalIgnoreCase),
+        UseCustomCloudProviderCredentials = configuration.UseCustomCloudProviderCredentials,
+        CloudProviderAppRegistrations = configuration.CloudProviderAppRegistrations.ToList(),
     };
 
     private static string ResolveDestinationPath(SyncConfiguration configuration, SyncAction action)

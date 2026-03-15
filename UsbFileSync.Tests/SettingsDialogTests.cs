@@ -1,6 +1,7 @@
 using UsbFileSync.App;
 using UsbFileSync.App.Services;
 using UsbFileSync.App.ViewModels;
+using UsbFileSync.Core.Models;
 
 namespace UsbFileSync.Tests;
 
@@ -74,5 +75,74 @@ public sealed class SettingsDialogTests
 
         Assert.False(success);
         Assert.Contains("listed more than once", errorMessage);
+    }
+
+    [Fact]
+    public void TryCreateCloudProviderAppRegistrations_StoresConfiguredProvidersOnly()
+    {
+        var registrations = new[]
+        {
+            new CloudProviderAppRegistrationViewModel(CloudStorageProvider.GoogleDrive)
+            {
+                ClientId = " google-client-id "
+            },
+            new CloudProviderAppRegistrationViewModel(CloudStorageProvider.Dropbox),
+            new CloudProviderAppRegistrationViewModel(CloudStorageProvider.OneDrive)
+            {
+                ClientId = "onedrive-client-id",
+                TenantId = "contoso-tenant"
+            },
+        };
+
+        var success = SettingsDialog.TryCreateCloudProviderAppRegistrations(registrations, out var serializedRegistrations, out var errorMessage);
+
+        Assert.True(success);
+        Assert.Equal(string.Empty, errorMessage);
+        Assert.Collection(
+            serializedRegistrations,
+            google =>
+            {
+                Assert.Equal(CloudStorageProvider.GoogleDrive, google.Provider);
+                Assert.Equal("google-client-id", google.ClientId);
+                Assert.Equal(string.Empty, google.TenantId);
+            },
+            oneDrive =>
+            {
+                Assert.Equal(CloudStorageProvider.OneDrive, oneDrive.Provider);
+                Assert.Equal("onedrive-client-id", oneDrive.ClientId);
+                Assert.Equal("contoso-tenant", oneDrive.TenantId);
+            });
+    }
+
+    [Fact]
+    public void TryCreateCloudProviderAppRegistrations_DefaultsOneDriveTenantToCommon()
+    {
+        var registrations = new[]
+        {
+            new CloudProviderAppRegistrationViewModel(CloudStorageProvider.OneDrive)
+            {
+                ClientId = "onedrive-client-id",
+                TenantId = " "
+            },
+        };
+
+        var success = SettingsDialog.TryCreateCloudProviderAppRegistrations(registrations, out var serializedRegistrations, out _);
+
+        Assert.True(success);
+        var registration = Assert.Single(serializedRegistrations);
+        Assert.Equal(CloudStorageProvider.OneDrive, registration.Provider);
+        Assert.Equal("common", registration.TenantId);
+    }
+
+    [Fact]
+    public void CloudProviderAppRegistrationViewModel_ExposesBuiltInModeMetadata()
+    {
+        var oneDrive = new CloudProviderAppRegistrationViewModel(CloudStorageProvider.OneDrive);
+        var dropbox = new CloudProviderAppRegistrationViewModel(CloudStorageProvider.Dropbox);
+
+        Assert.Equal("OneDrive", oneDrive.ProviderDisplayName);
+        Assert.True(oneDrive.UsesTenantId);
+        Assert.Equal("Dropbox", dropbox.ProviderDisplayName);
+        Assert.False(dropbox.UsesTenantId);
     }
 }

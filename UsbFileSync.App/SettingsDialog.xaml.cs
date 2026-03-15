@@ -3,21 +3,31 @@ using System.Collections.ObjectModel;
 using System.Windows;
 using UsbFileSync.App.Services;
 using UsbFileSync.App.ViewModels;
+using UsbFileSync.Core.Models;
 
 namespace UsbFileSync.App;
 
 public partial class SettingsDialog : Window
 {
-    public SettingsDialog(int parallelCopyCount, bool hideMacOsSystemFiles, IReadOnlyDictionary<string, string>? previewProviderMappings = null)
+    public SettingsDialog(
+        int parallelCopyCount,
+        bool hideMacOsSystemFiles,
+        IReadOnlyDictionary<string, string>? previewProviderMappings = null,
+        bool useCustomCloudProviderCredentials = false,
+        IReadOnlyList<CloudProviderAppRegistration>? cloudProviderAppRegistrations = null)
     {
         InitializeComponent();
         ParallelCopyCount = Math.Max(0, parallelCopyCount);
         HideMacOsSystemFiles = hideMacOsSystemFiles;
+        UseCustomCloudProviderCredentials = useCustomCloudProviderCredentials;
         ParallelCopyCountTextBox.Text = ParallelCopyCount.ToString(CultureInfo.InvariantCulture);
         HideMacOsSystemFilesCheckBox.IsChecked = HideMacOsSystemFiles;
+        UseCustomProviderCredentialsCheckBox.IsChecked = UseCustomCloudProviderCredentials;
         ProviderOptions = Enum.GetValues<PreviewProviderKind>();
         PreviewProviderMappingItems = CreateMappingItems(previewProviderMappings);
+        CloudProviderAppRegistrationItems = CreateCloudProviderAppRegistrationItems(cloudProviderAppRegistrations);
         PreviewProviderMappingsDataGrid.ItemsSource = PreviewProviderMappingItems;
+        CloudProviderRegistrationsDataGrid.ItemsSource = CloudProviderAppRegistrationItems;
         if (PreviewProviderMappingsDataGrid.Columns[1] is System.Windows.Controls.DataGridComboBoxColumn comboColumn)
         {
             comboColumn.ItemsSource = ProviderOptions;
@@ -33,7 +43,11 @@ public partial class SettingsDialog : Window
 
     public bool HideMacOsSystemFiles { get; private set; }
 
+    public bool UseCustomCloudProviderCredentials { get; private set; }
+
     public ObservableCollection<PreviewProviderMappingViewModel> PreviewProviderMappingItems { get; }
+
+    public ObservableCollection<CloudProviderAppRegistrationViewModel> CloudProviderAppRegistrationItems { get; }
 
     public Array ProviderOptions { get; }
 
@@ -49,19 +63,31 @@ public partial class SettingsDialog : Window
 
         ParallelCopyCount = value;
         HideMacOsSystemFiles = HideMacOsSystemFilesCheckBox.IsChecked != false;
+        UseCustomCloudProviderCredentials = UseCustomProviderCredentialsCheckBox.IsChecked == true;
         if (!TryCreateSerializableMappings(PreviewProviderMappingItems, out var mappings, out var errorMessage))
         {
             System.Windows.MessageBox.Show(this, errorMessage, "Invalid preview mapping", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
+        if (!TryCreateCloudProviderAppRegistrations(CloudProviderAppRegistrationItems, out var registrations, out errorMessage))
+        {
+            System.Windows.MessageBox.Show(this, errorMessage, "Invalid cloud provider settings", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
         _previewProviderMappings = mappings;
+        _cloudProviderAppRegistrations = registrations;
         DialogResult = true;
     }
 
     public IReadOnlyDictionary<string, string> PreviewProviderMappings => _previewProviderMappings;
 
+    public IReadOnlyList<CloudProviderAppRegistration> CloudProviderAppRegistrations => _cloudProviderAppRegistrations;
+
     private Dictionary<string, string> _previewProviderMappings = PreviewProviderDefaults.CreateSerializableMapping();
+
+    private List<CloudProviderAppRegistration> _cloudProviderAppRegistrations = [];
 
     private void OnAddMappingClicked(object sender, RoutedEventArgs e)
     {
@@ -133,6 +159,36 @@ public partial class SettingsDialog : Window
         return true;
     }
 
+    public static bool TryCreateCloudProviderAppRegistrations(
+        IEnumerable<CloudProviderAppRegistrationViewModel> registrations,
+        out List<CloudProviderAppRegistration> serializedRegistrations,
+        out string errorMessage)
+    {
+        serializedRegistrations = [];
+        foreach (var registration in registrations
+            .OrderBy(item => item.Provider))
+        {
+            var clientId = registration.ClientId.Trim();
+            var tenantId = registration.TenantId.Trim();
+            if (string.IsNullOrWhiteSpace(clientId))
+            {
+                continue;
+            }
+
+            serializedRegistrations.Add(new CloudProviderAppRegistration
+            {
+                Provider = registration.Provider,
+                ClientId = clientId,
+                TenantId = registration.Provider == CloudStorageProvider.OneDrive
+                    ? string.IsNullOrWhiteSpace(tenantId) ? "common" : tenantId
+                    : string.Empty,
+            });
+        }
+
+        errorMessage = string.Empty;
+        return true;
+    }
+
     private static ObservableCollection<PreviewProviderMappingViewModel> CreateMappingItems(IReadOnlyDictionary<string, string>? previewProviderMappings)
     {
         var items = new ObservableCollection<PreviewProviderMappingViewModel>();
@@ -151,6 +207,26 @@ public partial class SettingsDialog : Window
             {
                 Extension = pair.Key,
                 ProviderKind = providerKind,
+            });
+        }
+
+        return items;
+    }
+
+    private static ObservableCollection<CloudProviderAppRegistrationViewModel> CreateCloudProviderAppRegistrationItems(
+        IReadOnlyList<CloudProviderAppRegistration>? cloudProviderAppRegistrations)
+    {
+        var registrationsByProvider = (cloudProviderAppRegistrations ?? Array.Empty<CloudProviderAppRegistration>())
+            .GroupBy(item => item.Provider)
+            .ToDictionary(group => group.Key, group => group.Last());
+        var items = new ObservableCollection<CloudProviderAppRegistrationViewModel>();
+        foreach (var provider in Enum.GetValues<CloudStorageProvider>())
+        {
+            registrationsByProvider.TryGetValue(provider, out var existingRegistration);
+            items.Add(new CloudProviderAppRegistrationViewModel(provider)
+            {
+                ClientId = existingRegistration?.ClientId ?? string.Empty,
+                TenantId = existingRegistration?.TenantId ?? string.Empty,
             });
         }
 
