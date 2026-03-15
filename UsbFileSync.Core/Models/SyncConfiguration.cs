@@ -38,6 +38,8 @@ public sealed class SyncConfiguration
 
     public Dictionary<string, string> PreviewProviderMappings { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
+    public IReadOnlyList<CloudProviderAppRegistration> CloudProviderAppRegistrations { get; init; } = Array.Empty<CloudProviderAppRegistration>();
+
     public IReadOnlyList<string> GetDestinationPaths()
     {
         var normalized = DestinationPaths

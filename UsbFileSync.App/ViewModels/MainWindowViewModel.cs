@@ -73,6 +73,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _moveMode;
     private bool _hideMacOsSystemFiles = true;
     private Dictionary<string, string> _previewProviderMappings = PreviewProviderDefaults.CreateSerializableMapping();
+    private IReadOnlyList<CloudProviderAppRegistration> _cloudProviderAppRegistrations = Array.Empty<CloudProviderAppRegistration>();
     private bool _isBusy;
     private bool _isSyncRunning;
     private bool _isLoadingSavedConfiguration;
@@ -757,6 +758,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 HideMacOsSystemFiles = HideMacOsSystemFiles,
                 ParallelCopyCount = ParallelCopyCount,
                 PreviewProviderMappings = new Dictionary<string, string>(_previewProviderMappings, StringComparer.OrdinalIgnoreCase),
+                CloudProviderAppRegistrations = _cloudProviderAppRegistrations
+                    .Select(registration => new CloudProviderAppRegistration
+                    {
+                        Provider = registration.Provider,
+                        ClientId = registration.ClientId,
+                        TenantId = registration.TenantId,
+                    })
+                    .ToList(),
             },
             _sourceVolumeService,
             _destinationVolumeService);
@@ -773,11 +782,40 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public IReadOnlyDictionary<string, string> GetPreviewProviderMappings() =>
         new Dictionary<string, string>(_previewProviderMappings, StringComparer.OrdinalIgnoreCase);
 
+    public IReadOnlyList<CloudProviderAppRegistration> GetCloudProviderAppRegistrations() =>
+        _cloudProviderAppRegistrations
+            .Select(registration => new CloudProviderAppRegistration
+            {
+                Provider = registration.Provider,
+                ClientId = registration.ClientId,
+                TenantId = registration.TenantId,
+            })
+            .ToList();
+
     public void UpdatePreviewProviderMappings(IReadOnlyDictionary<string, string> mappings)
     {
         _previewProviderMappings = new Dictionary<string, string>(mappings, StringComparer.OrdinalIgnoreCase);
         HandleConfigurationChanged();
         AddLog("Settings", $"Preview provider mappings updated for {_previewProviderMappings.Count} file extensions.");
+    }
+
+    public void UpdateCloudProviderAppRegistrations(IReadOnlyList<CloudProviderAppRegistration> registrations)
+    {
+        _cloudProviderAppRegistrations = (registrations ?? Array.Empty<CloudProviderAppRegistration>())
+            .OrderBy(registration => registration.Provider)
+            .Select(registration => new CloudProviderAppRegistration
+            {
+                Provider = registration.Provider,
+                ClientId = registration.ClientId,
+                TenantId = registration.TenantId,
+            })
+            .ToList();
+        HandleConfigurationChanged();
+        AddLog(
+            "Settings",
+            _cloudProviderAppRegistrations.Count == 0
+                ? "Cloud provider app registrations cleared."
+                : $"Cloud provider app registrations updated for {_cloudProviderAppRegistrations.Count} provider(s).");
     }
 
     public void UpdateHideMacOsSystemFiles(bool hideMacOsSystemFiles)
@@ -1441,6 +1479,15 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             _previewProviderMappings = savedConfiguration.PreviewProviderMappings?.Count > 0
                 ? new Dictionary<string, string>(savedConfiguration.PreviewProviderMappings, StringComparer.OrdinalIgnoreCase)
                 : PreviewProviderDefaults.CreateSerializableMapping();
+            _cloudProviderAppRegistrations = (savedConfiguration.CloudProviderAppRegistrations ?? Array.Empty<CloudProviderAppRegistration>())
+                .OrderBy(registration => registration.Provider)
+                .Select(registration => new CloudProviderAppRegistration
+                {
+                    Provider = registration.Provider,
+                    ClientId = registration.ClientId,
+                    TenantId = registration.TenantId,
+                })
+                .ToList();
             SetStatusMessage(
                 IsConfigurationComplete()
                     ? "Restored the previous sync configuration."

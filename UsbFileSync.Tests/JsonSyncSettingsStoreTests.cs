@@ -93,6 +93,52 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public void Save_ThenLoad_RoundTripsCloudProviderAppRegistrations()
+    {
+        Directory.CreateDirectory(_rootPath);
+        var settingsPath = Path.Combine(_rootPath, "settings.json");
+        var store = new JsonSyncSettingsStore(settingsPath);
+        var configuration = new SyncConfiguration
+        {
+            SourcePath = @"E:\MainDrive",
+            DestinationPath = @"F:\BackupDrive",
+            CloudProviderAppRegistrations =
+            [
+                new CloudProviderAppRegistration
+                {
+                    Provider = CloudStorageProvider.GoogleDrive,
+                    ClientId = "google-client-id"
+                },
+                new CloudProviderAppRegistration
+                {
+                    Provider = CloudStorageProvider.OneDrive,
+                    ClientId = "onedrive-client-id",
+                    TenantId = "common"
+                }
+            ]
+        };
+
+        store.Save(configuration);
+        var restored = store.Load();
+
+        Assert.NotNull(restored);
+        Assert.Collection(
+            restored.CloudProviderAppRegistrations,
+            google =>
+            {
+                Assert.Equal(CloudStorageProvider.GoogleDrive, google.Provider);
+                Assert.Equal("google-client-id", google.ClientId);
+                Assert.Equal(string.Empty, google.TenantId);
+            },
+            oneDrive =>
+            {
+                Assert.Equal(CloudStorageProvider.OneDrive, oneDrive.Provider);
+                Assert.Equal("onedrive-client-id", oneDrive.ClientId);
+                Assert.Equal("common", oneDrive.TenantId);
+            });
+    }
+
+    [Fact]
     public void Load_ReturnsNull_WhenSettingsFileContainsInvalidJson()
     {
         Directory.CreateDirectory(_rootPath);

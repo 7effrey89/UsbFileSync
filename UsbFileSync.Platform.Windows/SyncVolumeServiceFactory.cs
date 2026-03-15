@@ -46,6 +46,14 @@ public static class SyncVolumeServiceFactory
             HideMacOsSystemFiles = configuration.HideMacOsSystemFiles,
             ParallelCopyCount = configuration.ParallelCopyCount,
             PreviewProviderMappings = new Dictionary<string, string>(configuration.PreviewProviderMappings, StringComparer.OrdinalIgnoreCase),
+            CloudProviderAppRegistrations = configuration.CloudProviderAppRegistrations
+                .Select(registration => new CloudProviderAppRegistration
+                {
+                    Provider = registration.Provider,
+                    ClientId = registration.ClientId,
+                    TenantId = registration.TenantId,
+                })
+                .ToList(),
         };
     }
 
