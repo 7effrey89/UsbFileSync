@@ -37,6 +37,7 @@
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
     <Compile Remove="ExtVolumeServiceTests.cs" />
+    <Compile Remove="GoogleDriveVolumeSourceTests.cs" />
     <Compile Remove="ImagePreviewZoomCalculatorTests.cs" />
     <Compile Remove="MainWindowViewModelTests.cs" />
     <Compile Remove="QueueActionViewModelTests.cs" />

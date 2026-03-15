@@ -33,6 +33,54 @@ public sealed class WindowsSourceLocationPickerServiceTests
         Assert.Same(originalService, browseService);
     }
 
+    [Fact]
+    public void CreateDestinationBrowseVolumeService_ResolvesGoogleDriveRoot_WhenCustomCredentialsAreConfigured()
+    {
+        var registrations = new[]
+        {
+            new UsbFileSync.Core.Models.CloudProviderAppRegistration
+            {
+                Provider = UsbFileSync.Core.Models.CloudStorageProvider.GoogleDrive,
+                ClientId = "google-client-id",
+                ClientSecret = "google-client-secret"
+            }
+        };
+
+        var browseService = SyncVolumeServiceFactory.CreateDestinationBrowseVolumeService(true, registrations);
+
+        var success = browseService.TryCreateVolume(GoogleDrivePath.RootPath, out var volume, out var failureReason);
+
+        Assert.True(success);
+        Assert.NotNull(volume);
+        Assert.True(volume!.IsReadOnly);
+        Assert.Equal("Google Drive", volume.FileSystemType);
+        Assert.True(string.IsNullOrWhiteSpace(failureReason));
+    }
+
+    [Fact]
+    public void CreateDestinationVolumeService_ResolvesWritableGoogleDriveRoot_WhenCustomCredentialsAreConfigured()
+    {
+        var registrations = new[]
+        {
+            new UsbFileSync.Core.Models.CloudProviderAppRegistration
+            {
+                Provider = UsbFileSync.Core.Models.CloudStorageProvider.GoogleDrive,
+                ClientId = "google-client-id",
+                ClientSecret = "google-client-secret"
+            }
+        };
+
+        var destinationService = SyncVolumeServiceFactory.CreateDestinationVolumeService(true, registrations);
+
+        var success = destinationService.TryCreateVolume(GoogleDrivePath.RootPath, out var volume, out var failureReason);
+
+        Assert.True(success);
+        Assert.NotNull(volume);
+        Assert.False(volume!.IsReadOnly);
+        Assert.Equal("Google Drive", volume.FileSystemType);
+        Assert.True(string.IsNullOrWhiteSpace(failureReason));
+    }
+
     private sealed class StubSourceVolumeService : ISourceVolumeService
     {
         public bool TryCreateVolume(string path, out UsbFileSync.Core.Volumes.IVolumeSource? volume, out string? failureReason)

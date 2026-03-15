@@ -5,10 +5,12 @@ namespace UsbFileSync.Platform.Windows;
 
 public sealed class GoogleDriveVolumeService : ISourceVolumeService
 {
+    private readonly bool _allowWriteAccess;
     private readonly CloudProviderAppRegistration? _registration;
 
-    public GoogleDriveVolumeService(bool useCustomCloudProviderCredentials, IReadOnlyList<CloudProviderAppRegistration>? registrations)
+    public GoogleDriveVolumeService(bool useCustomCloudProviderCredentials, IReadOnlyList<CloudProviderAppRegistration>? registrations, bool allowWriteAccess = false)
     {
+        _allowWriteAccess = allowWriteAccess;
         _registration = useCustomCloudProviderCredentials
             ? registrations?
                 .Where(item => item.Provider == CloudStorageProvider.GoogleDrive)
@@ -36,7 +38,7 @@ public sealed class GoogleDriveVolumeService : ISourceVolumeService
         {
             var authenticationService = new GoogleDriveAuthenticationService(_registration.ClientId, _registration.ClientSecret);
             var apiClient = new GoogleDriveApiClient(authenticationService);
-            var rootVolume = new GoogleDriveVolumeSource(apiClient);
+            var rootVolume = new GoogleDriveVolumeSource(apiClient, _allowWriteAccess);
 
             _ = rootVolume.GetEntry(string.Empty);
 

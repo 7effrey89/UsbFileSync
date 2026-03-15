@@ -11,13 +11,15 @@ internal sealed class GoogleDriveAuthenticationService
 {
     private const string AuthorizationEndpoint = "https://accounts.google.com/o/oauth2/v2/auth";
     private const string TokenEndpoint = "https://oauth2.googleapis.com/token";
-    private const string Scope = "https://www.googleapis.com/auth/drive.readonly";
+    private const string Scope = "https://www.googleapis.com/auth/drive";
+    private const string TokenCacheScopeKey = "drive-rw";
     private static readonly HttpClient HttpClient = new();
     private static readonly TimeSpan AccessTokenRefreshSkew = TimeSpan.FromMinutes(5);
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
     private readonly string _clientId;
     private readonly string _clientSecret;
+    private readonly string _tokenCacheKey;
     private readonly GoogleDriveTokenStore _tokenStore;
     private readonly Func<Uri, bool> _openBrowser;
 
@@ -34,13 +36,14 @@ internal sealed class GoogleDriveAuthenticationService
 
         _clientId = clientId;
         _clientSecret = clientSecret?.Trim() ?? string.Empty;
+        _tokenCacheKey = $"{_clientId}|{TokenCacheScopeKey}";
         _tokenStore = tokenStore ?? new GoogleDriveTokenStore();
         _openBrowser = openBrowser ?? OpenBrowser;
     }
 
     public async Task<string> GetAccessTokenAsync(CancellationToken cancellationToken = default)
     {
-        var token = _tokenStore.Load(_clientId);
+        var token = _tokenStore.Load(_tokenCacheKey);
         if (token is not null && token.ExpiresAtUtc > DateTime.UtcNow.Add(AccessTokenRefreshSkew))
         {
             return token.AccessToken;
@@ -51,17 +54,17 @@ internal sealed class GoogleDriveAuthenticationService
             try
             {
                 var refreshedToken = await RefreshTokenAsync(token.RefreshToken, cancellationToken).ConfigureAwait(false);
-                _tokenStore.Save(_clientId, refreshedToken);
+                _tokenStore.Save(_tokenCacheKey, refreshedToken);
                 return refreshedToken.AccessToken;
             }
             catch when (!cancellationToken.IsCancellationRequested)
             {
-                _tokenStore.Delete(_clientId);
+                _tokenStore.Delete(_tokenCacheKey);
             }
         }
 
         var authorizedToken = await AuthorizeInteractivelyAsync(cancellationToken).ConfigureAwait(false);
-        _tokenStore.Save(_clientId, authorizedToken);
+        _tokenStore.Save(_tokenCacheKey, authorizedToken);
         return authorizedToken.AccessToken;
     }
 

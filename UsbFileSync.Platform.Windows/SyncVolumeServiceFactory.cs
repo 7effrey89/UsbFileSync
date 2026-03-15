@@ -17,7 +17,21 @@ public static class SyncVolumeServiceFactory
             new ExtVolumeService());
 
     public static ISourceVolumeService CreateDestinationVolumeService() =>
-        new ExtVolumeService(allowWriteAccess: true);
+        CreateDestinationVolumeService(useCustomCloudProviderCredentials: false, cloudProviderAppRegistrations: null);
+
+    public static ISourceVolumeService CreateDestinationVolumeService(
+        bool useCustomCloudProviderCredentials,
+        IReadOnlyList<CloudProviderAppRegistration>? cloudProviderAppRegistrations) =>
+        new CompositeSourceVolumeService(
+            new GoogleDriveVolumeService(useCustomCloudProviderCredentials, cloudProviderAppRegistrations, allowWriteAccess: true),
+            new ExtVolumeService(allowWriteAccess: true));
+
+    public static ISourceVolumeService CreateDestinationBrowseVolumeService(
+        bool useCustomCloudProviderCredentials,
+        IReadOnlyList<CloudProviderAppRegistration>? cloudProviderAppRegistrations) =>
+        new CompositeSourceVolumeService(
+            new GoogleDriveVolumeService(useCustomCloudProviderCredentials, cloudProviderAppRegistrations),
+            new ExtVolumeService());
 
     public static SyncConfiguration ResolveConfiguration(
         SyncConfiguration configuration,
@@ -29,7 +43,9 @@ public static class SyncVolumeServiceFactory
         sourceVolumeService ??= CreateSourceVolumeService(
             configuration.UseCustomCloudProviderCredentials,
             configuration.CloudProviderAppRegistrations);
-        destinationVolumeService ??= CreateDestinationVolumeService();
+        destinationVolumeService ??= CreateDestinationVolumeService(
+            configuration.UseCustomCloudProviderCredentials,
+            configuration.CloudProviderAppRegistrations);
 
         var destinationPaths = configuration.GetDestinationPaths().ToList();
         var destinationVolumes = destinationPaths

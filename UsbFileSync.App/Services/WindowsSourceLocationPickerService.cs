@@ -30,7 +30,7 @@ public static class WindowsSourceLocationPickerService
             fallbackTitle: "Select the destination drive or folder",
             dialogTextOptions: new UniversalSourceLocationPickerDialog.DialogTextOptions(
                 WindowTitle: "Select Destination Folder",
-                Heading: "Browse destination folders across Windows and Linux ext volumes",
+                Heading: "Browse destination folders across Windows, Linux ext, and Google Drive",
                 Description: "Select a root on the left, browse folders on the right, and choose the current folder as the destination location.",
                 NoRootsMessage: "No destination volumes are currently available.",
                 InvalidPathMessage: "Enter a valid destination folder path under one of the available roots.",

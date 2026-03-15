@@ -3,7 +3,7 @@
 This guide explains how to create the **custom provider credentials** that can be entered in **Application Settings** when **Use custom provider credentials** is enabled.
 
 > [!IMPORTANT]
-> UsbFileSync now supports **Google Drive as a source volume** when custom provider credentials are enabled. You can browse a Google Drive folder, select it as the source, analyze it, and sync it down to local destinations. Google Drive is still **not** supported as a destination on this branch.
+> UsbFileSync now supports **Google Drive as both a source volume and a destination volume** when custom provider credentials are enabled. You can browse a Google Drive folder, select it as the source or destination, analyze it, and sync between Google Drive and local destinations.
 
 ## What UsbFileSync currently stores
 
@@ -83,8 +83,8 @@ The current UI can now store an optional **Google Drive client secret** when a G
 
    The first screenshot below shows the scope picker. The second shows the selected scopes before continuing.
 
-13. Because UsbFileSync now browses and reads real Drive folders, the OAuth client must allow full Drive read access for the signed-in user:
-   - Required: `.../auth/drive.readonly`
+13. Because UsbFileSync can now browse Drive folders and also write files when Google Drive is used as a destination, the OAuth client must allow full Drive access for the signed-in user:
+   - Required: `.../auth/drive`
 14. Avoid adding unrelated scopes such as `.../auth/docs` or `.../auth/drive.photos.readonly` unless you specifically need them for your own testing outside UsbFileSync.
 15. Save the scope selection and choose **Save and continue**.
 
@@ -103,9 +103,10 @@ The current UI can now store an optional **Google Drive client secret** when a G
 18. If Google also shows a client secret for that OAuth client and your sign-in flow later reports that a client secret is required, copy the **client secret** too.
 19. In UsbFileSync, open **Application Settings**, turn on **Use custom provider credentials**, and paste the client ID into the **Google Drive** row under **OAuth client ID**. If needed, also paste the Google client secret into **Client secret (Google optional)**.
 20. If you downloaded the full Google Desktop OAuth JSON file instead of copying the values manually, you can paste that raw JSON into the **Client secret (Google optional)** field. UsbFileSync will extract `installed.client_id` and `installed.client_secret` from the JSON automatically.
-21. Click **Test Google Drive** in the settings dialog to confirm the configured values can complete sign-in and open Drive. UsbFileSync will launch your browser for the OAuth flow the first time.
-22. After the test succeeds, use the **Browse** button for the source path and choose the **Google Drive** root.
+21. Click **Test Google Drive** in the settings dialog to confirm the configured values can complete sign-in and authorize Drive access. UsbFileSync will launch your browser for the OAuth flow the first time.
+22. After the test succeeds, use the **Browse** button for either the source path or the destination path and choose the **Google Drive** root.
 23. After sign-in finishes, return to UsbFileSync, browse to the Drive folder you want, and choose **Select current folder**.
+24. When Google Drive is the destination, UsbFileSync will create folders, upload files, update files, and write sync metadata inside the selected Drive folder.
 
 ### Example values
 
@@ -154,8 +155,9 @@ These are **sanitized examples** that show the expected format only.
 - You can paste the raw downloaded Desktop app JSON directly into the **Client secret (Google optional)** field, and UsbFileSync will extract both values automatically.
 - The downloaded desktop client JSON may include `"redirect_uris": ["http://localhost"]`. That is normal for a Google desktop OAuth client.
 - If Google later says `client_secret is missing` during sign-in, first confirm you are using a **Desktop app** OAuth client. If you are, paste that client's Google **client secret** into UsbFileSync as well and test again.
-- UsbFileSync currently supports **Google Drive as a source only**. Google Drive destinations are still not implemented.
-- Google Drive folder selection is currently path-by-name under `gdrive://root/...`. If you have duplicate folder names under the same parent in Drive, re-open the picker and confirm you selected the intended branch.
+- UsbFileSync now supports **Google Drive as both a source and a destination**.
+- Google Drive destination support uses full Drive scope so the app can create folders, upload files, rename temporary uploads into place, delete replaced files, and write sync metadata.
+- Google Drive selection is currently path-by-name under `gdrive://root/...`. If a Drive folder contains multiple sibling items with the same name, UsbFileSync cannot represent that branch uniquely and will stop with a duplicate-name error.
 - If Google warns that the app is still in testing, that is expected until the OAuth consent screen is fully published in your own project.
 
 ---
@@ -261,7 +263,7 @@ If you leave the tenant field blank in UsbFileSync, the app stores **`common`**.
    You can paste the raw desktop OAuth JSON into **Client secret (Google optional)** and UsbFileSync will extract `client_id` and `client_secret` automatically, or copy those values manually into the matching fields.
 
 - **I selected a lot of Google Drive scopes and I am not sure that was correct**  
-   For the current Google Drive source integration, UsbFileSync only needs Drive read access. Trim the registration back to `.../auth/drive.readonly` unless you have another separate reason to request more.
+   For the current Google Drive source and destination integration, UsbFileSync needs full Drive access. Trim the registration back to `.../auth/drive` unless you have another separate reason to request more.
 
 - **Google says the app is blocked and only developer-approved testers can access it**  
    That is a Google Cloud OAuth consent-screen setting, not a UsbFileSync bug. Open **Google Cloud Console** for the project that owns the client ID, then go to **Google Auth Platform** or **APIs & Services** → **OAuth consent screen**.

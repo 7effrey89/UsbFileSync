@@ -623,7 +623,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         var destinationPath = parameter is DestinationPathEntryViewModel entry
             ? entry.Path
             : DestinationPath;
-        var selectedPath = WindowsSourceLocationPickerService.PickDestinationLocation(destinationPath, _folderPickerService, _destinationVolumeService);
+        var selectedPath = WindowsSourceLocationPickerService.PickDestinationLocation(destinationPath, _folderPickerService, GetCurrentDestinationBrowseVolumeService());
         if (!string.IsNullOrWhiteSpace(selectedPath))
         {
             if (parameter is DestinationPathEntryViewModel destinationEntry)
@@ -758,6 +758,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private SyncConfiguration CreateConfiguration()
     {
         var sourceVolumeService = GetCurrentSourceVolumeService();
+        var destinationVolumeService = GetCurrentDestinationVolumeService();
         return SyncVolumeServiceFactory.ResolveConfiguration(
             new SyncConfiguration
             {
@@ -776,7 +777,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 CloudProviderAppRegistrations = _cloudProviderAppRegistrations.ToList(),
             },
             sourceVolumeService,
-            _destinationVolumeService);
+            destinationVolumeService);
     }
 
     private ISourceVolumeService GetCurrentSourceVolumeService() =>
@@ -785,6 +786,16 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 new GoogleDriveVolumeService(UseCustomCloudProviderCredentials, _cloudProviderAppRegistrations),
                 _sourceVolumeService)
             : _sourceVolumeService;
+
+    private ISourceVolumeService GetCurrentDestinationVolumeService() =>
+        UseCustomCloudProviderCredentials
+            ? SyncVolumeServiceFactory.CreateDestinationVolumeService(UseCustomCloudProviderCredentials, _cloudProviderAppRegistrations)
+            : _destinationVolumeService;
+
+    private ISourceVolumeService GetCurrentDestinationBrowseVolumeService() =>
+        UseCustomCloudProviderCredentials
+            ? SyncVolumeServiceFactory.CreateDestinationBrowseVolumeService(UseCustomCloudProviderCredentials, _cloudProviderAppRegistrations)
+            : WindowsSourceLocationPickerService.GetDestinationBrowseVolumeService(_destinationVolumeService);
 
     public void UpdateParallelCopyCount(int parallelCopyCount)
     {
@@ -1410,7 +1421,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
         }
 
-        if (_destinationVolumeService.TryCreateVolume(path, out var volume, out var failureReason))
+        var destinationVolumeService = GetCurrentDestinationVolumeService();
+        if (destinationVolumeService.TryCreateVolume(path, out var volume, out var failureReason))
         {
             if (volume is not null &&
                 string.Equals(volume.FileSystemType, "ext4", StringComparison.OrdinalIgnoreCase) &&
@@ -1426,7 +1438,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         validationMessage = string.IsNullOrWhiteSpace(failureReason)
             ? $"{label} path does not exist or is not accessible."
-            : $"{label} Linux volume could not be opened. {failureReason}";
+            : $"{label} volume could not be opened. {failureReason}";
         return false;
     }
 
