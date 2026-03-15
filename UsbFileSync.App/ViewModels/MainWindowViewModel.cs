@@ -758,14 +758,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 HideMacOsSystemFiles = HideMacOsSystemFiles,
                 ParallelCopyCount = ParallelCopyCount,
                 PreviewProviderMappings = new Dictionary<string, string>(_previewProviderMappings, StringComparer.OrdinalIgnoreCase),
-                CloudProviderAppRegistrations = _cloudProviderAppRegistrations
-                    .Select(registration => new CloudProviderAppRegistration
-                    {
-                        Provider = registration.Provider,
-                        ClientId = registration.ClientId,
-                        TenantId = registration.TenantId,
-                    })
-                    .ToList(),
+                CloudProviderAppRegistrations = _cloudProviderAppRegistrations.ToList(),
             },
             _sourceVolumeService,
             _destinationVolumeService);
@@ -783,14 +776,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         new Dictionary<string, string>(_previewProviderMappings, StringComparer.OrdinalIgnoreCase);
 
     public IReadOnlyList<CloudProviderAppRegistration> GetCloudProviderAppRegistrations() =>
-        _cloudProviderAppRegistrations
-            .Select(registration => new CloudProviderAppRegistration
-            {
-                Provider = registration.Provider,
-                ClientId = registration.ClientId,
-                TenantId = registration.TenantId,
-            })
-            .ToList();
+        _cloudProviderAppRegistrations.ToList();
 
     public void UpdatePreviewProviderMappings(IReadOnlyDictionary<string, string> mappings)
     {
@@ -803,12 +789,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         _cloudProviderAppRegistrations = (registrations ?? Array.Empty<CloudProviderAppRegistration>())
             .OrderBy(registration => registration.Provider)
-            .Select(registration => new CloudProviderAppRegistration
-            {
-                Provider = registration.Provider,
-                ClientId = registration.ClientId,
-                TenantId = registration.TenantId,
-            })
             .ToList();
         HandleConfigurationChanged();
         AddLog(
@@ -1481,12 +1461,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 : PreviewProviderDefaults.CreateSerializableMapping();
             _cloudProviderAppRegistrations = (savedConfiguration.CloudProviderAppRegistrations ?? Array.Empty<CloudProviderAppRegistration>())
                 .OrderBy(registration => registration.Provider)
-                .Select(registration => new CloudProviderAppRegistration
-                {
-                    Provider = registration.Provider,
-                    ClientId = registration.ClientId,
-                    TenantId = registration.TenantId,
-                })
                 .ToList();
             SetStatusMessage(
                 IsConfigurationComplete()
