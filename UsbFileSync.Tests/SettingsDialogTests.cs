@@ -133,4 +133,16 @@ public sealed class SettingsDialogTests
         Assert.Equal(CloudStorageProvider.OneDrive, registration.Provider);
         Assert.Equal("common", registration.TenantId);
     }
+
+    [Fact]
+    public void CloudProviderAppRegistrationViewModel_ExposesBuiltInModeMetadata()
+    {
+        var oneDrive = new CloudProviderAppRegistrationViewModel(CloudStorageProvider.OneDrive);
+        var dropbox = new CloudProviderAppRegistrationViewModel(CloudStorageProvider.Dropbox);
+
+        Assert.Equal("OneDrive", oneDrive.ProviderDisplayName);
+        Assert.True(oneDrive.UsesTenantId);
+        Assert.Equal("Dropbox", dropbox.ProviderDisplayName);
+        Assert.False(dropbox.UsesTenantId);
+    }
 }

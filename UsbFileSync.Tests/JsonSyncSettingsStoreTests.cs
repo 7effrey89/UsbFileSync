@@ -115,7 +115,8 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
                     ClientId = "onedrive-client-id",
                     TenantId = "common"
                 }
-            ]
+            ],
+            UseCustomCloudProviderCredentials = true,
         };
 
         store.Save(configuration);
@@ -136,6 +137,38 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
                 Assert.Equal("onedrive-client-id", oneDrive.ClientId);
                 Assert.Equal("common", oneDrive.TenantId);
             });
+        Assert.True(restored.UseCustomCloudProviderCredentials);
+    }
+
+    [Fact]
+    public void Save_ThenLoad_PreservesCustomRegistrationsWhenBuiltInModeIsPreferred()
+    {
+        Directory.CreateDirectory(_rootPath);
+        var settingsPath = Path.Combine(_rootPath, "settings.json");
+        var store = new JsonSyncSettingsStore(settingsPath);
+        var configuration = new SyncConfiguration
+        {
+            SourcePath = @"E:\MainDrive",
+            DestinationPath = @"F:\BackupDrive",
+            UseCustomCloudProviderCredentials = false,
+            CloudProviderAppRegistrations =
+            [
+                new CloudProviderAppRegistration
+                {
+                    Provider = CloudStorageProvider.Dropbox,
+                    ClientId = "dropbox-client-id"
+                }
+            ]
+        };
+
+        store.Save(configuration);
+        var restored = store.Load();
+
+        Assert.NotNull(restored);
+        Assert.False(restored.UseCustomCloudProviderCredentials);
+        var registration = Assert.Single(restored.CloudProviderAppRegistrations);
+        Assert.Equal(CloudStorageProvider.Dropbox, registration.Provider);
+        Assert.Equal("dropbox-client-id", registration.ClientId);
     }
 
     [Fact]

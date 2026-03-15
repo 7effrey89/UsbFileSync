@@ -189,9 +189,9 @@ The settings dialog currently supports:
 - `Parallel copies`: number of file copy operations allowed to run at the same time.
 - `0` enables auto mode, which estimates a starting parallelism and adjusts it during the copy batch.
 - `Hide macOS system files in HFS+ preview and sync planning`: filters common filesystem metadata such as `.Spotlight-V100`, `.fseventsd`, `.journal`, and `HFS+ Private Data` out of the HFS+ sync view.
-- `Cloud provider app registrations`: enter your own OAuth client IDs for Google Drive, Dropbox, and OneDrive when preparing for API-backed cloud integration. OneDrive can also store an optional tenant override and defaults to `common` when left blank.
+- `Cloud provider credentials`: built-in provider credentials are the default mode planned for API-backed cloud integration, while an advanced `Use custom provider credentials` setting lets you keep your own Google Drive, Dropbox, and OneDrive client IDs as an override. OneDrive can also store an optional tenant override and defaults to `common` when left blank.
 
-The cloud provider registration settings are groundwork for the requested Option B flow where users bring their own provider app registrations. They do **not** yet enable cloud login, cloud folder browsing, or cloud file transfer on this branch; those API-backed behaviors still need to be wired on top of the persisted provider settings.
+The cloud provider credential settings are groundwork for the requested hybrid model. They persist the preferred credential mode plus any custom provider app registrations, but they still do **not** enable cloud login, cloud folder browsing, or cloud file transfer on this branch; those API-backed behaviors still need to be wired on top of the persisted provider settings.
 
 The main sync settings area also supports:
 

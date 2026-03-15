@@ -13,13 +13,16 @@ public partial class SettingsDialog : Window
         int parallelCopyCount,
         bool hideMacOsSystemFiles,
         IReadOnlyDictionary<string, string>? previewProviderMappings = null,
+        bool useCustomCloudProviderCredentials = false,
         IReadOnlyList<CloudProviderAppRegistration>? cloudProviderAppRegistrations = null)
     {
         InitializeComponent();
         ParallelCopyCount = Math.Max(0, parallelCopyCount);
         HideMacOsSystemFiles = hideMacOsSystemFiles;
+        UseCustomCloudProviderCredentials = useCustomCloudProviderCredentials;
         ParallelCopyCountTextBox.Text = ParallelCopyCount.ToString(CultureInfo.InvariantCulture);
         HideMacOsSystemFilesCheckBox.IsChecked = HideMacOsSystemFiles;
+        UseCustomProviderCredentialsCheckBox.IsChecked = UseCustomCloudProviderCredentials;
         ProviderOptions = Enum.GetValues<PreviewProviderKind>();
         PreviewProviderMappingItems = CreateMappingItems(previewProviderMappings);
         CloudProviderAppRegistrationItems = CreateCloudProviderAppRegistrationItems(cloudProviderAppRegistrations);
@@ -40,6 +43,8 @@ public partial class SettingsDialog : Window
 
     public bool HideMacOsSystemFiles { get; private set; }
 
+    public bool UseCustomCloudProviderCredentials { get; private set; }
+
     public ObservableCollection<PreviewProviderMappingViewModel> PreviewProviderMappingItems { get; }
 
     public ObservableCollection<CloudProviderAppRegistrationViewModel> CloudProviderAppRegistrationItems { get; }
@@ -58,6 +63,7 @@ public partial class SettingsDialog : Window
 
         ParallelCopyCount = value;
         HideMacOsSystemFiles = HideMacOsSystemFilesCheckBox.IsChecked != false;
+        UseCustomCloudProviderCredentials = UseCustomProviderCredentialsCheckBox.IsChecked == true;
         if (!TryCreateSerializableMappings(PreviewProviderMappingItems, out var mappings, out var errorMessage))
         {
             System.Windows.MessageBox.Show(this, errorMessage, "Invalid preview mapping", MessageBoxButton.OK, MessageBoxImage.Warning);
