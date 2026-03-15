@@ -193,6 +193,8 @@ The settings dialog currently supports:
 
 The cloud provider credential settings are groundwork for the requested hybrid model. They persist the preferred credential mode plus any custom provider app registrations, but they still do **not** enable cloud login, cloud folder browsing, or cloud file transfer on this branch; those API-backed behaviors still need to be wired on top of the persisted provider settings.
 
+If you want to prepare custom provider values for the advanced override, see [`docs/custom-cloud-provider-credentials.md`](docs/custom-cloud-provider-credentials.md) for step-by-step setup instructions for Google Drive, Dropbox, and OneDrive.
+
 The main sync settings area also supports:
 
 - `Checksums`: validates each copied file with SHA-256 before it is committed into place.
