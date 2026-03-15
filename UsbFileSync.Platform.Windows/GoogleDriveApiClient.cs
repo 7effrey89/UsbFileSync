@@ -14,6 +14,12 @@ internal sealed class GoogleDriveApiClient : IGoogleDriveClient
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
     private readonly GoogleDriveAuthenticationService _authenticationService;
+    private readonly object _cacheLock = new();
+    private readonly Dictionary<string, GoogleDriveItem?> _entryCache = new(StringComparer.OrdinalIgnoreCase)
+    {
+        [string.Empty] = GoogleDriveItem.Root,
+    };
+    private readonly Dictionary<string, IReadOnlyList<GoogleDriveItem>> _childrenCache = new(StringComparer.OrdinalIgnoreCase);
 
     public GoogleDriveApiClient(GoogleDriveAuthenticationService authenticationService)
     {
@@ -23,12 +29,18 @@ internal sealed class GoogleDriveApiClient : IGoogleDriveClient
     public async Task<GoogleDriveItem> GetEntryAsync(string relativePath, CancellationToken cancellationToken = default)
     {
         var normalizedRelativePath = NormalizeRelativePath(relativePath);
+        if (TryGetCachedEntry(normalizedRelativePath, out var cachedItem))
+        {
+            return cachedItem ?? GoogleDriveItem.NotFound(normalizedRelativePath);
+        }
+
         if (string.IsNullOrEmpty(normalizedRelativePath))
         {
             return GoogleDriveItem.Root;
         }
 
         var item = await ResolveItemAsync(normalizedRelativePath, cancellationToken).ConfigureAwait(false);
+        CacheEntry(normalizedRelativePath, item);
         return item ?? GoogleDriveItem.NotFound(normalizedRelativePath);
     }
 
@@ -206,6 +218,11 @@ internal sealed class GoogleDriveApiClient : IGoogleDriveClient
 
     private async Task<GoogleDriveItem?> ResolveItemAsync(string normalizedRelativePath, CancellationToken cancellationToken)
     {
+        if (TryGetCachedEntry(normalizedRelativePath, out var cachedItem))
+        {
+            return cachedItem;
+        }
+
         var segments = normalizedRelativePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (segments.Length == 0)
         {
@@ -214,10 +231,33 @@ internal sealed class GoogleDriveApiClient : IGoogleDriveClient
 
         var parentId = "root";
         GoogleDriveItem? current = null;
+        var currentPath = string.Empty;
         for (var index = 0; index < segments.Length; index++)
         {
             var isLastSegment = index == segments.Length - 1;
+            currentPath = string.IsNullOrEmpty(currentPath)
+                ? segments[index]
+                : $"{currentPath}/{segments[index]}";
+
+            if (TryGetCachedEntry(currentPath, out var cachedSegmentItem))
+            {
+                current = cachedSegmentItem;
+                if (current is null)
+                {
+                    return null;
+                }
+
+                if (!isLastSegment && !current.IsDirectory)
+                {
+                    return null;
+                }
+
+                parentId = current.Id;
+                continue;
+            }
+
             current = await FindChildByNameAsync(parentId, segments[index], !isLastSegment, cancellationToken).ConfigureAwait(false);
+            CacheEntry(currentPath, current);
             if (current is null)
             {
                 return null;
@@ -291,6 +331,13 @@ internal sealed class GoogleDriveApiClient : IGoogleDriveClient
 
     private async Task<GoogleDriveItem?> FindChildByNameAsync(string parentId, string name, bool requireDirectory, CancellationToken cancellationToken)
     {
+        if (TryGetCachedChildren(parentId, out var cachedChildren))
+        {
+            return cachedChildren.FirstOrDefault(item =>
+                string.Equals(item.Name, name, StringComparison.OrdinalIgnoreCase) &&
+                (!requireDirectory || item.IsDirectory));
+        }
+
         var escapedName = EscapeQueryValue(name);
         var query = $"'{EscapeQueryValue(parentId)}' in parents and trashed = false and name = '{escapedName}'";
         if (requireDirectory)
@@ -330,6 +377,11 @@ internal sealed class GoogleDriveApiClient : IGoogleDriveClient
 
     private async Task<IReadOnlyList<GoogleDriveItem>> ListChildrenAsync(string parentId, CancellationToken cancellationToken)
     {
+        if (TryGetCachedChildren(parentId, out var cachedChildren))
+        {
+            return cachedChildren;
+        }
+
         var items = new List<GoogleDriveItem>();
         string? nextPageToken = null;
 
@@ -357,6 +409,7 @@ internal sealed class GoogleDriveApiClient : IGoogleDriveClient
         }
         while (!string.IsNullOrWhiteSpace(nextPageToken));
 
+        CacheChildren(parentId, items);
         return items;
     }
 
@@ -374,6 +427,7 @@ internal sealed class GoogleDriveApiClient : IGoogleDriveClient
 
         using var response = await HttpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
         await EnsureSuccessStatusCodeAsync(response, cancellationToken).ConfigureAwait(false);
+        InvalidateCaches();
         await using var payload = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         var created = await JsonSerializer.DeserializeAsync<DriveFile>(payload, SerializerOptions, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException("Google Drive did not return the created folder information.");
@@ -392,6 +446,7 @@ internal sealed class GoogleDriveApiClient : IGoogleDriveClient
 
         using var response = await HttpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
         await EnsureSuccessStatusCodeAsync(response, cancellationToken).ConfigureAwait(false);
+        InvalidateCaches();
     }
 
     private async Task UploadExistingFileContentAsync(string fileId, Stream content, CancellationToken cancellationToken)
@@ -407,6 +462,7 @@ internal sealed class GoogleDriveApiClient : IGoogleDriveClient
 
         using var response = await HttpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
         await EnsureSuccessStatusCodeAsync(response, cancellationToken).ConfigureAwait(false);
+        InvalidateCaches();
     }
 
     private async Task DeleteItemByIdAsync(string itemId, CancellationToken cancellationToken)
@@ -414,6 +470,7 @@ internal sealed class GoogleDriveApiClient : IGoogleDriveClient
         using var request = await CreateAuthorizedRequestAsync(HttpMethod.Delete, $"{FilesEndpoint}/{Uri.EscapeDataString(itemId)}", cancellationToken).ConfigureAwait(false);
         using var response = await HttpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
         await EnsureSuccessStatusCodeAsync(response, cancellationToken).ConfigureAwait(false);
+        InvalidateCaches();
     }
 
     private async Task PatchJsonAsync(string requestUri, object payload, CancellationToken cancellationToken)
@@ -423,6 +480,49 @@ internal sealed class GoogleDriveApiClient : IGoogleDriveClient
 
         using var response = await HttpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
         await EnsureSuccessStatusCodeAsync(response, cancellationToken).ConfigureAwait(false);
+        InvalidateCaches();
+    }
+
+    private bool TryGetCachedEntry(string normalizedRelativePath, out GoogleDriveItem? item)
+    {
+        lock (_cacheLock)
+        {
+            return _entryCache.TryGetValue(normalizedRelativePath, out item);
+        }
+    }
+
+    private void CacheEntry(string normalizedRelativePath, GoogleDriveItem? item)
+    {
+        lock (_cacheLock)
+        {
+            _entryCache[normalizedRelativePath] = item;
+        }
+    }
+
+    private bool TryGetCachedChildren(string parentId, out IReadOnlyList<GoogleDriveItem> children)
+    {
+        lock (_cacheLock)
+        {
+            return _childrenCache.TryGetValue(parentId, out children!);
+        }
+    }
+
+    private void CacheChildren(string parentId, IReadOnlyList<GoogleDriveItem> children)
+    {
+        lock (_cacheLock)
+        {
+            _childrenCache[parentId] = children;
+        }
+    }
+
+    private void InvalidateCaches()
+    {
+        lock (_cacheLock)
+        {
+            _entryCache.Clear();
+            _entryCache[string.Empty] = GoogleDriveItem.Root;
+            _childrenCache.Clear();
+        }
     }
 
     private async Task<HttpRequestMessage> CreateAuthorizedRequestAsync(HttpMethod method, string requestUri, CancellationToken cancellationToken)
