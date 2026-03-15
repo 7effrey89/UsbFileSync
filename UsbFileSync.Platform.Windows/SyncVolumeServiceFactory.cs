@@ -6,7 +6,15 @@ namespace UsbFileSync.Platform.Windows;
 public static class SyncVolumeServiceFactory
 {
     public static ISourceVolumeService CreateSourceVolumeService() =>
-        new CompositeSourceVolumeService([new HfsPlusVolumeService(), new ExtVolumeService()]);
+        CreateSourceVolumeService(useCustomCloudProviderCredentials: false, cloudProviderAppRegistrations: null);
+
+    public static ISourceVolumeService CreateSourceVolumeService(
+        bool useCustomCloudProviderCredentials,
+        IReadOnlyList<CloudProviderAppRegistration>? cloudProviderAppRegistrations) =>
+        new CompositeSourceVolumeService(
+            new GoogleDriveVolumeService(useCustomCloudProviderCredentials, cloudProviderAppRegistrations),
+            new HfsPlusVolumeService(),
+            new ExtVolumeService());
 
     public static ISourceVolumeService CreateDestinationVolumeService() =>
         new ExtVolumeService(allowWriteAccess: true);
@@ -18,7 +26,9 @@ public static class SyncVolumeServiceFactory
     {
         ArgumentNullException.ThrowIfNull(configuration);
 
-        sourceVolumeService ??= CreateSourceVolumeService();
+        sourceVolumeService ??= CreateSourceVolumeService(
+            configuration.UseCustomCloudProviderCredentials,
+            configuration.CloudProviderAppRegistrations);
         destinationVolumeService ??= CreateDestinationVolumeService();
 
         var destinationPaths = configuration.GetDestinationPaths().ToList();

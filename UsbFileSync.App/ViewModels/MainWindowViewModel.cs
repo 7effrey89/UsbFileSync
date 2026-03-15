@@ -604,7 +604,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void BrowseSourcePath()
     {
-        var selectedPath = WindowsSourceLocationPickerService.PickSourceLocation(SourcePath, _folderPickerService, _sourceVolumeService);
+        var selectedPath = WindowsSourceLocationPickerService.PickSourceLocation(SourcePath, _folderPickerService, GetCurrentSourceVolumeService());
         if (!string.IsNullOrWhiteSpace(selectedPath))
         {
             SourcePath = selectedPath;
@@ -757,6 +757,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private SyncConfiguration CreateConfiguration()
     {
+        var sourceVolumeService = GetCurrentSourceVolumeService();
         return SyncVolumeServiceFactory.ResolveConfiguration(
             new SyncConfiguration
             {
@@ -774,9 +775,16 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 UseCustomCloudProviderCredentials = UseCustomCloudProviderCredentials,
                 CloudProviderAppRegistrations = _cloudProviderAppRegistrations.ToList(),
             },
-            _sourceVolumeService,
+            sourceVolumeService,
             _destinationVolumeService);
     }
+
+    private ISourceVolumeService GetCurrentSourceVolumeService() =>
+        UseCustomCloudProviderCredentials
+            ? new CompositeSourceVolumeService(
+                new GoogleDriveVolumeService(UseCustomCloudProviderCredentials, _cloudProviderAppRegistrations),
+                _sourceVolumeService)
+            : _sourceVolumeService;
 
     public void UpdateParallelCopyCount(int parallelCopyCount)
     {
@@ -1361,7 +1369,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
         catch (Exception) when (path is not null)
         {
-            if (_sourceVolumeService.TryCreateVolume(path, out _, out var sourceFailureReason))
+            var sourceVolumeService = GetCurrentSourceVolumeService();
+            if (sourceVolumeService.TryCreateVolume(path, out _, out var sourceFailureReason))
             {
                 validationMessage = string.Empty;
                 return true;
@@ -1369,11 +1378,12 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
             validationMessage = string.IsNullOrWhiteSpace(sourceFailureReason)
                 ? $"{label} path is invalid."
-                : $"{label} macOS volume could not be opened. {sourceFailureReason}";
+                : $"{label} volume could not be opened. {sourceFailureReason}";
             return false;
         }
 
-        if (_sourceVolumeService.TryCreateVolume(path, out _, out var failureReason))
+        var configuredSourceVolumeService = GetCurrentSourceVolumeService();
+        if (configuredSourceVolumeService.TryCreateVolume(path, out _, out var failureReason))
         {
             validationMessage = string.Empty;
             return true;
@@ -1381,7 +1391,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         validationMessage = string.IsNullOrWhiteSpace(failureReason)
             ? $"{label} path does not exist."
-            : $"{label} macOS volume could not be opened. {failureReason}";
+            : $"{label} volume could not be opened. {failureReason}";
         return false;
     }
 

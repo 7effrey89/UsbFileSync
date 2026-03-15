@@ -84,7 +84,8 @@ public sealed class SettingsDialogTests
         {
             new CloudProviderAppRegistrationViewModel(CloudStorageProvider.GoogleDrive)
             {
-                ClientId = " google-client-id "
+                ClientId = " google-client-id ",
+                ClientSecret = " google-secret "
             },
             new CloudProviderAppRegistrationViewModel(CloudStorageProvider.Dropbox),
             new CloudProviderAppRegistrationViewModel(CloudStorageProvider.OneDrive)
@@ -104,6 +105,7 @@ public sealed class SettingsDialogTests
             {
                 Assert.Equal(CloudStorageProvider.GoogleDrive, google.Provider);
                 Assert.Equal("google-client-id", google.ClientId);
+                Assert.Equal("google-secret", google.ClientSecret);
                 Assert.Equal(string.Empty, google.TenantId);
             },
             oneDrive =>
@@ -135,6 +137,50 @@ public sealed class SettingsDialogTests
     }
 
     [Fact]
+    public void TryCreateCloudProviderAppRegistrations_ExtractsGoogleCredentialsFromDesktopClientJson()
+    {
+        var registrations = new[]
+        {
+            new CloudProviderAppRegistrationViewModel(CloudStorageProvider.GoogleDrive)
+            {
+                ClientSecret = """
+                    {
+                      "installed": {
+                        "client_id": "desktop-client-id.apps.googleusercontent.com",
+                        "client_secret": "desktop-client-secret"
+                      }
+                    }
+                    """
+            },
+        };
+
+        var success = SettingsDialog.TryCreateCloudProviderAppRegistrations(registrations, out var serializedRegistrations, out var errorMessage);
+
+        Assert.True(success);
+        Assert.Equal(string.Empty, errorMessage);
+        var registration = Assert.Single(serializedRegistrations);
+        Assert.Equal("desktop-client-id.apps.googleusercontent.com", registration.ClientId);
+        Assert.Equal("desktop-client-secret", registration.ClientSecret);
+    }
+
+    [Fact]
+    public void TryCreateCloudProviderAppRegistrations_RejectsMalformedGoogleJson()
+    {
+        var registrations = new[]
+        {
+            new CloudProviderAppRegistrationViewModel(CloudStorageProvider.GoogleDrive)
+            {
+                ClientSecret = "{ not valid json"
+            },
+        };
+
+        var success = SettingsDialog.TryCreateCloudProviderAppRegistrations(registrations, out _, out var errorMessage);
+
+        Assert.False(success);
+        Assert.Contains("could not be parsed", errorMessage);
+    }
+
+    [Fact]
     public void CloudProviderAppRegistrationViewModel_ExposesBuiltInModeMetadata()
     {
         var oneDrive = new CloudProviderAppRegistrationViewModel(CloudStorageProvider.OneDrive);
@@ -144,5 +190,37 @@ public sealed class SettingsDialogTests
         Assert.True(oneDrive.UsesTenantId);
         Assert.Equal("Dropbox", dropbox.ProviderDisplayName);
         Assert.False(dropbox.UsesTenantId);
+    }
+
+    [Fact]
+    public void CanTestGoogleDriveConnection_RequiresCustomModeAndClientId()
+    {
+        var registrations = new[]
+        {
+            new CloudProviderAppRegistrationViewModel(CloudStorageProvider.GoogleDrive)
+            {
+                ClientId = "google-client-id"
+            },
+        };
+
+        Assert.False(SettingsDialog.CanTestGoogleDriveConnection(false, registrations));
+        Assert.True(SettingsDialog.CanTestGoogleDriveConnection(true, registrations));
+    }
+
+    [Fact]
+    public void GetGoogleDriveConnectionGuidance_ExplainsWhyTestingIsUnavailable()
+    {
+        var googleDrive = new CloudProviderAppRegistrationViewModel(CloudStorageProvider.GoogleDrive);
+
+        Assert.Contains("Turn on", SettingsDialog.GetGoogleDriveConnectionGuidance(false, googleDrive));
+        Assert.Contains("Enter a Google OAuth client ID", SettingsDialog.GetGoogleDriveConnectionGuidance(true, googleDrive));
+
+        googleDrive.ClientId = "configured-client-id";
+
+        Assert.Equal("Google Drive is ready to test. Add a client secret too if your Google OAuth client requires one.", SettingsDialog.GetGoogleDriveConnectionGuidance(true, googleDrive));
+
+        googleDrive.ClientSecret = "configured-secret";
+
+        Assert.Equal("Google Drive is ready to test.", SettingsDialog.GetGoogleDriveConnectionGuidance(true, googleDrive));
     }
 }

@@ -6,6 +6,7 @@ using System.Windows.Media;
 using UsbFileSync.App.Services;
 using UsbFileSync.App.ViewModels;
 using UsbFileSync.Core.Volumes;
+using UsbFileSync.Platform.Windows;
 
 namespace UsbFileSync.App;
 
@@ -34,7 +35,7 @@ public partial class UniversalSourceLocationPickerDialog : Window
         _iconProvider = ShellFileIconProvider.Instance;
         _textOptions = textOptions ?? DefaultTextOptions;
         _roots = roots.OrderBy(root => root.RootPath, StringComparer.OrdinalIgnoreCase).ToList();
-        _rootItems = _roots.Select(root => new RootListItem(root, ShellFileIconProvider.Instance.GetDriveIcon(root.RootPath))).ToList();
+        _rootItems = _roots.Select(root => new RootListItem(root, GetRootIcon(root))).ToList();
         RootsListBox.ItemsSource = _rootItems;
         Title = _textOptions.WindowTitle;
         DialogHeadingTextBlock.Text = _textOptions.Heading;
@@ -73,6 +74,12 @@ public partial class UniversalSourceLocationPickerDialog : Window
 
         try
         {
+            var customRoot = FindCustomRoot(initialPath, out relativePath);
+            if (customRoot is not null)
+            {
+                return customRoot;
+            }
+
             var fullPath = Path.GetFullPath(initialPath);
             var rootPath = Path.GetPathRoot(fullPath) ?? string.Empty;
             var root = _roots.FirstOrDefault(candidate => string.Equals(candidate.RootPath, rootPath, StringComparison.OrdinalIgnoreCase));
@@ -334,6 +341,29 @@ public partial class UniversalSourceLocationPickerDialog : Window
             return false;
         }
 
+        foreach (var availableRoot in availableRoots.Where(candidate => !string.IsNullOrWhiteSpace(candidate)))
+        {
+            if (!LooksLikeCustomRoot(availableRoot))
+            {
+                continue;
+            }
+
+            if (string.Equals(typedPath, availableRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                rootPath = availableRoot;
+                relativePath = string.Empty;
+                return true;
+            }
+
+            var prefix = availableRoot.TrimEnd('/', '\\') + "/";
+            if (typedPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                rootPath = availableRoot;
+                relativePath = NormalizeRelativePath(typedPath[prefix.Length..]);
+                return true;
+            }
+        }
+
         string fullPath;
         try
         {
@@ -367,8 +397,42 @@ public partial class UniversalSourceLocationPickerDialog : Window
             return string.Empty;
         }
 
+        if (GoogleDrivePath.IsGoogleDrivePath(rootPath))
+        {
+            return "Google Drive";
+        }
+
         return rootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
+
+    private static ImageSource? GetRootIcon(RootOption root) =>
+        LooksLikeCustomRoot(root.RootPath)
+            ? ShellFileIconProvider.Instance.GetIcon(root.DisplayText, isDirectory: true)
+            : ShellFileIconProvider.Instance.GetDriveIcon(root.RootPath);
+
+    private RootOption? FindCustomRoot(string initialPath, out string relativePath)
+    {
+        relativePath = string.Empty;
+
+        foreach (var root in _roots.Where(root => LooksLikeCustomRoot(root.RootPath)))
+        {
+            if (string.Equals(initialPath, root.RootPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return root;
+            }
+
+            var prefix = root.RootPath.TrimEnd('/', '\\') + "/";
+            if (initialPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                relativePath = NormalizeRelativePath(initialPath[prefix.Length..]);
+                return root;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool LooksLikeCustomRoot(string rootPath) => rootPath.Contains("://", StringComparison.Ordinal);
 
     private static string FormatFileSize(long? size)
     {

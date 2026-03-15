@@ -1,14 +1,27 @@
 using System.Globalization;
 using System.Collections.ObjectModel;
+using System.Text.Json;
 using System.Windows;
 using UsbFileSync.App.Services;
 using UsbFileSync.App.ViewModels;
 using UsbFileSync.Core.Models;
+using UsbFileSync.Platform.Windows;
 
 namespace UsbFileSync.App;
 
 public partial class SettingsDialog : Window
 {
+    private enum GoogleDriveTestStatus
+    {
+        None,
+        Success,
+        Failure,
+    }
+
+    private static readonly System.Windows.Media.Brush NeutralStatusBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x61, 0x61, 0x61));
+    private static readonly System.Windows.Media.Brush SuccessStatusBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1b, 0x5e, 0x20));
+    private static readonly System.Windows.Media.Brush ErrorStatusBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xb7, 0x1c, 0x1c));
+
     public SettingsDialog(
         int parallelCopyCount,
         bool hideMacOsSystemFiles,
@@ -28,14 +41,23 @@ public partial class SettingsDialog : Window
         CloudProviderAppRegistrationItems = CreateCloudProviderAppRegistrationItems(cloudProviderAppRegistrations);
         PreviewProviderMappingsDataGrid.ItemsSource = PreviewProviderMappingItems;
         CloudProviderRegistrationsDataGrid.ItemsSource = CloudProviderAppRegistrationItems;
+        foreach (var item in CloudProviderAppRegistrationItems)
+        {
+            item.PropertyChanged += OnCloudProviderAppRegistrationItemPropertyChanged;
+        }
+
         if (PreviewProviderMappingsDataGrid.Columns[1] is System.Windows.Controls.DataGridComboBoxColumn comboColumn)
         {
             comboColumn.ItemsSource = ProviderOptions;
         }
+
+        UseCustomProviderCredentialsCheckBox.Checked += (_, _) => UpdateGoogleDriveConnectionUi();
+        UseCustomProviderCredentialsCheckBox.Unchecked += (_, _) => UpdateGoogleDriveConnectionUi();
         Loaded += (_, _) =>
         {
             ParallelCopyCountTextBox.Focus();
             ParallelCopyCountTextBox.SelectAll();
+            UpdateGoogleDriveConnectionUi();
         };
     }
 
@@ -50,6 +72,11 @@ public partial class SettingsDialog : Window
     public ObservableCollection<CloudProviderAppRegistrationViewModel> CloudProviderAppRegistrationItems { get; }
 
     public Array ProviderOptions { get; }
+
+    private bool _isTestingGoogleDriveConnection;
+    private GoogleDriveTestStatus _googleDriveTestStatus;
+    private string _lastTestedGoogleDriveClientId = string.Empty;
+    private string _lastGoogleDriveTestMessage = string.Empty;
 
     private void OnSaveClicked(object sender, RoutedEventArgs e)
     {
@@ -119,6 +146,57 @@ public partial class SettingsDialog : Window
         }
     }
 
+    private async void OnTestGoogleDriveConnectionClicked(object sender, RoutedEventArgs e)
+    {
+        CloudProviderRegistrationsDataGrid.CommitEdit(System.Windows.Controls.DataGridEditingUnit.Cell, true);
+        CloudProviderRegistrationsDataGrid.CommitEdit(System.Windows.Controls.DataGridEditingUnit.Row, true);
+
+        var registration = GetCloudProviderRegistrationItem(CloudStorageProvider.GoogleDrive);
+        if (!CanTestGoogleDriveConnection(UseCustomProviderCredentialsCheckBox.IsChecked == true, CloudProviderAppRegistrationItems))
+        {
+            var message = GetGoogleDriveConnectionGuidance(UseCustomProviderCredentialsCheckBox.IsChecked == true, registration);
+            System.Windows.MessageBox.Show(this, message, "Google Drive test unavailable", MessageBoxButton.OK, MessageBoxImage.Information);
+            SetGoogleDriveConnectionStatus(message, ErrorStatusBrush);
+            return;
+        }
+
+        var normalizedClientId = registration!.ClientId.Trim();
+        var normalizedClientSecret = registration.ClientSecret.Trim();
+        if (!TryNormalizeGoogleDriveCredentials(normalizedClientId, normalizedClientSecret, out normalizedClientId, out normalizedClientSecret, out var normalizationErrorMessage))
+        {
+            SetGoogleDriveConnectionStatus(normalizationErrorMessage, ErrorStatusBrush);
+            System.Windows.MessageBox.Show(this, normalizationErrorMessage, "Invalid Google Drive credentials", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        _isTestingGoogleDriveConnection = true;
+        UpdateGoogleDriveConnectionUi();
+        SetGoogleDriveConnectionStatus("Opening Google Drive sign-in in your browser...", NeutralStatusBrush);
+
+        try
+        {
+            await GoogleDriveConnectionTester.TestConnectionAsync(normalizedClientId, normalizedClientSecret).ConfigureAwait(true);
+            _lastTestedGoogleDriveClientId = normalizedClientId;
+            _googleDriveTestStatus = GoogleDriveTestStatus.Success;
+            _lastGoogleDriveTestMessage = "Google Drive connection succeeded. The saved client ID can authenticate and open Drive.";
+            SetGoogleDriveConnectionStatus(_lastGoogleDriveTestMessage, SuccessStatusBrush);
+        }
+        catch (Exception exception)
+        {
+            var message = $"Google Drive connection failed. {exception.Message}";
+            _lastTestedGoogleDriveClientId = normalizedClientId;
+            _googleDriveTestStatus = GoogleDriveTestStatus.Failure;
+            _lastGoogleDriveTestMessage = message;
+            SetGoogleDriveConnectionStatus(message, ErrorStatusBrush);
+            System.Windows.MessageBox.Show(this, message, "Google Drive connection failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            _isTestingGoogleDriveConnection = false;
+            UpdateGoogleDriveConnectionUi();
+        }
+    }
+
     public static bool TryParseParallelCopyCount(string? text, out int value)
     {
         if (int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedValue) && parsedValue >= 0)
@@ -159,6 +237,38 @@ public partial class SettingsDialog : Window
         return true;
     }
 
+    public static bool CanTestGoogleDriveConnection(
+        bool useCustomCloudProviderCredentials,
+        IEnumerable<CloudProviderAppRegistrationViewModel> registrations)
+    {
+        if (!useCustomCloudProviderCredentials)
+        {
+            return false;
+        }
+
+        var googleDriveRegistration = registrations.FirstOrDefault(item => item.Provider == CloudStorageProvider.GoogleDrive);
+        return googleDriveRegistration is not null && !string.IsNullOrWhiteSpace(googleDriveRegistration.ClientId);
+    }
+
+    public static string GetGoogleDriveConnectionGuidance(
+        bool useCustomCloudProviderCredentials,
+        CloudProviderAppRegistrationViewModel? googleDriveRegistration)
+    {
+        if (!useCustomCloudProviderCredentials)
+        {
+            return "Turn on 'Use custom provider credentials' before testing Google Drive.";
+        }
+
+        if (googleDriveRegistration is null || string.IsNullOrWhiteSpace(googleDriveRegistration.ClientId))
+        {
+            return "Enter a Google OAuth client ID before testing Google Drive.";
+        }
+
+        return string.IsNullOrWhiteSpace(googleDriveRegistration.ClientSecret)
+            ? "Google Drive is ready to test. Add a client secret too if your Google OAuth client requires one."
+            : "Google Drive is ready to test.";
+    }
+
     public static bool TryCreateCloudProviderAppRegistrations(
         IEnumerable<CloudProviderAppRegistrationViewModel> registrations,
         out List<CloudProviderAppRegistration> serializedRegistrations,
@@ -169,7 +279,15 @@ public partial class SettingsDialog : Window
             .OrderBy(item => item.Provider))
         {
             var clientId = registration.ClientId.Trim();
+            var clientSecret = registration.ClientSecret.Trim();
             var tenantId = registration.TenantId.Trim();
+
+            if (registration.Provider == CloudStorageProvider.GoogleDrive &&
+                !TryNormalizeGoogleDriveCredentials(clientId, clientSecret, out clientId, out clientSecret, out errorMessage))
+            {
+                return false;
+            }
+
             if (string.IsNullOrWhiteSpace(clientId))
             {
                 continue;
@@ -179,6 +297,9 @@ public partial class SettingsDialog : Window
             {
                 Provider = registration.Provider,
                 ClientId = clientId,
+                ClientSecret = registration.Provider == CloudStorageProvider.GoogleDrive
+                    ? clientSecret
+                    : string.Empty,
                 TenantId = registration.Provider == CloudStorageProvider.OneDrive
                     ? string.IsNullOrWhiteSpace(tenantId) ? "common" : tenantId
                     : string.Empty,
@@ -187,6 +308,100 @@ public partial class SettingsDialog : Window
 
         errorMessage = string.Empty;
         return true;
+    }
+
+    private static bool TryNormalizeGoogleDriveCredentials(
+        string clientId,
+        string clientSecret,
+        out string normalizedClientId,
+        out string normalizedClientSecret,
+        out string errorMessage)
+    {
+        normalizedClientId = clientId;
+        normalizedClientSecret = clientSecret;
+        errorMessage = string.Empty;
+
+        if (TryParseGoogleDesktopClientJson(clientId, out var parsedClientId, out var parsedClientSecret, out errorMessage))
+        {
+            normalizedClientId = parsedClientId;
+            if (!string.IsNullOrWhiteSpace(parsedClientSecret))
+            {
+                normalizedClientSecret = parsedClientSecret;
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(errorMessage))
+        {
+            return false;
+        }
+
+        if (TryParseGoogleDesktopClientJson(clientSecret, out parsedClientId, out parsedClientSecret, out errorMessage))
+        {
+            if (!string.IsNullOrWhiteSpace(parsedClientId))
+            {
+                normalizedClientId = parsedClientId;
+            }
+
+            normalizedClientSecret = parsedClientSecret;
+        }
+        else if (!string.IsNullOrWhiteSpace(errorMessage))
+        {
+            return false;
+        }
+
+        errorMessage = string.Empty;
+        return true;
+    }
+
+    private static bool TryParseGoogleDesktopClientJson(
+        string value,
+        out string clientId,
+        out string clientSecret,
+        out string errorMessage)
+    {
+        clientId = string.Empty;
+        clientSecret = string.Empty;
+        errorMessage = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmedValue = value.Trim();
+        if (!trimmedValue.StartsWith('{'))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(trimmedValue);
+            if (!document.RootElement.TryGetProperty("installed", out var installedElement))
+            {
+                errorMessage = "The Google credential JSON must contain an 'installed' object from a Desktop app OAuth client.";
+                return false;
+            }
+
+            clientId = installedElement.TryGetProperty("client_id", out var clientIdElement)
+                ? clientIdElement.GetString()?.Trim() ?? string.Empty
+                : string.Empty;
+            clientSecret = installedElement.TryGetProperty("client_secret", out var clientSecretElement)
+                ? clientSecretElement.GetString()?.Trim() ?? string.Empty
+                : string.Empty;
+
+            if (string.IsNullOrWhiteSpace(clientId))
+            {
+                errorMessage = "The Google credential JSON is missing installed.client_id.";
+                return false;
+            }
+
+            return true;
+        }
+        catch (JsonException)
+        {
+            errorMessage = "The Google credential value looks like JSON, but it could not be parsed. Paste either the raw client ID / secret values or the full Desktop app JSON exactly as downloaded from Google.";
+            return false;
+        }
     }
 
     private static ObservableCollection<PreviewProviderMappingViewModel> CreateMappingItems(IReadOnlyDictionary<string, string>? previewProviderMappings)
@@ -226,10 +441,63 @@ public partial class SettingsDialog : Window
             items.Add(new CloudProviderAppRegistrationViewModel(provider)
             {
                 ClientId = existingRegistration?.ClientId ?? string.Empty,
+                ClientSecret = existingRegistration?.ClientSecret ?? string.Empty,
                 TenantId = existingRegistration?.TenantId ?? string.Empty,
             });
         }
 
         return items;
+    }
+
+    private void OnCloudProviderAppRegistrationItemPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(CloudProviderAppRegistrationViewModel.ClientId) or nameof(CloudProviderAppRegistrationViewModel.ClientSecret) or nameof(CloudProviderAppRegistrationViewModel.TenantId))
+        {
+            ClearGoogleDriveTestStatus();
+            UpdateGoogleDriveConnectionUi();
+        }
+    }
+
+    private CloudProviderAppRegistrationViewModel? GetCloudProviderRegistrationItem(CloudStorageProvider provider) =>
+        CloudProviderAppRegistrationItems.FirstOrDefault(item => item.Provider == provider);
+
+    private void UpdateGoogleDriveConnectionUi()
+    {
+        var useCustomCloudProviderCredentials = UseCustomProviderCredentialsCheckBox.IsChecked == true;
+        var googleDriveRegistration = GetCloudProviderRegistrationItem(CloudStorageProvider.GoogleDrive);
+        TestGoogleDriveConnectionButton.IsEnabled = !_isTestingGoogleDriveConnection && CanTestGoogleDriveConnection(useCustomCloudProviderCredentials, CloudProviderAppRegistrationItems);
+        TestGoogleDriveConnectionButton.Content = _isTestingGoogleDriveConnection ? "Testing..." : "Test Google Drive";
+
+        if (_isTestingGoogleDriveConnection)
+        {
+            return;
+        }
+
+        var currentGoogleDriveClientId = googleDriveRegistration?.ClientId.Trim() ?? string.Empty;
+        if (_googleDriveTestStatus != GoogleDriveTestStatus.None &&
+            useCustomCloudProviderCredentials &&
+            string.Equals(currentGoogleDriveClientId, _lastTestedGoogleDriveClientId, StringComparison.Ordinal))
+        {
+            SetGoogleDriveConnectionStatus(
+                _lastGoogleDriveTestMessage,
+                _googleDriveTestStatus == GoogleDriveTestStatus.Success ? SuccessStatusBrush : ErrorStatusBrush);
+            return;
+        }
+
+        var guidance = GetGoogleDriveConnectionGuidance(useCustomCloudProviderCredentials, googleDriveRegistration);
+        SetGoogleDriveConnectionStatus(guidance, NeutralStatusBrush);
+    }
+
+    private void ClearGoogleDriveTestStatus()
+    {
+        _googleDriveTestStatus = GoogleDriveTestStatus.None;
+        _lastTestedGoogleDriveClientId = string.Empty;
+        _lastGoogleDriveTestMessage = string.Empty;
+    }
+
+    private void SetGoogleDriveConnectionStatus(string message, System.Windows.Media.Brush foreground)
+    {
+        GoogleDriveConnectionStatusTextBlock.Text = message;
+        GoogleDriveConnectionStatusTextBlock.Foreground = foreground;
     }
 }

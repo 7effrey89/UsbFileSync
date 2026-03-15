@@ -1,4 +1,5 @@
 using System.IO;
+using UsbFileSync.Platform.Windows;
 
 namespace UsbFileSync.App.Services;
 
@@ -9,6 +10,13 @@ public sealed class WindowsDriveDisplayNameService : IDriveDisplayNameService
         if (string.IsNullOrWhiteSpace(path))
         {
             return string.Empty;
+        }
+
+        if (GoogleDrivePath.TryParse(path, out var relativePath))
+        {
+            return string.IsNullOrEmpty(relativePath)
+                ? "Google Drive"
+                : $"Google Drive / {relativePath}";
         }
 
         try

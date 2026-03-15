@@ -107,7 +107,8 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
                 new CloudProviderAppRegistration
                 {
                     Provider = CloudStorageProvider.GoogleDrive,
-                    ClientId = "google-client-id"
+                    ClientId = "google-client-id",
+                    ClientSecret = "google-secret"
                 },
                 new CloudProviderAppRegistration
                 {
@@ -129,6 +130,7 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
             {
                 Assert.Equal(CloudStorageProvider.GoogleDrive, google.Provider);
                 Assert.Equal("google-client-id", google.ClientId);
+                Assert.Equal("google-secret", google.ClientSecret);
                 Assert.Equal(string.Empty, google.TenantId);
             },
             oneDrive =>

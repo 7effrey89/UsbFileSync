@@ -5,6 +5,7 @@ namespace UsbFileSync.App.ViewModels;
 public sealed class CloudProviderAppRegistrationViewModel : ObservableObject
 {
     private string _clientId = string.Empty;
+    private string _clientSecret = string.Empty;
     private string _tenantId = string.Empty;
 
     public CloudProviderAppRegistrationViewModel(CloudStorageProvider provider)
@@ -18,10 +19,18 @@ public sealed class CloudProviderAppRegistrationViewModel : ObservableObject
 
     public bool UsesTenantId => Provider == CloudStorageProvider.OneDrive;
 
+    public bool UsesClientSecret => Provider == CloudStorageProvider.GoogleDrive;
+
     public string ClientId
     {
         get => _clientId;
         set => SetProperty(ref _clientId, value);
+    }
+
+    public string ClientSecret
+    {
+        get => _clientSecret;
+        set => SetProperty(ref _clientSecret, value);
     }
 
     public string TenantId

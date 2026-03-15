@@ -210,7 +210,7 @@ public sealed class MainWindowViewModelTests
 
         viewModel.ToggleSyncCommand.Execute(null);
 
-        Assert.Equal("Source macOS volume could not be opened. The selected drive 'D:\\' does not appear to contain an HFS+ volume.", viewModel.StatusMessage);
+        Assert.Equal("Source volume could not be opened. The selected drive 'D:\\' does not appear to contain an HFS+ volume.", viewModel.StatusMessage);
         Assert.False(viewModel.IsSyncRunning);
     }
 
