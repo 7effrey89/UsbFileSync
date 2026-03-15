@@ -37,41 +37,75 @@ The current UI can now store an optional **Google Drive client secret** when a G
 
 1. Go to the **Google Cloud Console** at `https://console.cloud.google.com/`.
 2. Create a new project, or select the project you want to use for UsbFileSync.
+
+   ![Select the Google Cloud project you want to use for UsbFileSync](<./images/Gdrive/Screenshot 2026-03-15 205648.png>)
+
 3. Open **APIs & Services** → **Library**.
-4. Search for **Google Drive API**.
-5. Open **Google Drive API** and choose **Enable**.
-6. Open **APIs & Services** → **Credentials**.
-7. Choose **Create credentials**.
-8. In **Credential Type**:
+4. Search for **Google Drive API** from the API Library page.
+
+   ![Open API Library and search for Google Drive](<./images/Gdrive/Screenshot 2026-03-15 205714.png>)
+
+   ![Choose the Google Drive API from the search results](<./images/Gdrive/Screenshot 2026-03-15 205725.png>)
+
+5. Open the **Google Drive API** result.
+6. If the API is not enabled yet, click **Enable**.
+
+   After the API is enabled, Google shows the Drive API details page like this:
+
+   ![Google Drive API details page after the API is enabled](<./images/Gdrive/Screenshot 2026-03-15 205737.png>)
+
+7. Open **APIs & Services** → **Credentials**.
+8. Choose **Create credentials**.
+9. In **Credential Type**:
    - Select **Google Drive API** for the API
    - Select **User data** for the data you will access
    - Choose **Next**
-9. In **OAuth Consent Screen** → **App information**:
+
+   ![Create credentials and choose Google Drive API with User data](<./images/Gdrive/Screenshot 2026-03-15 205752.png>)
+
+10. In **OAuth Consent Screen** → **App information**:
    - Enter an app name such as `UsbFileSyncApp`
    - Choose your support email
    - Enter your developer contact email
    - Choose **Save and continue**
-10. In **Audience**:
+
+   ![Fill in the OAuth consent screen app information](<./images/Gdrive/Screenshot 2026-03-15 205807.png>)
+
+11. In **Audience**:
    - Choose **External** if you want to sign in with a personal Google account
    - Keep the app in **Testing** while you are validating the setup
    - Under **Test users**, add the Google account you will use to sign in. For example, add `7effrey89@gmail.com` if that is the account you test with.
    - Choose **Save and continue**
-11. In **Scopes (optional)** choose **Add or remove scopes**.
-12. Because UsbFileSync now browses and reads real Drive folders, the OAuth client must allow full Drive read access for the signed-in user:
+
+   ![Set the audience to External, keep Testing enabled, and add your Google account as a test user](<./images/Gdrive/Screenshot 2026-03-15 210137.png>)
+
+12. In **Scopes (optional)** choose **Add or remove scopes**.
+
+   The first screenshot below shows the scope picker. The second shows the selected scopes before continuing.
+
+13. Because UsbFileSync now browses and reads real Drive folders, the OAuth client must allow full Drive read access for the signed-in user:
    - Required: `.../auth/drive.readonly`
-13. Avoid adding unrelated scopes such as `.../auth/docs` or `.../auth/drive.photos.readonly` unless you specifically need them for your own testing outside UsbFileSync.
-14. Save the scope selection and choose **Save and continue**.
-15. In **OAuth Client ID**:
+14. Avoid adding unrelated scopes such as `.../auth/docs` or `.../auth/drive.photos.readonly` unless you specifically need them for your own testing outside UsbFileSync.
+15. Save the scope selection and choose **Save and continue**.
+
+   ![Open the scope picker and select the Google Drive scopes you need](<./images/Gdrive/Screenshot 2026-03-15 210125.png>)
+
+   ![Review the selected scopes before continuing](<./images/Gdrive/Screenshot 2026-03-15 205835.png>)
+
+16. In **OAuth Client ID**:
    - Set **Application type** to **Desktop app**
    - Enter a name such as `UsbFileSync Desktop`
    - Choose **Create**
-16. Copy the **Client ID** shown by Google.
-17. If Google also shows a client secret for that OAuth client and your sign-in flow later reports that a client secret is required, copy the **client secret** too.
-18. In UsbFileSync, open **Application Settings**, turn on **Use custom provider credentials**, and paste the client ID into the **Google Drive** row under **OAuth client ID**. If needed, also paste the Google client secret into **Client secret (Google optional)**.
-19. If you downloaded the full Google Desktop OAuth JSON file instead of copying the values manually, you can paste that raw JSON into the **Client secret (Google optional)** field. UsbFileSync will extract `installed.client_id` and `installed.client_secret` from the JSON automatically.
-20. Click **Test Google Drive** in the settings dialog to confirm the configured values can complete sign-in and open Drive. UsbFileSync will launch your browser for the OAuth flow the first time.
-21. After the test succeeds, use the **Browse** button for the source path and choose the **Google Drive** root.
-22. After sign-in finishes, return to UsbFileSync, browse to the Drive folder you want, and choose **Select current folder**.
+
+   ![Create a Desktop app OAuth client ID for UsbFileSync](<./images/Gdrive/Screenshot 2026-03-15 210154.png>)
+
+17. Copy the **Client ID** shown by Google.
+18. If Google also shows a client secret for that OAuth client and your sign-in flow later reports that a client secret is required, copy the **client secret** too.
+19. In UsbFileSync, open **Application Settings**, turn on **Use custom provider credentials**, and paste the client ID into the **Google Drive** row under **OAuth client ID**. If needed, also paste the Google client secret into **Client secret (Google optional)**.
+20. If you downloaded the full Google Desktop OAuth JSON file instead of copying the values manually, you can paste that raw JSON into the **Client secret (Google optional)** field. UsbFileSync will extract `installed.client_id` and `installed.client_secret` from the JSON automatically.
+21. Click **Test Google Drive** in the settings dialog to confirm the configured values can complete sign-in and open Drive. UsbFileSync will launch your browser for the OAuth flow the first time.
+22. After the test succeeds, use the **Browse** button for the source path and choose the **Google Drive** root.
+23. After sign-in finishes, return to UsbFileSync, browse to the Drive folder you want, and choose **Select current folder**.
 
 ### Example values
 
@@ -111,6 +145,8 @@ These are **sanitized examples** that show the expected format only.
 2. Open **APIs & Services** → **Credentials**.
 3. Open the OAuth client you created.
 4. Copy the **Client ID** value again if you need it later.
+
+   ![Open the Clients page later to find the Desktop OAuth client again](<./images/Gdrive/Screenshot 2026-03-15 210301.png>)
 
 ### Notes
 
@@ -222,7 +258,7 @@ If you leave the tenant field blank in UsbFileSync, the app stores **`common`**.
   Go back to the app overview/credentials page. UsbFileSync currently wants the provider's **client ID** value, not the secret.
 
 - **Google gave me a JSON blob with `client_id`, `client_secret`, and `redirect_uris`**  
-   In the current UsbFileSync settings UI, enter only the Google `client_id`. Do not paste the JSON and do not paste the `client_secret`.
+   You can paste the raw desktop OAuth JSON into **Client secret (Google optional)** and UsbFileSync will extract `client_id` and `client_secret` automatically, or copy those values manually into the matching fields.
 
 - **I selected a lot of Google Drive scopes and I am not sure that was correct**  
    For the current Google Drive source integration, UsbFileSync only needs Drive read access. Trim the registration back to `.../auth/drive.readonly` unless you have another separate reason to request more.
