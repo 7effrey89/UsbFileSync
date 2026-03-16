@@ -86,7 +86,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private BusyOperationKind _busyOperationKind;
     private string _busyOverlayTitle = "Working...";
     private string _busyOverlayDescription = "Please wait.";
-    private bool _isDriveLocationColumnVisible;
+    private bool _isBusyOverlayDismissed;
     private PreviewColumnKey? _activePreviewFilterColumn;
     private PreviewColumnKey? _activePreviewSortColumn;
     private ListSortDirection _activePreviewSortDirection = ListSortDirection.Ascending;
@@ -217,12 +217,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     }
 
     public bool HasActivePreviewFilters => _activePreviewFilters.Count > 0;
-
-    public bool IsDriveLocationColumnVisible
-    {
-        get => _isDriveLocationColumnVisible;
-        private set => SetProperty(ref _isDriveLocationColumnVisible, value);
-    }
 
     public bool ShowAllActivityLog
     {
@@ -459,7 +453,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
-    public bool IsBusyOverlayVisible => IsBusy && _busyOperationKind == BusyOperationKind.Analyze;
+    public bool IsBusyOverlayVisible =>
+        IsBusy &&
+        _busyOperationKind == BusyOperationKind.Analyze &&
+        !_isBusyOverlayDismissed;
 
     public string BusyOverlayTitle
     {
@@ -745,6 +742,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         switch (_busyOperationKind)
         {
             case BusyOperationKind.Analyze:
+                _isBusyOverlayDismissed = true;
+                RaisePropertyChanged(nameof(IsBusyOverlayVisible));
                 StatusMessage = "Cancelling preview generation...";
                 AddLog("Analyze", "Cancel requested while building the preview.", SyncLogSeverity.Warning);
                 break;
@@ -753,6 +752,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 AddLog("Sync", "Stop requested by user.");
                 break;
         }
+
+        CancelBusyOperationCommand.RaiseCanExecuteChanged();
     }
 
     private SyncConfiguration CreateConfiguration()
@@ -882,11 +883,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public void OpenPreviewColumnFilter(PreviewTabKind tabKind, PreviewColumnHeader header)
     {
-        if (header.ColumnKey == PreviewColumnKey.DriveLocation && !IsDriveLocationColumnVisible)
-        {
-            return;
-        }
-
         _activePreviewFilterColumn = header.ColumnKey;
         PreviewFilterTitle = header.Title;
         PreviewFilterSearchText = string.Empty;
@@ -1027,12 +1023,25 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             var configuration = CreateConfiguration();
             await EnsureBusyOverlayCanRenderAsync().ConfigureAwait(true);
 
-            var analysisResult = await Task.Run(async () =>
+            var analysisTask = Task.Run(async () =>
             {
                 var actions = await _syncService.AnalyzeChangesAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(false);
                 var preview = _syncService.BuildPreview(configuration, actions, cancellationTokenSource.Token);
                 return new AnalyzePreviewResult(actions, preview);
-            }, cancellationTokenSource.Token).ConfigureAwait(true);
+            }, CancellationToken.None);
+
+            var completedTask = await Task.WhenAny(
+                analysisTask,
+                Task.Delay(Timeout.Infinite, cancellationTokenSource.Token)).ConfigureAwait(true);
+
+            if (!ReferenceEquals(completedTask, analysisTask))
+            {
+                ObserveBackgroundAnalyzeTask(analysisTask);
+                cancellationTokenSource.Token.ThrowIfCancellationRequested();
+            }
+
+            var analysisResult = await analysisTask.ConfigureAwait(true);
+            cancellationTokenSource.Token.ThrowIfCancellationRequested();
 
             var actions = analysisResult.Actions;
             var preview = analysisResult.Preview;
@@ -1688,6 +1697,18 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
     }
 
+    private static void ObserveBackgroundAnalyzeTask(Task<AnalyzePreviewResult> analysisTask)
+    {
+        _ = analysisTask.ContinueWith(
+            static task =>
+            {
+                _ = task.Exception;
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
     private sealed record AnalyzePreviewResult(
         IReadOnlyList<SyncAction> Actions,
         IReadOnlyList<SyncPreviewItem> Preview);
@@ -1726,8 +1747,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 _previewRowsByItemKey[row.ItemKey] = row;
                 row.PropertyChanged += OnPreviewRowPropertyChanged;
             }
-
-            UpdateDriveLocationColumnVisibility(rows);
 
             ReplaceRows(NewFiles, rows.Where(row => row.Status == "New File"));
             ReplaceRows(ChangedFiles, rows.Where(row => row.Category == SyncPreviewCategory.ChangedFiles));
@@ -2064,39 +2083,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         return StringComparer.OrdinalIgnoreCase.Compare(left.Action, right.Action);
     }
 
-    private void UpdateDriveLocationColumnVisibility(IReadOnlyCollection<SyncPreviewRowViewModel> rows)
-    {
-        var shouldShowDriveLocationColumn = rows
-            .Select(row => row.DriveLocation)
-            .Where(value => !string.IsNullOrWhiteSpace(value))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Take(2)
-            .Count() > 1;
-
-        if (IsDriveLocationColumnVisible == shouldShowDriveLocationColumn)
-        {
-            return;
-        }
-
-        IsDriveLocationColumnVisible = shouldShowDriveLocationColumn;
-
-        if (shouldShowDriveLocationColumn)
-        {
-            return;
-        }
-
-        _activePreviewFilters.Remove(PreviewColumnKey.DriveLocation);
-        if (_activePreviewFilterColumn == PreviewColumnKey.DriveLocation)
-        {
-            _activePreviewFilterColumn = null;
-            PreviewFilterOptions.Clear();
-            PreviewFilterSearchText = string.Empty;
-        }
-
-        RaisePropertyChanged(nameof(HasActivePreviewFilters));
-        RefreshPreviewViews();
-    }
-
     private bool ShouldIncludePreviewRow(object item) =>
         item is SyncPreviewRowViewModel row && MatchesActivePreviewFilters(row);
 
@@ -2134,7 +2120,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         PreviewColumnKey.SourceFile => row.SourcePath,
         PreviewColumnKey.SyncAction => row.SyncActionDisplayText,
         PreviewColumnKey.TransferSpeed => row.TransferSpeedText,
-        PreviewColumnKey.DriveLocation => row.DriveLocation,
         PreviewColumnKey.DestinationFile => row.DestinationPath,
         PreviewColumnKey.FileType => row.FileType,
         PreviewColumnKey.SourceSize => row.SourceSize,
@@ -2204,6 +2189,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         _busyOperationCancellationTokenSource = cancellationTokenSource;
         _busyOperationKind = busyOperationKind;
+        _isBusyOverlayDismissed = false;
         RaisePropertyChanged(nameof(IsBusyOverlayVisible));
         (BusyOverlayTitle, BusyOverlayDescription) = busyOperationKind switch
         {
@@ -2223,6 +2209,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         _busyOperationCancellationTokenSource = null;
         _busyOperationKind = BusyOperationKind.None;
+        _isBusyOverlayDismissed = false;
         RaisePropertyChanged(nameof(IsBusyOverlayVisible));
         BusyOverlayTitle = "Working...";
         BusyOverlayDescription = "Please wait.";

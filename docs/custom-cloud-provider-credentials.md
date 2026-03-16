@@ -180,7 +180,7 @@ These are **sanitized examples** that show the expected format only.
    - **Full Dropbox** for broader account access
 5. Enter an app name and create the app.
 6. Open the new app in the App Console.
-7. Open the app **Permissions** section and enable these Dropbox scopes:
+7. Open the app **Permissions** section and enable these Dropbox scopes. Click 'Submit' in the bottom:
    - `files.metadata.read`
    - `files.content.read`
    - `files.metadata.write`

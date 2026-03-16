@@ -9,31 +9,43 @@ namespace UsbFileSync.Tests;
 public sealed class SyncPreviewRowViewModelTests
 {
     [Fact]
-    public void UsesFormattedDriveLocationWhenPreviewItemIncludesDestinationRoot()
+    public void FormatsCloudSourcePathWithAlias()
     {
+        var driveDisplayNameService = new WindowsDriveDisplayNameService(() =>
+        [
+            new CloudProviderAppRegistration
+            {
+                RegistrationId = "dropbox-account",
+                Provider = CloudStorageProvider.Dropbox,
+                Alias = "Team Dropbox",
+                ClientId = "dropbox-app-key"
+            }
+        ]);
+
+        var rawSourcePath = DropboxPath.BuildPath("dropbox-account", "Archive/folder/file.txt");
         var row = new SyncPreviewRowViewModel(
             new SyncPreviewItem(
                 RelativePath: "folder/file.txt",
                 IsDirectory: false,
-                SourceFullPath: @"F:\\folder\\file.txt",
+                SourceFullPath: rawSourcePath,
                 SourceLength: 10,
                 SourceLastWriteTimeUtc: DateTime.UtcNow,
-                DestinationFullPath: @"D:\\Backup\\folder\\file.txt",
+                DestinationFullPath: @"E:\\Backup\\folder\\file.txt",
                 DestinationLength: 10,
                 DestinationLastWriteTimeUtc: DateTime.UtcNow,
                 Direction: "->",
                 Status: "New File",
                 Category: SyncPreviewCategory.NewFiles,
-                PlannedActionType: SyncActionType.CopyToDestination,
-                DriveLocationPath: @"D:\\Backup"),
+                PlannedActionType: SyncActionType.CopyToDestination),
             iconProvider: new StubFileIconProvider(null),
-            driveDisplayNameService: new StubDriveDisplayNameService());
+            driveDisplayNameService: driveDisplayNameService);
 
-        Assert.Equal("Backup Drive (D:)", row.DriveLocation);
+        Assert.Equal("dropbox://Team Dropbox/Archive/folder/file.txt", row.SourcePath);
+        Assert.Equal(rawSourcePath, row.OpenPath);
     }
 
     [Fact]
-    public void UsesAliasAwareDriveLocationFormatting_ForAccountScopedCloudPaths()
+    public void FormatsCloudDestinationPathWithAlias()
     {
         var driveDisplayNameService = new WindowsDriveDisplayNameService(() =>
         [
@@ -64,7 +76,7 @@ public sealed class SyncPreviewRowViewModelTests
             iconProvider: new StubFileIconProvider(null),
             driveDisplayNameService: driveDisplayNameService);
 
-        Assert.Equal("Dropbox - Team Dropbox / Archive", row.DriveLocation);
+        Assert.Equal("dropbox://Team Dropbox/Archive/folder/file.txt", row.DestinationPath);
     }
 
     [Fact]
@@ -118,6 +130,8 @@ public sealed class SyncPreviewRowViewModelTests
             @"D:\\Backup" => "Backup Drive (D:)",
             _ => path,
         };
+
+        public string FormatDestinationPathForDisplay(string path) => path;
     }
 
     [Fact]

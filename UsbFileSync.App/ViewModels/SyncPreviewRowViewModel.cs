@@ -72,16 +72,13 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
         FileType = GetFileType(item);
         IconSource = (iconProvider ?? ShellFileIconProvider.Instance).GetIcon(Name, item.IsDirectory);
         IconGlyph = item.IsDirectory ? "\uE8B7" : "\uE8A5";
-        SourcePath = item.SourceFullPath ?? string.Empty;
+        SourcePath = resolvedDriveDisplayNameService.FormatDestinationPathForDisplay(item.SourceFullPath ?? string.Empty);
         SourceSize = item.IsDirectory ? "Folder" : FormatSize(item.SourceLength);
         SourceSizeBytes = item.SourceLength;
         SourceModified = FormatTimestamp(item.SourceLastWriteTimeUtc);
         SourceModifiedUtc = item.SourceLastWriteTimeUtc;
         Direction = item.Direction;
-        DestinationPath = item.DestinationFullPath ?? string.Empty;
-        DriveLocation = string.IsNullOrWhiteSpace(item.DriveLocationPath)
-            ? string.Empty
-            : resolvedDriveDisplayNameService.FormatPathForDisplay(item.DriveLocationPath);
+        DestinationPath = resolvedDriveDisplayNameService.FormatDestinationPathForDisplay(item.DestinationFullPath ?? string.Empty);
         DestinationSize = item.IsDirectory ? "Folder" : FormatSize(item.DestinationLength);
         DestinationSizeBytes = item.DestinationLength;
         DestinationModified = FormatTimestamp(item.DestinationLastWriteTimeUtc);
@@ -146,8 +143,6 @@ public sealed class SyncPreviewRowViewModel : ObservableObject
     public string Direction { get; }
 
     public string DestinationPath { get; }
-
-    public string DriveLocation { get; }
 
     public bool HasDestinationPath => !string.IsNullOrWhiteSpace(DestinationPath);
 

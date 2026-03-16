@@ -5,7 +5,6 @@ public enum PreviewColumnKey
     SourceFile,
     SyncAction,
     TransferSpeed,
-    DriveLocation,
     DestinationFile,
     FileType,
     SourceSize,

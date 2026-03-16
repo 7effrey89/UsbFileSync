@@ -88,14 +88,54 @@ public sealed class MainWindowViewModelTests
 
         await WaitForAsync(() => viewModel.IsBusy).ConfigureAwait(true);
         Assert.True(viewModel.CancelBusyOperationCommand.CanExecute(null));
+        Assert.True(viewModel.IsBusyOverlayVisible);
 
         viewModel.CancelBusyOperationCommand.Execute(null);
+
+        Assert.False(viewModel.IsBusyOverlayVisible);
 
         await WaitForAsync(() => !viewModel.IsBusy).ConfigureAwait(true);
 
         Assert.Equal("Preview loading cancelled.", viewModel.StatusMessage);
         Assert.Empty(viewModel.PlannedActions);
         Assert.Empty(viewModel.AllFiles);
+    }
+
+    [Fact]
+    public async Task AnalyzeCommand_Cancel_ReenablesCommands_EvenWhenBackgroundAnalyzeFinishesLater()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("pending.txt", "payload");
+        var completionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(new IgnoreCancellationBlockingSyncStrategy(completionSource), new IgnoreCancellationBlockingSyncStrategy(completionSource)),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+
+        await WaitForAsync(() => viewModel.IsBusy).ConfigureAwait(true);
+        viewModel.CancelBusyOperationCommand.Execute(null);
+
+        await WaitForAsync(() => !viewModel.IsBusy).ConfigureAwait(true);
+        await WaitForAsync(() => viewModel.AnalyzeCommand.CanExecute(null)).ConfigureAwait(true);
+
+        Assert.True(viewModel.ToggleSyncCommand.CanExecute(null));
+        Assert.Equal("Preview loading cancelled.", viewModel.StatusMessage);
+        Assert.Empty(viewModel.PlannedActions);
+        Assert.Empty(viewModel.AllFiles);
+
+        completionSource.SetResult();
+        await Task.Delay(100).ConfigureAwait(true);
+
+        Assert.Empty(viewModel.PlannedActions);
+        Assert.Empty(viewModel.AllFiles);
+        Assert.True(viewModel.AnalyzeCommand.CanExecute(null));
+        Assert.True(viewModel.ToggleSyncCommand.CanExecute(null));
     }
 
     [Fact]
@@ -583,8 +623,6 @@ public sealed class MainWindowViewModelTests
         viewModel.AnalyzeCommand.Execute(null);
         await WaitForAsync(() => viewModel.NewFilesCount == 1 && viewModel.AllFilesCount == 1).ConfigureAwait(true);
 
-        Assert.False(viewModel.IsDriveLocationColumnVisible);
-
         var newRow = Assert.Single(viewModel.NewFiles);
         var allRow = Assert.Single(viewModel.AllFiles);
         Assert.False(newRow.IsSelected);
@@ -705,10 +743,7 @@ public sealed class MainWindowViewModelTests
         viewModel.AnalyzeCommand.Execute(null);
         await WaitForAsync(() => viewModel.NewFilesCount == 2 && viewModel.AllFilesCount == 2).ConfigureAwait(true);
 
-        Assert.True(viewModel.IsDriveLocationColumnVisible);
         Assert.Equal(2, viewModel.NewFiles.Select(row => row.DestinationPath).Distinct(StringComparer.OrdinalIgnoreCase).Count());
-        Assert.Contains(viewModel.NewFiles, row => row.DriveLocation == "Drive destination");
-        Assert.Contains(viewModel.NewFiles, row => row.DriveLocation == "Drive destination-two");
 
         viewModel.AreAllNewFilesSelected = true;
         viewModel.ToggleSyncCommand.Execute(null);
@@ -722,7 +757,7 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
-    public async Task PreviewColumnFilter_BuildsDriveLocationOptions_AndTracksActiveFilterState()
+    public async Task PreviewColumnFilter_BuildsDestinationFileOptions_AndTracksActiveFilterState()
     {
         using var workspace = new SyncTestWorkspace();
         var secondDestinationPath = workspace.CreateAdditionalDestination("destination-two");
@@ -747,17 +782,17 @@ public sealed class MainWindowViewModelTests
 
         viewModel.OpenPreviewColumnFilter(
             PreviewTabKind.NewFiles,
-            new PreviewColumnHeader { Title = "Drive location", ColumnKey = PreviewColumnKey.DriveLocation });
+            new PreviewColumnHeader { Title = "Destination File", ColumnKey = PreviewColumnKey.DestinationFile });
         viewModel.SetAllVisiblePreviewFilterOptions(false);
-        Assert.Contains(viewModel.PreviewFilterOptions, option => option.Value == "Drive destination");
-        var secondDriveOption = Assert.Single(viewModel.PreviewFilterOptions.Where(option => option.Value == "Drive destination-two"));
-        secondDriveOption.IsSelected = true;
+        var options = viewModel.PreviewFilterOptions.Where(option => option.Value != "(blank)").ToList();
+        Assert.Equal(2, options.Count);
+        options[0].IsSelected = true;
 
         viewModel.ApplyActivePreviewColumnFilter();
 
         Assert.True(viewModel.HasActivePreviewFilters);
-        Assert.False(viewModel.PreviewFilterOptions.First(option => option.Value == "Drive destination").IsSelected);
-        Assert.True(secondDriveOption.IsSelected);
+        Assert.True(options[0].IsSelected);
+        Assert.False(options[1].IsSelected);
     }
 
     [Fact]
@@ -786,15 +821,15 @@ public sealed class MainWindowViewModelTests
 
         viewModel.OpenPreviewColumnFilter(
             PreviewTabKind.NewFiles,
-            new PreviewColumnHeader { Title = "Drive location", ColumnKey = PreviewColumnKey.DriveLocation });
+            new PreviewColumnHeader { Title = "Destination File", ColumnKey = PreviewColumnKey.DestinationFile });
         viewModel.SetAllVisiblePreviewFilterOptions(false);
-        var secondDriveOption = Assert.Single(viewModel.PreviewFilterOptions.Where(option => option.Value == "Drive destination-two"));
-        secondDriveOption.IsSelected = true;
+        var secondOption = viewModel.PreviewFilterOptions.Where(option => option.Value != "(blank)").Last();
+        secondOption.IsSelected = true;
         viewModel.ApplyActivePreviewColumnFilter();
 
         viewModel.OpenPreviewColumnFilter(
             PreviewTabKind.NewFiles,
-            new PreviewColumnHeader { Title = "Drive location", ColumnKey = PreviewColumnKey.DriveLocation });
+            new PreviewColumnHeader { Title = "Destination File", ColumnKey = PreviewColumnKey.DestinationFile });
         viewModel.ClearActivePreviewColumnFilter();
 
         Assert.False(viewModel.HasActivePreviewFilters);
@@ -827,13 +862,14 @@ public sealed class MainWindowViewModelTests
 
         viewModel.OpenPreviewColumnFilter(
             PreviewTabKind.NewFiles,
-            new PreviewColumnHeader { Title = "Drive location", ColumnKey = PreviewColumnKey.DriveLocation });
-        viewModel.PreviewFilterSearchText = "two";
+            new PreviewColumnHeader { Title = "Destination File", ColumnKey = PreviewColumnKey.DestinationFile });
+        var allOptions = viewModel.PreviewFilterOptions.Where(option => option.Value != "(blank)").ToList();
+        viewModel.PreviewFilterSearchText = allOptions.Last().Value;
 
         viewModel.SetAllNonShownPreviewFilterOptions(false);
 
-        Assert.True(viewModel.PreviewFilterOptions.Single(option => option.Value == "Drive destination-two").IsSelected);
-        Assert.False(viewModel.PreviewFilterOptions.Single(option => option.Value == "Drive destination").IsSelected);
+        Assert.True(viewModel.PreviewFilterOptions.Single(option => option.Value == allOptions.Last().Value).IsSelected);
+        Assert.False(viewModel.PreviewFilterOptions.Single(option => option.Value == allOptions.First().Value).IsSelected);
     }
 
     [Fact]
@@ -2130,6 +2166,8 @@ public sealed class MainWindowViewModelTests
             var drivePath when drivePath.EndsWith("destination-two", StringComparison.OrdinalIgnoreCase) => $"Drive {Path.GetFileName(drivePath)}",
             _ => path,
         };
+
+        public string FormatDestinationPathForDisplay(string path) => path;
     }
 
     private sealed class StubSyncSettingsStore(SyncConfiguration? configuration) : ISyncSettingsStore
@@ -2207,6 +2245,15 @@ public sealed class MainWindowViewModelTests
         public async Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(SyncConfiguration configuration, CancellationToken cancellationToken = default)
         {
             await completionSource.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            return [];
+        }
+    }
+
+    private sealed class IgnoreCancellationBlockingSyncStrategy(TaskCompletionSource completionSource) : ISyncStrategy
+    {
+        public async Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(SyncConfiguration configuration, CancellationToken cancellationToken = default)
+        {
+            await completionSource.Task.ConfigureAwait(false);
             return [];
         }
     }
