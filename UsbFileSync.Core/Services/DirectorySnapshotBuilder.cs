@@ -99,6 +99,65 @@ internal static class DirectorySnapshotBuilder
         IReadOnlyList<string>? excludedPathPatterns)
         => BuildDirectories(volume, hideMacOsSystemFiles, excludedPathPatterns, scanObserver: null);
 
+    /// <summary>
+    /// Scans a volume in a single pass and returns both file snapshots and directory paths.
+    /// This is more efficient than calling <see cref="Build"/> and <see cref="BuildDirectories"/> separately.
+    /// </summary>
+    public static (IReadOnlyDictionary<string, FileSnapshot> Files, IReadOnlySet<string> Directories) BuildSnapshot(
+        IVolumeSource volume,
+        bool hideMacOsSystemFiles,
+        IReadOnlyList<string>? excludedPathPatterns,
+        Action<string, bool>? scanObserver = null)
+    {
+        ArgumentNullException.ThrowIfNull(volume);
+
+        var rootEntry = volume.GetEntry(string.Empty);
+        if (!rootEntry.Exists || !rootEntry.IsDirectory)
+        {
+            return (
+                new Dictionary<string, FileSnapshot>(StringComparer.OrdinalIgnoreCase),
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+        }
+
+        var fileSnapshots = new List<FileSnapshot>();
+        var directories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pendingDirectories = new Stack<string>();
+        pendingDirectories.Push(string.Empty);
+
+        while (pendingDirectories.Count > 0)
+        {
+            var currentDirectory = pendingDirectories.Pop();
+            var entries = volume.Enumerate(currentDirectory).ToArray();
+
+            foreach (var entry in entries)
+            {
+                var relativePath = GetRelativePath(volume, entry);
+                if (IsExcludedRelativePath(volume, relativePath, hideMacOsSystemFiles, excludedPathPatterns))
+                {
+                    continue;
+                }
+
+                if (entry.IsDirectory)
+                {
+                    scanObserver?.Invoke(entry.FullPath, true);
+                    directories.Add(relativePath);
+                    pendingDirectories.Push(relativePath);
+                }
+                else if (entry.Size is not null && entry.LastWriteTimeUtc is not null)
+                {
+                    scanObserver?.Invoke(entry.FullPath, false);
+                    fileSnapshots.Add(new FileSnapshot(relativePath, entry.FullPath, entry.Size.Value, entry.LastWriteTimeUtc.Value));
+                }
+            }
+        }
+
+        var files = fileSnapshots
+            .OrderBy(snapshot => snapshot.RelativePath, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(snapshot => snapshot.RelativePath, snapshot => snapshot, StringComparer.OrdinalIgnoreCase);
+
+        return (files, directories);
+    }
+
     private static IEnumerable<FileSnapshot> EnumerateFileSnapshots(
         IVolumeSource volume,
         bool hideMacOsSystemFiles,

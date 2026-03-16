@@ -28,11 +28,11 @@ internal sealed class AnalyzeProgressTracker
 
             if (isDirectory)
             {
-                _directoriesScanned++;
+                Interlocked.Increment(ref _directoriesScanned);
             }
             else
             {
-                _filesScanned++;
+                Interlocked.Increment(ref _filesScanned);
             }
 
             if (_stopwatch.Elapsed < _minimumInterval)

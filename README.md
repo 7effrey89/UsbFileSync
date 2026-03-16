@@ -38,6 +38,7 @@ The HFS+ backend intentionally enforces read-only behavior so the application do
 - Optional SHA-256 checksum validation for each copied file.
 - Optional `Move Mode` that deletes the original file only after the copy in the planned sync direction has been verified.
 - Configurable parallel file copy count, including `0` for adaptive auto parallelism.
+- Source and destination volumes are scanned concurrently during the analyze phase, so the time to index a source and destination on separate drives overlaps rather than being sequential. Each volume is also scanned in a single pass that collects both files and directories together, halving the number of directory traversals.
 - Settings persistence between runs.
 - Browse buttons for selecting the source folder/drive and one or more destination folders. The custom browser now covers both flows from one UI: sources can navigate normal Windows folders, HFS+ source folders, and mounted ext source folders, while destinations can navigate normal Windows folders and mounted ext destination folders. Destination browsing uses lightweight ext-volume discovery so the picker opens quickly, while writable ext4 validation remains part of sync-time validation.
 - The custom source and destination browser also includes a `New Folder` action for writable locations, including supported cloud destinations such as Google Drive and OneDrive.
