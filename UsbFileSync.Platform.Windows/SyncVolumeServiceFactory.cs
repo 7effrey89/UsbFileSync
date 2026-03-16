@@ -6,10 +6,38 @@ namespace UsbFileSync.Platform.Windows;
 public static class SyncVolumeServiceFactory
 {
     public static ISourceVolumeService CreateSourceVolumeService() =>
-        new CompositeSourceVolumeService([new HfsPlusVolumeService(), new ExtVolumeService()]);
+        CreateSourceVolumeService(useCustomCloudProviderCredentials: false, cloudProviderAppRegistrations: null);
+
+    public static ISourceVolumeService CreateSourceVolumeService(
+        bool useCustomCloudProviderCredentials,
+        IReadOnlyList<CloudProviderAppRegistration>? cloudProviderAppRegistrations) =>
+        new CompositeSourceVolumeService(
+            new OneDriveVolumeService(useCustomCloudProviderCredentials, cloudProviderAppRegistrations),
+            new DropboxVolumeService(useCustomCloudProviderCredentials, cloudProviderAppRegistrations),
+            new GoogleDriveVolumeService(useCustomCloudProviderCredentials, cloudProviderAppRegistrations),
+            new HfsPlusVolumeService(),
+            new ExtVolumeService());
 
     public static ISourceVolumeService CreateDestinationVolumeService() =>
-        new ExtVolumeService(allowWriteAccess: true);
+        CreateDestinationVolumeService(useCustomCloudProviderCredentials: false, cloudProviderAppRegistrations: null);
+
+    public static ISourceVolumeService CreateDestinationVolumeService(
+        bool useCustomCloudProviderCredentials,
+        IReadOnlyList<CloudProviderAppRegistration>? cloudProviderAppRegistrations) =>
+        new CompositeSourceVolumeService(
+            new OneDriveVolumeService(useCustomCloudProviderCredentials, cloudProviderAppRegistrations, allowWriteAccess: true),
+            new DropboxVolumeService(useCustomCloudProviderCredentials, cloudProviderAppRegistrations, allowWriteAccess: true),
+            new GoogleDriveVolumeService(useCustomCloudProviderCredentials, cloudProviderAppRegistrations, allowWriteAccess: true),
+            new ExtVolumeService(allowWriteAccess: true));
+
+    public static ISourceVolumeService CreateDestinationBrowseVolumeService(
+        bool useCustomCloudProviderCredentials,
+        IReadOnlyList<CloudProviderAppRegistration>? cloudProviderAppRegistrations) =>
+        new CompositeSourceVolumeService(
+            new OneDriveVolumeService(useCustomCloudProviderCredentials, cloudProviderAppRegistrations, allowWriteAccess: true),
+            new DropboxVolumeService(useCustomCloudProviderCredentials, cloudProviderAppRegistrations, allowWriteAccess: true),
+            new GoogleDriveVolumeService(useCustomCloudProviderCredentials, cloudProviderAppRegistrations, allowWriteAccess: true),
+            new ExtVolumeService());
 
     public static SyncConfiguration ResolveConfiguration(
         SyncConfiguration configuration,
@@ -18,8 +46,12 @@ public static class SyncVolumeServiceFactory
     {
         ArgumentNullException.ThrowIfNull(configuration);
 
-        sourceVolumeService ??= CreateSourceVolumeService();
-        destinationVolumeService ??= CreateDestinationVolumeService();
+        sourceVolumeService ??= CreateSourceVolumeService(
+            configuration.UseCustomCloudProviderCredentials,
+            configuration.CloudProviderAppRegistrations);
+        destinationVolumeService ??= CreateDestinationVolumeService(
+            configuration.UseCustomCloudProviderCredentials,
+            configuration.CloudProviderAppRegistrations);
 
         var destinationPaths = configuration.GetDestinationPaths().ToList();
         var destinationVolumes = destinationPaths
@@ -46,6 +78,8 @@ public static class SyncVolumeServiceFactory
             HideMacOsSystemFiles = configuration.HideMacOsSystemFiles,
             ParallelCopyCount = configuration.ParallelCopyCount,
             PreviewProviderMappings = new Dictionary<string, string>(configuration.PreviewProviderMappings, StringComparer.OrdinalIgnoreCase),
+            UseCustomCloudProviderCredentials = configuration.UseCustomCloudProviderCredentials,
+            CloudProviderAppRegistrations = configuration.CloudProviderAppRegistrations.ToList(),
         };
     }
 

@@ -8,7 +8,10 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
 {
     private readonly SyncMetadataStore _metadataStore = new();
 
-    public Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(SyncConfiguration configuration, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(
+        SyncConfiguration configuration,
+        CancellationToken cancellationToken = default,
+        IProgress<AnalyzeProgress>? progress = null)
     {
         DirectorySnapshotBuilder.EnsureConfigurationIsValid(configuration);
         cancellationToken.ThrowIfCancellationRequested();
@@ -20,10 +23,13 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
         var sourceRootId = _metadataStore.GetOrCreateRootId(sourceMetadata);
         var destinationRootId = _metadataStore.GetOrCreateRootId(destinationMetadata);
         var peerState = _metadataStore.GetSharedPeerState(sourceMetadata, destinationRootId, destinationMetadata, sourceRootId);
-        var sourceFiles = DirectorySnapshotBuilder.Build(sourceVolume, configuration.HideMacOsSystemFiles);
-        var destinationFiles = DirectorySnapshotBuilder.Build(destinationVolume, configuration.HideMacOsSystemFiles);
-        var sourceDirectories = DirectorySnapshotBuilder.BuildDirectories(sourceVolume, configuration.HideMacOsSystemFiles);
-        var destinationDirectories = DirectorySnapshotBuilder.BuildDirectories(destinationVolume, configuration.HideMacOsSystemFiles);
+        var progressTracker = progress is null ? null : new AnalyzeProgressTracker(progress, TimeSpan.FromSeconds(1));
+        var sourceObserver = progressTracker?.CreateObserver(sourceVolume.Root);
+        var destinationObserver = progressTracker?.CreateObserver(destinationVolume.Root);
+        var sourceFiles = DirectorySnapshotBuilder.Build(sourceVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns, sourceObserver);
+        var destinationFiles = DirectorySnapshotBuilder.Build(destinationVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns, destinationObserver);
+        var sourceDirectories = DirectorySnapshotBuilder.BuildDirectories(sourceVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns, sourceObserver);
+        var destinationDirectories = DirectorySnapshotBuilder.BuildDirectories(destinationVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns, destinationObserver);
         var actions = new List<SyncAction>();
 
         foreach (var directory in sourceDirectories
@@ -137,6 +143,8 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
                     missingFullPath: VolumePath.CombineDisplayPath(sourceVolume, relativePath)));
             }
         }
+
+        progressTracker?.Flush();
 
         return Task.FromResult<IReadOnlyList<SyncAction>>(actions
             .OrderBy(action => GetActionSortRank(action.Type))

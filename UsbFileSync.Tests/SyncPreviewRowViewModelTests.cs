@@ -2,14 +2,62 @@ using System.Windows.Media;
 using UsbFileSync.App.Services;
 using UsbFileSync.App.ViewModels;
 using UsbFileSync.Core.Models;
+using UsbFileSync.Platform.Windows;
 
 namespace UsbFileSync.Tests;
 
 public sealed class SyncPreviewRowViewModelTests
 {
     [Fact]
-    public void UsesFormattedDriveLocationWhenPreviewItemIncludesDestinationRoot()
+    public void FormatsCloudSourcePathWithAlias()
     {
+        var driveDisplayNameService = new WindowsDriveDisplayNameService(() =>
+        [
+            new CloudProviderAppRegistration
+            {
+                RegistrationId = "dropbox-account",
+                Provider = CloudStorageProvider.Dropbox,
+                Alias = "Team Dropbox",
+                ClientId = "dropbox-app-key"
+            }
+        ]);
+
+        var rawSourcePath = DropboxPath.BuildPath("dropbox-account", "Archive/folder/file.txt");
+        var row = new SyncPreviewRowViewModel(
+            new SyncPreviewItem(
+                RelativePath: "folder/file.txt",
+                IsDirectory: false,
+                SourceFullPath: rawSourcePath,
+                SourceLength: 10,
+                SourceLastWriteTimeUtc: DateTime.UtcNow,
+                DestinationFullPath: @"E:\\Backup\\folder\\file.txt",
+                DestinationLength: 10,
+                DestinationLastWriteTimeUtc: DateTime.UtcNow,
+                Direction: "->",
+                Status: "New File",
+                Category: SyncPreviewCategory.NewFiles,
+                PlannedActionType: SyncActionType.CopyToDestination),
+            iconProvider: new StubFileIconProvider(null),
+            driveDisplayNameService: driveDisplayNameService);
+
+        Assert.Equal("dropbox://Team Dropbox/Archive/folder/file.txt", row.SourcePath);
+        Assert.Equal(rawSourcePath, row.OpenPath);
+    }
+
+    [Fact]
+    public void FormatsCloudDestinationPathWithAlias()
+    {
+        var driveDisplayNameService = new WindowsDriveDisplayNameService(() =>
+        [
+            new CloudProviderAppRegistration
+            {
+                RegistrationId = "dropbox-account",
+                Provider = CloudStorageProvider.Dropbox,
+                Alias = "Team Dropbox",
+                ClientId = "dropbox-app-key"
+            }
+        ]);
+
         var row = new SyncPreviewRowViewModel(
             new SyncPreviewItem(
                 RelativePath: "folder/file.txt",
@@ -17,18 +65,18 @@ public sealed class SyncPreviewRowViewModelTests
                 SourceFullPath: @"F:\\folder\\file.txt",
                 SourceLength: 10,
                 SourceLastWriteTimeUtc: DateTime.UtcNow,
-                DestinationFullPath: @"D:\\Backup\\folder\\file.txt",
+                DestinationFullPath: DropboxPath.BuildPath("dropbox-account", "Archive/folder/file.txt"),
                 DestinationLength: 10,
                 DestinationLastWriteTimeUtc: DateTime.UtcNow,
                 Direction: "->",
                 Status: "New File",
                 Category: SyncPreviewCategory.NewFiles,
                 PlannedActionType: SyncActionType.CopyToDestination,
-                DriveLocationPath: @"D:\\Backup"),
+                DriveLocationPath: DropboxPath.BuildPath("dropbox-account", "Archive")),
             iconProvider: new StubFileIconProvider(null),
-            driveDisplayNameService: new StubDriveDisplayNameService());
+            driveDisplayNameService: driveDisplayNameService);
 
-        Assert.Equal("Backup Drive (D:)", row.DriveLocation);
+        Assert.Equal("dropbox://Team Dropbox/Archive/folder/file.txt", row.DestinationPath);
     }
 
     [Fact]
@@ -82,6 +130,8 @@ public sealed class SyncPreviewRowViewModelTests
             @"D:\\Backup" => "Backup Drive (D:)",
             _ => path,
         };
+
+        public string FormatDestinationPathForDisplay(string path) => path;
     }
 
     [Fact]

@@ -33,6 +33,7 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
             VerifyChecksums = true,
             MoveMode = true,
             HideMacOsSystemFiles = false,
+            ExcludedPathPatterns = ["node_modules", ".venv", "bin", "obj"],
             ParallelCopyCount = 4,
         };
 
@@ -48,6 +49,7 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
         Assert.Equal(configuration.VerifyChecksums, restored.VerifyChecksums);
         Assert.Equal(configuration.MoveMode, restored.MoveMode);
         Assert.Equal(configuration.HideMacOsSystemFiles, restored.HideMacOsSystemFiles);
+        Assert.Equal(configuration.ExcludedPathPatterns, restored.ExcludedPathPatterns);
         Assert.Equal(configuration.ParallelCopyCount, restored.ParallelCopyCount);
     }
 
@@ -90,6 +92,99 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
 
         Assert.NotNull(restored);
         Assert.Equal([@"F:\BackupDrive", @"G:\ArchiveDrive"], restored.GetDestinationPaths());
+    }
+
+    [Fact]
+    public void Save_ThenLoad_RoundTripsCloudProviderAppRegistrations()
+    {
+        Directory.CreateDirectory(_rootPath);
+        var settingsPath = Path.Combine(_rootPath, "settings.json");
+        var store = new JsonSyncSettingsStore(settingsPath);
+        var configuration = new SyncConfiguration
+        {
+            SourcePath = @"E:\MainDrive",
+            DestinationPath = @"F:\BackupDrive",
+            CloudProviderAppRegistrations =
+            [
+                new CloudProviderAppRegistration
+                {
+                    RegistrationId = "google-account",
+                    Provider = CloudStorageProvider.GoogleDrive,
+                    Alias = "Personal Drive",
+                    ClientId = "google-client-id",
+                    ClientSecret = "google-secret"
+                },
+                new CloudProviderAppRegistration
+                {
+                    RegistrationId = "onedrive-account",
+                    Provider = CloudStorageProvider.OneDrive,
+                    Alias = "Personal OneDrive",
+                    ClientId = "onedrive-client-id",
+                    TenantId = "common"
+                }
+            ],
+            UseCustomCloudProviderCredentials = true,
+        };
+
+        store.Save(configuration);
+        var restored = store.Load();
+
+        Assert.NotNull(restored);
+        Assert.Collection(
+            restored.CloudProviderAppRegistrations,
+            google =>
+            {
+                Assert.Equal("google-account", google.RegistrationId);
+                Assert.Equal(CloudStorageProvider.GoogleDrive, google.Provider);
+                Assert.Equal("Personal Drive", google.Alias);
+                Assert.Equal("google-client-id", google.ClientId);
+                Assert.Equal("google-secret", google.ClientSecret);
+                Assert.Equal(string.Empty, google.TenantId);
+            },
+            oneDrive =>
+            {
+                Assert.Equal("onedrive-account", oneDrive.RegistrationId);
+                Assert.Equal(CloudStorageProvider.OneDrive, oneDrive.Provider);
+                Assert.Equal("Personal OneDrive", oneDrive.Alias);
+                Assert.Equal("onedrive-client-id", oneDrive.ClientId);
+                Assert.Equal("common", oneDrive.TenantId);
+            });
+        Assert.True(restored.UseCustomCloudProviderCredentials);
+    }
+
+    [Fact]
+    public void Save_ThenLoad_PreservesCustomRegistrationsWhenBuiltInModeIsPreferred()
+    {
+        Directory.CreateDirectory(_rootPath);
+        var settingsPath = Path.Combine(_rootPath, "settings.json");
+        var store = new JsonSyncSettingsStore(settingsPath);
+        var configuration = new SyncConfiguration
+        {
+            SourcePath = @"E:\MainDrive",
+            DestinationPath = @"F:\BackupDrive",
+            UseCustomCloudProviderCredentials = false,
+            CloudProviderAppRegistrations =
+            [
+                new CloudProviderAppRegistration
+                {
+                    RegistrationId = "dropbox-account",
+                    Provider = CloudStorageProvider.Dropbox,
+                    Alias = "Team Dropbox",
+                    ClientId = "dropbox-client-id"
+                }
+            ]
+        };
+
+        store.Save(configuration);
+        var restored = store.Load();
+
+        Assert.NotNull(restored);
+        Assert.False(restored.UseCustomCloudProviderCredentials);
+        var registration = Assert.Single(restored.CloudProviderAppRegistrations);
+        Assert.Equal("dropbox-account", registration.RegistrationId);
+        Assert.Equal(CloudStorageProvider.Dropbox, registration.Provider);
+        Assert.Equal("Team Dropbox", registration.Alias);
+        Assert.Equal("dropbox-client-id", registration.ClientId);
     }
 
     [Fact]

@@ -88,14 +88,193 @@ public sealed class MainWindowViewModelTests
 
         await WaitForAsync(() => viewModel.IsBusy).ConfigureAwait(true);
         Assert.True(viewModel.CancelBusyOperationCommand.CanExecute(null));
+        Assert.True(viewModel.IsBusyOverlayVisible);
 
         viewModel.CancelBusyOperationCommand.Execute(null);
+
+        Assert.False(viewModel.IsBusyOverlayVisible);
 
         await WaitForAsync(() => !viewModel.IsBusy).ConfigureAwait(true);
 
         Assert.Equal("Preview loading cancelled.", viewModel.StatusMessage);
         Assert.Empty(viewModel.PlannedActions);
         Assert.Empty(viewModel.AllFiles);
+    }
+
+    [Fact]
+    public async Task AnalyzeCommand_Cancel_ReenablesCommands_EvenWhenBackgroundAnalyzeFinishesLater()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("pending.txt", "payload");
+        var completionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(new IgnoreCancellationBlockingSyncStrategy(completionSource), new IgnoreCancellationBlockingSyncStrategy(completionSource)),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+
+        await WaitForAsync(() => viewModel.IsBusy).ConfigureAwait(true);
+        viewModel.CancelBusyOperationCommand.Execute(null);
+
+        await WaitForAsync(() => !viewModel.IsBusy).ConfigureAwait(true);
+        await WaitForAsync(() => viewModel.AnalyzeCommand.CanExecute(null)).ConfigureAwait(true);
+
+        Assert.True(viewModel.ToggleSyncCommand.CanExecute(null));
+        Assert.Equal("Preview loading cancelled.", viewModel.StatusMessage);
+        Assert.Empty(viewModel.PlannedActions);
+        Assert.Empty(viewModel.AllFiles);
+
+        completionSource.SetResult();
+        await Task.Delay(100).ConfigureAwait(true);
+
+        Assert.Empty(viewModel.PlannedActions);
+        Assert.Empty(viewModel.AllFiles);
+        Assert.True(viewModel.AnalyzeCommand.CanExecute(null));
+        Assert.True(viewModel.ToggleSyncCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task AnalyzeCommand_ReportsProgressAcrossMultipleDestinations()
+    {
+        using var workspace = new SyncTestWorkspace();
+        var secondDestinationPath = workspace.CreateAdditionalDestination("destination-two");
+        var completionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(new SequentialProgressSyncStrategy(completionSource), new SequentialProgressSyncStrategy(completionSource)),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+        };
+
+        viewModel.AddDestinationPathCommand.Execute(null);
+        var additionalDestination = Assert.Single(viewModel.AdditionalDestinationPaths);
+        additionalDestination.Path = secondDestinationPath;
+
+        viewModel.AnalyzeCommand.Execute(null);
+
+        await WaitForAsync(() =>
+            viewModel.IsBusy &&
+            viewModel.BusyOverlayProgressValue >= 50 &&
+            viewModel.BusyOverlayCountersText.Contains("files scanned", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(viewModel.BusyOverlayPathText) &&
+            viewModel.BusyOverlayEtaText.Contains("Estimated time", StringComparison.OrdinalIgnoreCase)).ConfigureAwait(true);
+
+        Assert.Contains("2/4 steps", viewModel.BusyOverlayDescription);
+        Assert.True(viewModel.BusyOverlayProgressValue >= 50 && viewModel.BusyOverlayProgressValue < 100);
+        Assert.Contains("files scanned", viewModel.BusyOverlayCountersText);
+        Assert.False(string.IsNullOrWhiteSpace(viewModel.BusyOverlayPathText));
+        Assert.Contains("Estimated time", viewModel.BusyOverlayEtaText);
+
+        completionSource.SetResult();
+        await WaitForAsync(() => !viewModel.IsBusy).ConfigureAwait(true);
+
+        Assert.Equal(0, viewModel.BusyOverlayProgressValue);
+        Assert.Equal(string.Empty, viewModel.BusyOverlayCountersText);
+        Assert.Equal(string.Empty, viewModel.BusyOverlayPathText);
+        Assert.Equal(string.Empty, viewModel.BusyOverlayEtaText);
+    }
+
+    [Fact]
+    public async Task AnalyzeCommand_UsesHistoricalEtaDuringAnalyzeChanges()
+    {
+        using var workspace = new SyncTestWorkspace();
+        var secondRunCompletionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var strategy = new HistoricalEtaSyncStrategy(secondRunCompletionSource);
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(strategy, strategy),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => !viewModel.IsBusy).ConfigureAwait(true);
+
+        viewModel.AnalyzeCommand.Execute(null);
+
+        await WaitForAsync(() =>
+            viewModel.IsBusy &&
+            viewModel.BusyOverlayEtaText.Contains("Estimated time", StringComparison.OrdinalIgnoreCase) &&
+            !viewModel.BusyOverlayEtaText.Contains("estimating", StringComparison.OrdinalIgnoreCase)).ConfigureAwait(true);
+
+        secondRunCompletionSource.SetResult();
+        await WaitForAsync(() => !viewModel.IsBusy).ConfigureAwait(true);
+    }
+
+    [Fact]
+    public async Task AnalyzeCommand_UseCompletedResults_StopsAfterCurrentDestinationAndBuildsPartialPreview()
+    {
+        using var workspace = new SyncTestWorkspace();
+        var secondDestinationPath = workspace.CreateAdditionalDestination("destination-two");
+        var firstDestinationCompletionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var strategy = new UseCompletedResultsSyncStrategy(firstDestinationCompletionSource);
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(strategy, strategy),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+        };
+
+        viewModel.AddDestinationPathCommand.Execute(null);
+        var additionalDestination = Assert.Single(viewModel.AdditionalDestinationPaths);
+        additionalDestination.Path = secondDestinationPath;
+
+        viewModel.AnalyzeCommand.Execute(null);
+
+        await WaitForAsync(() => viewModel.IsBusy && viewModel.UseCompletedAnalyzeResultsCommand.CanExecute(null)).ConfigureAwait(true);
+        viewModel.UseCompletedAnalyzeResultsCommand.Execute(null);
+        Assert.False(viewModel.UseCompletedAnalyzeResultsCommand.CanExecute(null));
+
+        firstDestinationCompletionSource.SetResult();
+        await WaitForAsync(() => !viewModel.IsBusy).ConfigureAwait(true);
+
+        Assert.Equal(1, strategy.CallCount);
+        Assert.Equal("Preview generated from 1 of 2 destination(s) using completed results with 1 planned action(s). Analyze again for a full refresh.", viewModel.StatusMessage);
+        Assert.Single(viewModel.PlannedActions);
+        Assert.Single(viewModel.AllFiles);
+    }
+
+    [Fact]
+    public async Task AnalyzeCommand_SkipsDestinationThatMatchesSource_AndContinuesWithOtherDestinations()
+    {
+        using var workspace = new SyncTestWorkspace();
+        var validDestinationPath = workspace.CreateAdditionalDestination("destination-two");
+        workspace.WriteSourceFile("shared.txt", "payload");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.SourcePath,
+            DryRun = false,
+        };
+
+        viewModel.AddDestinationPathCommand.Execute(null);
+        var additionalDestination = Assert.Single(viewModel.AdditionalDestinationPaths);
+        additionalDestination.Path = validDestinationPath;
+
+        Assert.True(viewModel.AnalyzeCommand.CanExecute(null));
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 1 && viewModel.AllFilesCount == 1).ConfigureAwait(true);
+
+        Assert.Equal("Preview generated with 1 planned action(s). Select the items to synchronize.", viewModel.StatusMessage);
+        Assert.Contains(viewModel.ActivityLog, entry =>
+            entry.State == "Analyze" &&
+            entry.Severity == SyncLogSeverity.Warning &&
+            entry.Message.Contains("Skipped", StringComparison.OrdinalIgnoreCase) &&
+            entry.Message.Contains("matches the source path", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(viewModel.NewFiles);
+        Assert.Equal(validDestinationPath, viewModel.NewFiles[0].OpenDestinationPath[..validDestinationPath.Length]);
     }
 
     [Fact]
@@ -210,7 +389,7 @@ public sealed class MainWindowViewModelTests
 
         viewModel.ToggleSyncCommand.Execute(null);
 
-        Assert.Equal("Source macOS volume could not be opened. The selected drive 'D:\\' does not appear to contain an HFS+ volume.", viewModel.StatusMessage);
+        Assert.Equal("Source volume could not be opened. The selected drive 'D:\\' does not appear to contain an HFS+ volume.", viewModel.StatusMessage);
         Assert.False(viewModel.IsSyncRunning);
     }
 
@@ -251,6 +430,79 @@ public sealed class MainWindowViewModelTests
 
         Assert.Equal("F:\\", viewModel.SourcePathDisplayText);
         Assert.Equal("D:\\", viewModel.DestinationPathDisplayText);
+    }
+
+    [Fact]
+    public void SourceAndDestinationDisplayText_FormatOneDriveLikeGoogleDrive_WhenNotFocused()
+    {
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            driveDisplayNameService: new WindowsDriveDisplayNameService())
+        {
+            SourcePath = "onedrive://root",
+            DestinationPath = "onedrive://root/USBTest",
+        };
+
+        Assert.Equal("OneDrive", viewModel.SourcePathDisplayText);
+        Assert.Equal("OneDrive / USBTest", viewModel.DestinationPathDisplayText);
+    }
+
+    [Fact]
+    public void SourceAndDestinationDisplayText_ShowRawOneDrivePath_WhenFocused()
+    {
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            driveDisplayNameService: new WindowsDriveDisplayNameService())
+        {
+            SourcePath = "onedrive://root",
+            DestinationPath = "onedrive://root/USBTest",
+        };
+
+        viewModel.SetSourcePathFocused(true);
+        viewModel.SetDestinationPathFocused(true);
+
+        Assert.Equal("onedrive://root", viewModel.SourcePathDisplayText);
+        Assert.Equal("onedrive://root/USBTest", viewModel.DestinationPathDisplayText);
+    }
+
+    [Fact]
+    public void SourceAndDestinationDisplayText_UsesCloudAliases_ForAccountScopedPaths()
+    {
+        var driveDisplayNameService = new WindowsDriveDisplayNameService(() =>
+        [
+            new CloudProviderAppRegistration
+            {
+                RegistrationId = "onedrive-account",
+                Provider = CloudStorageProvider.OneDrive,
+                Alias = "Personal OneDrive",
+                ClientId = "onedrive-client-id",
+                TenantId = "common"
+            },
+            new CloudProviderAppRegistration
+            {
+                RegistrationId = "dropbox-account",
+                Provider = CloudStorageProvider.Dropbox,
+                Alias = "Team Dropbox",
+                ClientId = "dropbox-app-key"
+            }
+        ]);
+
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            driveDisplayNameService: driveDisplayNameService)
+        {
+            SourcePath = OneDrivePath.BuildPath("onedrive-account", "USBTest"),
+            DestinationPath = DropboxPath.BuildPath("dropbox-account", "Archive"),
+        };
+
+        Assert.Equal("OneDrive - Personal OneDrive / USBTest", viewModel.SourcePathDisplayText);
+        Assert.Equal("Dropbox - Team Dropbox / Archive", viewModel.DestinationPathDisplayText);
     }
 
     [Fact]
@@ -510,8 +762,6 @@ public sealed class MainWindowViewModelTests
         viewModel.AnalyzeCommand.Execute(null);
         await WaitForAsync(() => viewModel.NewFilesCount == 1 && viewModel.AllFilesCount == 1).ConfigureAwait(true);
 
-        Assert.False(viewModel.IsDriveLocationColumnVisible);
-
         var newRow = Assert.Single(viewModel.NewFiles);
         var allRow = Assert.Single(viewModel.AllFiles);
         Assert.False(newRow.IsSelected);
@@ -632,10 +882,7 @@ public sealed class MainWindowViewModelTests
         viewModel.AnalyzeCommand.Execute(null);
         await WaitForAsync(() => viewModel.NewFilesCount == 2 && viewModel.AllFilesCount == 2).ConfigureAwait(true);
 
-        Assert.True(viewModel.IsDriveLocationColumnVisible);
         Assert.Equal(2, viewModel.NewFiles.Select(row => row.DestinationPath).Distinct(StringComparer.OrdinalIgnoreCase).Count());
-        Assert.Contains(viewModel.NewFiles, row => row.DriveLocation == "Drive destination");
-        Assert.Contains(viewModel.NewFiles, row => row.DriveLocation == "Drive destination-two");
 
         viewModel.AreAllNewFilesSelected = true;
         viewModel.ToggleSyncCommand.Execute(null);
@@ -649,7 +896,7 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
-    public async Task PreviewColumnFilter_BuildsDriveLocationOptions_AndTracksActiveFilterState()
+    public async Task PreviewColumnFilter_BuildsDestinationFileOptions_AndTracksActiveFilterState()
     {
         using var workspace = new SyncTestWorkspace();
         var secondDestinationPath = workspace.CreateAdditionalDestination("destination-two");
@@ -674,17 +921,17 @@ public sealed class MainWindowViewModelTests
 
         viewModel.OpenPreviewColumnFilter(
             PreviewTabKind.NewFiles,
-            new PreviewColumnHeader { Title = "Drive location", ColumnKey = PreviewColumnKey.DriveLocation });
+            new PreviewColumnHeader { Title = "Destination File", ColumnKey = PreviewColumnKey.DestinationFile });
         viewModel.SetAllVisiblePreviewFilterOptions(false);
-        Assert.Contains(viewModel.PreviewFilterOptions, option => option.Value == "Drive destination");
-        var secondDriveOption = Assert.Single(viewModel.PreviewFilterOptions.Where(option => option.Value == "Drive destination-two"));
-        secondDriveOption.IsSelected = true;
+        var options = viewModel.PreviewFilterOptions.Where(option => option.Value != "(blank)").ToList();
+        Assert.Equal(2, options.Count);
+        options[0].IsSelected = true;
 
         viewModel.ApplyActivePreviewColumnFilter();
 
         Assert.True(viewModel.HasActivePreviewFilters);
-        Assert.False(viewModel.PreviewFilterOptions.First(option => option.Value == "Drive destination").IsSelected);
-        Assert.True(secondDriveOption.IsSelected);
+        Assert.True(options[0].IsSelected);
+        Assert.False(options[1].IsSelected);
     }
 
     [Fact]
@@ -713,15 +960,15 @@ public sealed class MainWindowViewModelTests
 
         viewModel.OpenPreviewColumnFilter(
             PreviewTabKind.NewFiles,
-            new PreviewColumnHeader { Title = "Drive location", ColumnKey = PreviewColumnKey.DriveLocation });
+            new PreviewColumnHeader { Title = "Destination File", ColumnKey = PreviewColumnKey.DestinationFile });
         viewModel.SetAllVisiblePreviewFilterOptions(false);
-        var secondDriveOption = Assert.Single(viewModel.PreviewFilterOptions.Where(option => option.Value == "Drive destination-two"));
-        secondDriveOption.IsSelected = true;
+        var secondOption = viewModel.PreviewFilterOptions.Where(option => option.Value != "(blank)").Last();
+        secondOption.IsSelected = true;
         viewModel.ApplyActivePreviewColumnFilter();
 
         viewModel.OpenPreviewColumnFilter(
             PreviewTabKind.NewFiles,
-            new PreviewColumnHeader { Title = "Drive location", ColumnKey = PreviewColumnKey.DriveLocation });
+            new PreviewColumnHeader { Title = "Destination File", ColumnKey = PreviewColumnKey.DestinationFile });
         viewModel.ClearActivePreviewColumnFilter();
 
         Assert.False(viewModel.HasActivePreviewFilters);
@@ -754,13 +1001,14 @@ public sealed class MainWindowViewModelTests
 
         viewModel.OpenPreviewColumnFilter(
             PreviewTabKind.NewFiles,
-            new PreviewColumnHeader { Title = "Drive location", ColumnKey = PreviewColumnKey.DriveLocation });
-        viewModel.PreviewFilterSearchText = "two";
+            new PreviewColumnHeader { Title = "Destination File", ColumnKey = PreviewColumnKey.DestinationFile });
+        var allOptions = viewModel.PreviewFilterOptions.Where(option => option.Value != "(blank)").ToList();
+        viewModel.PreviewFilterSearchText = allOptions.Last().Value;
 
         viewModel.SetAllNonShownPreviewFilterOptions(false);
 
-        Assert.True(viewModel.PreviewFilterOptions.Single(option => option.Value == "Drive destination-two").IsSelected);
-        Assert.False(viewModel.PreviewFilterOptions.Single(option => option.Value == "Drive destination").IsSelected);
+        Assert.True(viewModel.PreviewFilterOptions.Single(option => option.Value == allOptions.Last().Value).IsSelected);
+        Assert.False(viewModel.PreviewFilterOptions.Single(option => option.Value == allOptions.First().Value).IsSelected);
     }
 
     [Fact]
@@ -2057,6 +2305,8 @@ public sealed class MainWindowViewModelTests
             var drivePath when drivePath.EndsWith("destination-two", StringComparison.OrdinalIgnoreCase) => $"Drive {Path.GetFileName(drivePath)}",
             _ => path,
         };
+
+        public string FormatDestinationPathForDisplay(string path) => path;
     }
 
     private sealed class StubSyncSettingsStore(SyncConfiguration? configuration) : ISyncSettingsStore
@@ -2131,10 +2381,123 @@ public sealed class MainWindowViewModelTests
 
     private sealed class BlockingSyncStrategy(TaskCompletionSource completionSource) : ISyncStrategy
     {
-        public async Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(SyncConfiguration configuration, CancellationToken cancellationToken = default)
+        public async Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(
+            SyncConfiguration configuration,
+            CancellationToken cancellationToken = default,
+            IProgress<AnalyzeProgress>? progress = null)
         {
             await completionSource.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             return [];
+        }
+    }
+
+    private sealed class IgnoreCancellationBlockingSyncStrategy(TaskCompletionSource completionSource) : ISyncStrategy
+    {
+        public async Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(
+            SyncConfiguration configuration,
+            CancellationToken cancellationToken = default,
+            IProgress<AnalyzeProgress>? progress = null)
+        {
+            await completionSource.Task.ConfigureAwait(false);
+            return [];
+        }
+    }
+
+    private sealed class SequentialProgressSyncStrategy(TaskCompletionSource completionSource) : ISyncStrategy
+    {
+        private int _callCount;
+
+        public async Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(
+            SyncConfiguration configuration,
+            CancellationToken cancellationToken = default,
+            IProgress<AnalyzeProgress>? progress = null)
+        {
+            var currentCall = Interlocked.Increment(ref _callCount);
+            progress?.Report(new AnalyzeProgress(configuration.DestinationPath, Path.Combine(configuration.DestinationPath, $"scanned-{currentCall}.txt"), currentCall * 1000, currentCall * 25));
+            if (currentCall > 1)
+            {
+                await completionSource.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            var destinationPath = configuration.DestinationPath;
+            return
+            [
+                new SyncAction(
+                    SyncActionType.CopyToDestination,
+                    "progress.txt",
+                    Path.Combine(configuration.SourcePath, "progress.txt"),
+                    Path.Combine(destinationPath, "progress.txt"))
+            ];
+        }
+    }
+
+    private sealed class HistoricalEtaSyncStrategy(TaskCompletionSource secondRunCompletionSource) : ISyncStrategy
+    {
+        private int _callCount;
+
+        public async Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(
+            SyncConfiguration configuration,
+            CancellationToken cancellationToken = default,
+            IProgress<AnalyzeProgress>? progress = null)
+        {
+            var currentCall = Interlocked.Increment(ref _callCount);
+            progress?.Report(new AnalyzeProgress(
+                configuration.DestinationPath,
+                Path.Combine(configuration.DestinationPath, $"history-{currentCall}.txt"),
+                5_000,
+                100));
+
+            if (currentCall == 1)
+            {
+                await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await secondRunCompletionSource.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            return
+            [
+                new SyncAction(
+                    SyncActionType.CopyToDestination,
+                    "history.txt",
+                    Path.Combine(configuration.SourcePath, "history.txt"),
+                    Path.Combine(configuration.DestinationPath, "history.txt"))
+            ];
+        }
+    }
+
+    private sealed class UseCompletedResultsSyncStrategy(TaskCompletionSource firstDestinationCompletionSource) : ISyncStrategy
+    {
+        private int _callCount;
+
+        public int CallCount => _callCount;
+
+        public async Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(
+            SyncConfiguration configuration,
+            CancellationToken cancellationToken = default,
+            IProgress<AnalyzeProgress>? progress = null)
+        {
+            var currentCall = Interlocked.Increment(ref _callCount);
+            progress?.Report(new AnalyzeProgress(
+                configuration.DestinationPath,
+                Path.Combine(configuration.DestinationPath, $"partial-{currentCall}.txt"),
+                1_500,
+                30));
+
+            if (currentCall == 1)
+            {
+                await firstDestinationCompletionSource.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            return
+            [
+                new SyncAction(
+                    SyncActionType.CopyToDestination,
+                    $"partial-{currentCall}.txt",
+                    Path.Combine(configuration.SourcePath, $"partial-{currentCall}.txt"),
+                    Path.Combine(configuration.DestinationPath, $"partial-{currentCall}.txt"))
+            ];
         }
     }
 }

@@ -14,7 +14,7 @@ public static class WindowsSourceLocationPickerService
             fallbackTitle: "Select the source drive or folder",
             dialogTextOptions: new UniversalSourceLocationPickerDialog.DialogTextOptions(
                 WindowTitle: "Select Source Folder",
-                Heading: "Browse source folders across Windows, Linux ext, and HFS+ volumes",
+                Heading: "Browse source folders across Windows, Linux ext, HFS+, Google Drive, OneDrive, and Dropbox",
                 Description: "Select a root on the left, browse folders on the right, and choose the current folder as the source location.",
                 NoRootsMessage: "No source volumes are currently available.",
                 InvalidPathMessage: "Enter a valid source folder path under one of the available roots.",
@@ -30,7 +30,7 @@ public static class WindowsSourceLocationPickerService
             fallbackTitle: "Select the destination drive or folder",
             dialogTextOptions: new UniversalSourceLocationPickerDialog.DialogTextOptions(
                 WindowTitle: "Select Destination Folder",
-                Heading: "Browse destination folders across Windows and Linux ext volumes",
+                Heading: "Browse destination folders across Windows, Linux ext, Google Drive, OneDrive, and Dropbox",
                 Description: "Select a root on the left, browse folders on the right, and choose the current folder as the destination location.",
                 NoRootsMessage: "No destination volumes are currently available.",
                 InvalidPathMessage: "Enter a valid destination folder path under one of the available roots.",
@@ -83,6 +83,12 @@ public static class WindowsSourceLocationPickerService
     {
         var roots = new List<UniversalSourceLocationPickerDialog.RootOption>();
         var discoveredRootPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (volumeService is ICloudRootProvider cloudRootProvider)
+        {
+            roots.AddRange(cloudRootProvider.GetAvailableRoots()
+                .Select(root => new UniversalSourceLocationPickerDialog.RootOption(root.RootPath, root.DisplayText, root.Volume)));
+        }
 
         foreach (var drive in DriveInfo.GetDrives().OrderBy(drive => drive.Name, StringComparer.OrdinalIgnoreCase))
         {
@@ -160,6 +166,9 @@ public static class WindowsSourceLocationPickerService
         {
             "HFS+" => $"HFS+ ({rootText})",
             "ext4" => $"ext4 ({rootText})",
+            "Google Drive" => "Google Drive",
+            "OneDrive" => "OneDrive",
+            "Dropbox" => "Dropbox",
             _ => string.IsNullOrWhiteSpace(volume.DisplayName) ? rootText : volume.DisplayName,
         };
     }

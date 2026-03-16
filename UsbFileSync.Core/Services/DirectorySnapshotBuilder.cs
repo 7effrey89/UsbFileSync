@@ -36,7 +36,11 @@ internal static class DirectorySnapshotBuilder
     public static IReadOnlyDictionary<string, FileSnapshot> Build(IVolumeSource volume)
         => Build(volume, hideMacOsSystemFiles: false);
 
-    public static IReadOnlyDictionary<string, FileSnapshot> Build(IVolumeSource volume, bool hideMacOsSystemFiles)
+    public static IReadOnlyDictionary<string, FileSnapshot> Build(
+        IVolumeSource volume,
+        bool hideMacOsSystemFiles,
+        IReadOnlyList<string>? excludedPathPatterns,
+        Action<string, bool>? scanObserver = null)
     {
         ArgumentNullException.ThrowIfNull(volume);
 
@@ -46,10 +50,19 @@ internal static class DirectorySnapshotBuilder
             return new Dictionary<string, FileSnapshot>(StringComparer.OrdinalIgnoreCase);
         }
 
-        return EnumerateFileSnapshots(volume, hideMacOsSystemFiles)
+        return EnumerateFileSnapshots(volume, hideMacOsSystemFiles, excludedPathPatterns, scanObserver)
             .OrderBy(snapshot => snapshot.RelativePath, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(snapshot => snapshot.RelativePath, snapshot => snapshot, StringComparer.OrdinalIgnoreCase);
     }
+
+    public static IReadOnlyDictionary<string, FileSnapshot> Build(IVolumeSource volume, bool hideMacOsSystemFiles)
+        => Build(volume, hideMacOsSystemFiles, excludedPathPatterns: null, scanObserver: null);
+
+    public static IReadOnlyDictionary<string, FileSnapshot> Build(
+        IVolumeSource volume,
+        bool hideMacOsSystemFiles,
+        IReadOnlyList<string>? excludedPathPatterns)
+        => Build(volume, hideMacOsSystemFiles, excludedPathPatterns, scanObserver: null);
 
     public static IReadOnlySet<string> BuildDirectories(string rootPath) =>
         BuildDirectories(new WindowsMountedVolume(rootPath));
@@ -60,7 +73,11 @@ internal static class DirectorySnapshotBuilder
     public static IReadOnlySet<string> BuildDirectories(IVolumeSource volume)
         => BuildDirectories(volume, hideMacOsSystemFiles: false);
 
-    public static IReadOnlySet<string> BuildDirectories(IVolumeSource volume, bool hideMacOsSystemFiles)
+    public static IReadOnlySet<string> BuildDirectories(
+        IVolumeSource volume,
+        bool hideMacOsSystemFiles,
+        IReadOnlyList<string>? excludedPathPatterns,
+        Action<string, bool>? scanObserver = null)
     {
         ArgumentNullException.ThrowIfNull(volume);
 
@@ -70,10 +87,23 @@ internal static class DirectorySnapshotBuilder
             return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
 
-        return EnumerateDirectories(volume, hideMacOsSystemFiles).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return EnumerateDirectories(volume, hideMacOsSystemFiles, excludedPathPatterns, scanObserver).ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
-    private static IEnumerable<FileSnapshot> EnumerateFileSnapshots(IVolumeSource volume, bool hideMacOsSystemFiles)
+    public static IReadOnlySet<string> BuildDirectories(IVolumeSource volume, bool hideMacOsSystemFiles)
+        => BuildDirectories(volume, hideMacOsSystemFiles, excludedPathPatterns: null, scanObserver: null);
+
+    public static IReadOnlySet<string> BuildDirectories(
+        IVolumeSource volume,
+        bool hideMacOsSystemFiles,
+        IReadOnlyList<string>? excludedPathPatterns)
+        => BuildDirectories(volume, hideMacOsSystemFiles, excludedPathPatterns, scanObserver: null);
+
+    private static IEnumerable<FileSnapshot> EnumerateFileSnapshots(
+        IVolumeSource volume,
+        bool hideMacOsSystemFiles,
+        IReadOnlyList<string>? excludedPathPatterns,
+        Action<string, bool>? scanObserver)
     {
         var pendingDirectories = new Stack<string>();
         pendingDirectories.Push(string.Empty);
@@ -86,18 +116,19 @@ internal static class DirectorySnapshotBuilder
             foreach (var entry in entries.Where(entry => !entry.IsDirectory))
             {
                 var relativePath = GetRelativePath(volume, entry);
-                if (IsExcludedRelativePath(volume, relativePath, hideMacOsSystemFiles) || entry.Size is null || entry.LastWriteTimeUtc is null)
+                if (IsExcludedRelativePath(volume, relativePath, hideMacOsSystemFiles, excludedPathPatterns) || entry.Size is null || entry.LastWriteTimeUtc is null)
                 {
                     continue;
                 }
 
+                scanObserver?.Invoke(entry.FullPath, false);
                 yield return new FileSnapshot(relativePath, entry.FullPath, entry.Size.Value, entry.LastWriteTimeUtc.Value);
             }
 
             foreach (var entry in entries.Where(entry => entry.IsDirectory))
             {
                 var relativePath = GetRelativePath(volume, entry);
-                if (!IsExcludedRelativePath(volume, relativePath, hideMacOsSystemFiles))
+                if (!IsExcludedRelativePath(volume, relativePath, hideMacOsSystemFiles, excludedPathPatterns))
                 {
                     pendingDirectories.Push(relativePath);
                 }
@@ -105,7 +136,11 @@ internal static class DirectorySnapshotBuilder
         }
     }
 
-    private static IEnumerable<string> EnumerateDirectories(IVolumeSource volume, bool hideMacOsSystemFiles)
+    private static IEnumerable<string> EnumerateDirectories(
+        IVolumeSource volume,
+        bool hideMacOsSystemFiles,
+        IReadOnlyList<string>? excludedPathPatterns,
+        Action<string, bool>? scanObserver)
     {
         var pendingDirectories = new Stack<string>();
         pendingDirectories.Push(string.Empty);
@@ -116,18 +151,23 @@ internal static class DirectorySnapshotBuilder
             foreach (var entry in volume.Enumerate(currentDirectory).Where(entry => entry.IsDirectory))
             {
                 var relativePath = GetRelativePath(volume, entry);
-                if (IsExcludedRelativePath(volume, relativePath, hideMacOsSystemFiles))
+                if (IsExcludedRelativePath(volume, relativePath, hideMacOsSystemFiles, excludedPathPatterns))
                 {
                     continue;
                 }
 
+                scanObserver?.Invoke(entry.FullPath, true);
                 yield return relativePath;
                 pendingDirectories.Push(relativePath);
             }
         }
     }
 
-    private static bool IsExcludedRelativePath(IVolumeSource volume, string relativePath, bool hideMacOsSystemFiles)
+    private static bool IsExcludedRelativePath(
+        IVolumeSource volume,
+        string relativePath,
+        bool hideMacOsSystemFiles,
+        IReadOnlyList<string>? excludedPathPatterns)
     {
         if (string.IsNullOrWhiteSpace(relativePath))
         {
@@ -143,12 +183,107 @@ internal static class DirectorySnapshotBuilder
 
         if (!hideMacOsSystemFiles || !string.Equals(volume.FileSystemType, "HFS+", StringComparison.OrdinalIgnoreCase))
         {
-            return false;
+            return excludedPathPatterns?.Count > 0 && MatchesExcludedPattern(relativePath, excludedPathPatterns);
         }
 
         return ExcludedMacOsRootEntries.Contains(rootSegment)
             || relativePath.StartsWith("._", StringComparison.OrdinalIgnoreCase)
-            || relativePath.Contains("/._", StringComparison.OrdinalIgnoreCase);
+            || relativePath.Contains("/._", StringComparison.OrdinalIgnoreCase)
+            || (excludedPathPatterns?.Count > 0 && MatchesExcludedPattern(relativePath, excludedPathPatterns));
+    }
+
+    private static bool MatchesExcludedPattern(string relativePath, IReadOnlyList<string> excludedPathPatterns)
+    {
+        var pathSegments = VolumePath.NormalizeRelativePath(relativePath)
+            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        foreach (var rawPattern in excludedPathPatterns)
+        {
+            var normalizedPattern = VolumePath.NormalizeRelativePath(rawPattern)
+                .Trim('/');
+            if (string.IsNullOrWhiteSpace(normalizedPattern))
+            {
+                continue;
+            }
+
+            var patternSegments = normalizedPattern.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (patternSegments.Length == 0)
+            {
+                continue;
+            }
+
+            if (patternSegments.Length == 1)
+            {
+                if (pathSegments.Any(segment => WildcardMatches(segment, patternSegments[0])))
+                {
+                    return true;
+                }
+
+                continue;
+            }
+
+            for (var pathIndex = 0; pathIndex <= pathSegments.Length - patternSegments.Length; pathIndex++)
+            {
+                var matched = true;
+                for (var patternIndex = 0; patternIndex < patternSegments.Length; patternIndex++)
+                {
+                    if (!WildcardMatches(pathSegments[pathIndex + patternIndex], patternSegments[patternIndex]))
+                    {
+                        matched = false;
+                        break;
+                    }
+                }
+
+                if (matched)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool WildcardMatches(string input, string pattern)
+    {
+        var inputIndex = 0;
+        var patternIndex = 0;
+        var starPatternIndex = -1;
+        var starInputIndex = 0;
+
+        while (inputIndex < input.Length)
+        {
+            if (patternIndex < pattern.Length &&
+                (pattern[patternIndex] == '?' || char.ToUpperInvariant(pattern[patternIndex]) == char.ToUpperInvariant(input[inputIndex])))
+            {
+                inputIndex++;
+                patternIndex++;
+                continue;
+            }
+
+            if (patternIndex < pattern.Length && pattern[patternIndex] == '*')
+            {
+                starPatternIndex = patternIndex++;
+                starInputIndex = inputIndex;
+                continue;
+            }
+
+            if (starPatternIndex >= 0)
+            {
+                patternIndex = starPatternIndex + 1;
+                inputIndex = ++starInputIndex;
+                continue;
+            }
+
+            return false;
+        }
+
+        while (patternIndex < pattern.Length && pattern[patternIndex] == '*')
+        {
+            patternIndex++;
+        }
+
+        return patternIndex == pattern.Length;
     }
 
     public static void EnsureConfigurationIsValid(SyncConfiguration configuration)

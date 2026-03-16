@@ -18,14 +18,18 @@ public partial class MainWindow : Window
         InitializeComponent();
         _viewModel = new MainWindowViewModel();
         DataContext = _viewModel;
-        _viewModel.PropertyChanged += OnViewModelPropertyChanged;
-        UpdateDriveLocationColumnsVisibility();
         Closed += OnClosed;
     }
 
     private void OnOpenSettingsClicked(object sender, RoutedEventArgs e)
     {
-        var dialog = new SettingsDialog(_viewModel.ParallelCopyCount, _viewModel.HideMacOsSystemFiles, _viewModel.GetPreviewProviderMappings())
+        var dialog = new SettingsDialog(
+            _viewModel.ParallelCopyCount,
+            _viewModel.HideMacOsSystemFiles,
+            _viewModel.GetExcludedPathPatterns(),
+            _viewModel.GetPreviewProviderMappings(),
+            _viewModel.GetUseCustomCloudProviderCredentials(),
+            _viewModel.GetCloudProviderAppRegistrations())
         {
             Owner = this,
         };
@@ -34,7 +38,10 @@ public partial class MainWindow : Window
         {
             _viewModel.UpdateParallelCopyCount(dialog.ParallelCopyCount);
             _viewModel.UpdateHideMacOsSystemFiles(dialog.HideMacOsSystemFiles);
+            _viewModel.UpdateExcludedPathPatterns(dialog.ExcludedPathPatterns);
             _viewModel.UpdatePreviewProviderMappings(dialog.PreviewProviderMappings);
+            _viewModel.UpdateUseCustomCloudProviderCredentials(dialog.UseCustomCloudProviderCredentials);
+            _viewModel.UpdateCloudProviderAppRegistrations(dialog.CloudProviderAppRegistrations);
         }
     }
 
@@ -197,24 +204,6 @@ public partial class MainWindow : Window
     private void OnPreviewFilterPopupClosed(object sender, EventArgs e) =>
         _viewModel.PreviewFilterSearchText = string.Empty;
 
-    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
-    {
-        if (e.PropertyName == nameof(MainWindowViewModel.IsDriveLocationColumnVisible))
-        {
-            UpdateDriveLocationColumnsVisibility();
-        }
-    }
-
-    private void UpdateDriveLocationColumnsVisibility()
-    {
-        var visibility = _viewModel.IsDriveLocationColumnVisible ? Visibility.Visible : Visibility.Collapsed;
-        NewFilesDriveLocationColumn.Visibility = visibility;
-        ChangedFilesDriveLocationColumn.Visibility = visibility;
-        DeletedFilesDriveLocationColumn.Visibility = visibility;
-        UnchangedFilesDriveLocationColumn.Visibility = visibility;
-        AllFilesDriveLocationColumn.Visibility = visibility;
-    }
-
     private void OnPreviewFilterResizeThumbDragDelta(object sender, DragDeltaEventArgs e)
     {
         var nextWidth = Math.Max(PreviewFilterPopupBorder.MinWidth, PreviewFilterPopupBorder.Width + e.HorizontalChange);
@@ -263,7 +252,6 @@ public partial class MainWindow : Window
 
     private void OnClosed(object? sender, EventArgs e)
     {
-        _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
         _viewModel.Dispose();
     }
 }
