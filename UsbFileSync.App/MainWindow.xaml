@@ -1298,8 +1298,10 @@
                         CornerRadius="8">
                     <StackPanel>
                         <ProgressBar Height="8"
-                                     IsIndeterminate="True"
-                                     Style="{StaticResource RoundedProgressBarStyle}" />
+                                     Minimum="0"
+                                     Maximum="100"
+                                     IsIndeterminate="{Binding IsBusyOverlayProgressIndeterminate}"
+                                     Value="{Binding BusyOverlayProgressValue, Mode=OneWay}" />
                         <TextBlock Margin="0,16,0,0"
                                    HorizontalAlignment="Center"
                                    TextWrapping="Wrap"

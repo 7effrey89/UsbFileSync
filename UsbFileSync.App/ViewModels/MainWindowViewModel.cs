@@ -63,6 +63,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private string _currentTransferItem = "No active transfer.";
     private string _currentTransferDetails = "Queue is idle.";
     private double _currentTransferProgressValue;
+    private double _busyOverlayProgressValue;
     private string _sourcePath = string.Empty;
     private string _destinationPath = string.Empty;
     private SyncMode _selectedMode = SyncMode.OneWay;
@@ -458,6 +459,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _busyOperationKind == BusyOperationKind.Analyze &&
         !_isBusyOverlayDismissed;
 
+    public bool IsBusyOverlayProgressIndeterminate => _busyOperationKind != BusyOperationKind.Analyze;
+
+    public double BusyOverlayProgressValue
+    {
+        get => _busyOverlayProgressValue;
+        private set => SetProperty(ref _busyOverlayProgressValue, value);
+    }
+
     public string BusyOverlayTitle
     {
         get => _busyOverlayTitle;
@@ -756,16 +765,17 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         CancelBusyOperationCommand.RaiseCanExecuteChanged();
     }
 
-    private SyncConfiguration CreateConfiguration()
+    private SyncConfiguration CreateConfiguration(IReadOnlyList<string>? destinationPaths = null)
     {
         var sourceVolumeService = GetCurrentSourceVolumeService();
         var destinationVolumeService = GetCurrentDestinationVolumeService();
+        var resolvedDestinationPaths = destinationPaths ?? GetDestinationPaths();
         return SyncVolumeServiceFactory.ResolveConfiguration(
             new SyncConfiguration
             {
                 SourcePath = SourcePath,
-                DestinationPath = DestinationPath,
-                DestinationPaths = GetDestinationPaths().ToList(),
+                DestinationPath = resolvedDestinationPaths.FirstOrDefault() ?? string.Empty,
+                DestinationPaths = resolvedDestinationPaths.ToList(),
                 Mode = SelectedMode,
                 DetectMoves = DetectMoves,
                 DryRun = DryRun,
@@ -1009,25 +1019,64 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private async Task AnalyzeAsync()
     {
-        if (!TryValidateConfiguration(requireAccessibleDestinationPath: false))
+        if (!TryValidateConfiguration(requireAccessibleDestinationPath: false, out var destinationPathsToAnalyze, out var skippedDestinationPaths))
         {
             AddLog("Error", StatusMessage, SyncLogSeverity.Error);
             return;
         }
 
+        LogSkippedDestinationPaths(skippedDestinationPaths, "Analyze");
+
+        if (destinationPathsToAnalyze.Count == 0)
+        {
+            ReplaceActions([]);
+            ReplacePreview([]);
+            ReplaceQueue([]);
+            BusyOverlayProgressValue = 0;
+            CurrentTransferProgressValue = 0;
+            CurrentTransferItem = "No file operations required.";
+            CurrentTransferDetails = QueueSummary;
+            StatusMessage = "Analysis skipped because all destination paths match the source path.";
+            AddLog("Analyze", StatusMessage, SyncLogSeverity.Warning);
+            return;
+        }
+
         var cancellationTokenSource = new CancellationTokenSource();
         SetBusyOperation(cancellationTokenSource, BusyOperationKind.Analyze);
+    BusyOverlayProgressValue = 0;
 
         await RunBusyOperationAsync(async () =>
         {
-            var configuration = CreateConfiguration();
             await EnsureBusyOverlayCanRenderAsync().ConfigureAwait(true);
 
             var analysisTask = Task.Run(async () =>
             {
-                var actions = await _syncService.AnalyzeChangesAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(false);
-                var preview = _syncService.BuildPreview(configuration, actions, cancellationTokenSource.Token);
-                return new AnalyzePreviewResult(actions, preview);
+                var totalSteps = destinationPathsToAnalyze.Count * 2;
+                var completedSteps = 0;
+                var allActions = new List<SyncAction>();
+                var allPreviewItems = new List<SyncPreviewItem>();
+
+                for (var index = 0; index < destinationPathsToAnalyze.Count; index++)
+                {
+                    cancellationTokenSource.Token.ThrowIfCancellationRequested();
+
+                    var destinationPath = destinationPathsToAnalyze[index];
+                    var destinationLabel = FormatPathForProgress(destinationPath);
+                    var configuration = CreateConfiguration([destinationPath]);
+
+                    ReportAnalyzeProgress(destinationLabel, "Analyzing changes", completedSteps, totalSteps);
+                    var destinationActions = await _syncService.AnalyzeChangesAsync(configuration, cancellationTokenSource.Token).ConfigureAwait(false);
+                    allActions.AddRange(destinationActions);
+                    completedSteps++;
+                    ReportAnalyzeProgress(destinationLabel, "Building preview", completedSteps, totalSteps);
+
+                    var destinationPreview = _syncService.BuildPreview(configuration, destinationActions, cancellationTokenSource.Token);
+                    allPreviewItems.AddRange(destinationPreview);
+                    completedSteps++;
+                    ReportAnalyzeProgress(destinationLabel, "Completed", completedSteps, totalSteps);
+                }
+
+                return new AnalyzePreviewResult(allActions, allPreviewItems);
             }, CancellationToken.None);
 
             var completedTask = await Task.WhenAny(
@@ -1052,7 +1101,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             StatusMessage = actions.Count == 0
                 ? "Folders are already synchronized."
                 : $"Preview generated with {actions.Count} planned action(s). Select the items to synchronize.";
-            ProgressValue = 0;
+            ProgressValue = 100;
             CurrentTransferProgressValue = 0;
             CurrentTransferItem = actions.Count == 0 ? "No file operations required." : "Preview ready.";
             CurrentTransferDetails = QueueSummary;
@@ -1065,9 +1114,18 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private async Task StartSyncAsync()
     {
-        if (!TryValidateConfiguration(requireAccessibleDestinationPath: true))
+        if (!TryValidateConfiguration(requireAccessibleDestinationPath: true, out var destinationPathsToSync, out var skippedDestinationPaths))
         {
             AddLog("Error", StatusMessage, SyncLogSeverity.Error);
+            return;
+        }
+
+        LogSkippedDestinationPaths(skippedDestinationPaths, "Sync");
+
+        if (destinationPathsToSync.Count == 0)
+        {
+            StatusMessage = "Synchronization skipped because all destination paths match the source path.";
+            AddLog("Sync", StatusMessage, SyncLogSeverity.Warning);
             return;
         }
 
@@ -1078,7 +1136,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         await RunBusyOperationAsync(async () =>
         {
-            var configuration = CreateConfiguration();
+            var configuration = CreateConfiguration(destinationPathsToSync);
             if (PlannedActions.Count == 0)
             {
                 await EnsureBusyOverlayCanRenderAsync().ConfigureAwait(true);
@@ -1283,12 +1341,16 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private bool IsConfigurationComplete() =>
         !string.IsNullOrWhiteSpace(SourcePath) &&
-        GetDestinationPaths().Count > 0 &&
-        GetDestinationPaths().All(destinationPath => !string.Equals(SourcePath, destinationPath, StringComparison.OrdinalIgnoreCase));
+        GetDestinationPaths().Count > 0;
 
-    private bool TryValidateConfiguration(bool requireAccessibleDestinationPath)
+    private bool TryValidateConfiguration(
+        bool requireAccessibleDestinationPath,
+        out IReadOnlyList<string> validDestinationPaths,
+        out IReadOnlyList<string> skippedDestinationPaths)
     {
         var destinationPaths = GetDestinationPaths();
+        validDestinationPaths = Array.Empty<string>();
+        skippedDestinationPaths = Array.Empty<string>();
         if (string.IsNullOrWhiteSpace(SourcePath))
         {
             StatusMessage = "Choose a source drive path before running synchronization.";
@@ -1298,14 +1360,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         if (destinationPaths.Count == 0)
         {
             StatusMessage = "Choose a destination drive path before running synchronization.";
-            return false;
-        }
-
-        if (destinationPaths.Any(destinationPath => string.Equals(SourcePath, destinationPath, StringComparison.OrdinalIgnoreCase)))
-        {
-            StatusMessage = destinationPaths.Count == 1
-                ? "Source and destination drive paths must be different."
-                : "Source and destination drive paths must all be different.";
             return false;
         }
 
@@ -1321,17 +1375,25 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             return false;
         }
 
+        skippedDestinationPaths = destinationPaths
+            .Where(destinationPath => string.Equals(SourcePath, destinationPath, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        validDestinationPaths = destinationPaths
+            .Where(destinationPath => !string.Equals(SourcePath, destinationPath, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
         if (!requireAccessibleDestinationPath)
         {
             return true;
         }
 
-        for (var index = 0; index < destinationPaths.Count; index++)
+        for (var index = 0; index < validDestinationPaths.Count; index++)
         {
-            var label = destinationPaths.Count == 1
+            var label = validDestinationPaths.Count == 1
                 ? "Destination"
                 : $"Destination {index + 1}";
-            if (!TryValidateDestinationPath(destinationPaths[index], label, out var destinationValidationMessage))
+            if (!TryValidateDestinationPath(validDestinationPaths[index], label, out var destinationValidationMessage))
             {
                 StatusMessage = destinationValidationMessage;
                 return false;
@@ -1712,6 +1774,41 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private sealed record AnalyzePreviewResult(
         IReadOnlyList<SyncAction> Actions,
         IReadOnlyList<SyncPreviewItem> Preview);
+
+    private void ReportAnalyzeProgress(string destinationPath, string phase, int completedSteps, int totalSteps)
+    {
+        var normalizedTotalSteps = Math.Max(1, totalSteps);
+        var progressValue = Math.Clamp((completedSteps * 100d) / normalizedTotalSteps, 0, 100);
+
+        RunOnDispatcher(() =>
+        {
+            BusyOverlayProgressValue = progressValue;
+            BusyOverlayDescription = totalSteps <= 2
+                ? $"{phase} for {destinationPath}."
+                : $"{phase} for {destinationPath} ({completedSteps}/{totalSteps} steps).";
+        });
+    }
+
+    private string FormatPathForProgress(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return "destination";
+        }
+
+        return _driveDisplayNameService.FormatDestinationPathForDisplay(path);
+    }
+
+    private void LogSkippedDestinationPaths(IReadOnlyList<string> skippedDestinationPaths, string state)
+    {
+        foreach (var skippedDestinationPath in skippedDestinationPaths)
+        {
+            AddLog(
+                state,
+                $"Skipped '{_driveDisplayNameService.FormatDestinationPathForDisplay(skippedDestinationPath)}' because it matches the source path.",
+                SyncLogSeverity.Warning);
+        }
+    }
 
     private void ReplaceActions(IEnumerable<SyncAction> actions)
     {
@@ -2210,6 +2307,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _busyOperationCancellationTokenSource = null;
         _busyOperationKind = BusyOperationKind.None;
         _isBusyOverlayDismissed = false;
+        BusyOverlayProgressValue = 0;
         RaisePropertyChanged(nameof(IsBusyOverlayVisible));
         BusyOverlayTitle = "Working...";
         BusyOverlayDescription = "Please wait.";

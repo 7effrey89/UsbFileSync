@@ -17,12 +17,14 @@ The HFS+ backend intentionally enforces read-only behavior so the application do
 - One-way synchronization from source to destination.
 - Two-way synchronization using last-write-time reconciliation.
 - Optional multiple destination paths so the same source can be synchronized to more than one destination in the same analyze/sync session.
+- When one configured destination matches the source path, UsbFileSync skips that destination, records a warning in the activity log, and continues analyzing or synchronizing the remaining destinations.
 - Persistent `.sync-metadata/file-index.json` tracking shared across one-way and two-way sync sessions, including per-root IDs plus both `LastSyncedByRootId` and friendly `LastSyncedByRootName` metadata for debugging file ownership history.
 - Detection of new files, modified files, deleted files, renamed files, and empty directories.
 - Folder creation and folder deletion synchronization.
 - Preview-first workflow with filtered tabs for new, changed, deleted, unchanged, and all items.
 - Per-row checkboxes in the preview so only selected planned items are synchronized.
 - The busy overlay now includes a `Cancel` action while preview analysis is running, so long preview builds can be stopped without waiting for completion.
+- Preview analysis now reports staged progress in the loading overlay as each destination is analyzed and its preview rows are built.
 - Completed preview rows remain visible after synchronization and are marked done until the next analyze refresh, while already-applied rows are retired from future queue selection.
 - Synchronization now runs in a separate background worker process, which allows ext4 write elevation without restarting the WPF UI.
 - Per-file progress, transfer speed, queue visibility, and activity logging during synchronization.
@@ -172,7 +174,7 @@ The main window includes:
 - Filter tabs for `New Files`, `Changed`, `Deleted`, `Unchanged`, and `All`.
 - Shared selection checkboxes across filtered tabs, including select-all checkboxes in each preview header.
 - Edit menu actions for `Select All In Tab`, `Select By Pattern`, and `Invert Selection` against the active preview tab.
-- Action, status, sync action, transfer speed, drive location, source metadata, and destination metadata columns, with the same column set available across all preview tabs.
+- Action, status, sync action, transfer speed, source metadata, and destination metadata columns, with the same column set available across all preview tabs.
 - Excel-style column filter dropdowns on the preview table headers, with searchable value lists, sort controls, and bulk select or deselect actions for narrowing the current tab.
 - Source and destination paths stay underlined for clickability, and only the side that will be changed is color-highlighted in the preview.
 - The sync action column uses a directional chevron that fills as each item progresses, while the Action column keeps the raw function name for the planned operation.

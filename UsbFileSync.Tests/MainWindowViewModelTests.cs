@@ -139,6 +139,70 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public async Task AnalyzeCommand_ReportsProgressAcrossMultipleDestinations()
+    {
+        using var workspace = new SyncTestWorkspace();
+        var secondDestinationPath = workspace.CreateAdditionalDestination("destination-two");
+        var completionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(new SequentialProgressSyncStrategy(completionSource), new SequentialProgressSyncStrategy(completionSource)),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+        };
+
+        viewModel.AddDestinationPathCommand.Execute(null);
+        var additionalDestination = Assert.Single(viewModel.AdditionalDestinationPaths);
+        additionalDestination.Path = secondDestinationPath;
+
+        viewModel.AnalyzeCommand.Execute(null);
+
+        await WaitForAsync(() => viewModel.IsBusy && viewModel.BusyOverlayProgressValue >= 50).ConfigureAwait(true);
+
+        Assert.Contains("2/4 steps", viewModel.BusyOverlayDescription);
+        Assert.True(viewModel.BusyOverlayProgressValue >= 50 && viewModel.BusyOverlayProgressValue < 100);
+
+        completionSource.SetResult();
+        await WaitForAsync(() => !viewModel.IsBusy).ConfigureAwait(true);
+
+        Assert.Equal(0, viewModel.BusyOverlayProgressValue);
+    }
+
+    [Fact]
+    public async Task AnalyzeCommand_SkipsDestinationThatMatchesSource_AndContinuesWithOtherDestinations()
+    {
+        using var workspace = new SyncTestWorkspace();
+        var validDestinationPath = workspace.CreateAdditionalDestination("destination-two");
+        workspace.WriteSourceFile("shared.txt", "payload");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.SourcePath,
+            DryRun = false,
+        };
+
+        viewModel.AddDestinationPathCommand.Execute(null);
+        var additionalDestination = Assert.Single(viewModel.AdditionalDestinationPaths);
+        additionalDestination.Path = validDestinationPath;
+
+        Assert.True(viewModel.AnalyzeCommand.CanExecute(null));
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => viewModel.NewFilesCount == 1 && viewModel.AllFilesCount == 1).ConfigureAwait(true);
+
+        Assert.Equal("Preview generated with 1 planned action(s). Select the items to synchronize.", viewModel.StatusMessage);
+        Assert.Contains(viewModel.ActivityLog, entry =>
+            entry.State == "Analyze" &&
+            entry.Severity == SyncLogSeverity.Warning &&
+            entry.Message.Contains("Skipped", StringComparison.OrdinalIgnoreCase) &&
+            entry.Message.Contains("matches the source path", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(viewModel.NewFiles);
+        Assert.Equal(validDestinationPath, viewModel.NewFiles[0].OpenDestinationPath[..validDestinationPath.Length]);
+    }
+
+    [Fact]
     public async Task ToggleSyncCommand_CopiesFilesFromResolvedHfsPlusSourceVolume()
     {
         using var workspace = new SyncTestWorkspace();
@@ -2255,6 +2319,30 @@ public sealed class MainWindowViewModelTests
         {
             await completionSource.Task.ConfigureAwait(false);
             return [];
+        }
+    }
+
+    private sealed class SequentialProgressSyncStrategy(TaskCompletionSource completionSource) : ISyncStrategy
+    {
+        private int _callCount;
+
+        public async Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(SyncConfiguration configuration, CancellationToken cancellationToken = default)
+        {
+            var currentCall = Interlocked.Increment(ref _callCount);
+            if (currentCall > 1)
+            {
+                await completionSource.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            var destinationPath = configuration.DestinationPath;
+            return
+            [
+                new SyncAction(
+                    SyncActionType.CopyToDestination,
+                    "progress.txt",
+                    Path.Combine(configuration.SourcePath, "progress.txt"),
+                    Path.Combine(destinationPath, "progress.txt"))
+            ];
         }
     }
 }
