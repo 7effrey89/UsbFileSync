@@ -1,10 +1,18 @@
 using System.IO;
+using UsbFileSync.Core.Models;
 using UsbFileSync.Platform.Windows;
 
 namespace UsbFileSync.App.Services;
 
 public sealed class WindowsDriveDisplayNameService : IDriveDisplayNameService
 {
+    private readonly Func<IReadOnlyList<CloudProviderAppRegistration>> _registrationsAccessor;
+
+    public WindowsDriveDisplayNameService(Func<IReadOnlyList<CloudProviderAppRegistration>>? registrationsAccessor = null)
+    {
+        _registrationsAccessor = registrationsAccessor ?? GetEmptyRegistrations;
+    }
+
     public string FormatPathForDisplay(string path)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -12,18 +20,19 @@ public sealed class WindowsDriveDisplayNameService : IDriveDisplayNameService
             return string.Empty;
         }
 
-        if (GoogleDrivePath.TryParse(path, out var relativePath))
+        if (GoogleDrivePath.TryParse(path, out var googleRegistrationId, out var relativePath))
         {
-            return string.IsNullOrEmpty(relativePath)
-                ? "Google Drive"
-                : $"Google Drive / {relativePath}";
+            return FormatCloudPathDisplay("Google Drive", googleRegistrationId, relativePath);
         }
 
-        if (OneDrivePath.TryParse(path, out relativePath))
+        if (OneDrivePath.TryParse(path, out var oneDriveRegistrationId, out relativePath))
         {
-            return string.IsNullOrEmpty(relativePath)
-                ? "OneDrive"
-                : $"OneDrive / {relativePath}";
+            return FormatCloudPathDisplay("OneDrive", oneDriveRegistrationId, relativePath);
+        }
+
+        if (DropboxPath.TryParse(path, out var dropboxRegistrationId, out relativePath))
+        {
+            return FormatCloudPathDisplay("Dropbox", dropboxRegistrationId, relativePath);
         }
 
         try
@@ -58,6 +67,27 @@ public sealed class WindowsDriveDisplayNameService : IDriveDisplayNameService
             return path;
         }
     }
+
+    private string FormatCloudPathDisplay(string providerDisplayName, string? registrationId, string relativePath)
+    {
+        var accountLabel = providerDisplayName;
+        if (!string.IsNullOrWhiteSpace(registrationId))
+        {
+            var registration = _registrationsAccessor()
+                .FirstOrDefault(item => string.Equals(item.RegistrationId, registrationId, StringComparison.OrdinalIgnoreCase));
+            if (registration is not null && !string.IsNullOrWhiteSpace(registration.Alias))
+            {
+                accountLabel = $"{providerDisplayName} - {registration.Alias.Trim()}";
+            }
+        }
+
+        return string.IsNullOrEmpty(relativePath)
+            ? accountLabel
+            : $"{accountLabel} / {relativePath}";
+    }
+
+    private static IReadOnlyList<CloudProviderAppRegistration> GetEmptyRegistrations() =>
+        Array.Empty<CloudProviderAppRegistration>();
 
     private static bool IsDriveRootPath(string fullPath, string rootPath) =>
         string.Equals(

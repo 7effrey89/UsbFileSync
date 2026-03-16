@@ -17,12 +17,14 @@ internal sealed class OneDriveAuthenticationService
 
     private readonly string _clientId;
     private readonly string _requestedTenantId;
+    private readonly string _tokenCachePrefix;
     private readonly OneDriveTokenStore _tokenStore;
     private readonly Func<Uri, bool> _openBrowser;
 
     public OneDriveAuthenticationService(
         string clientId,
         string tenantId,
+        string? cacheKeyPrefix = null,
         OneDriveTokenStore? tokenStore = null,
         Func<Uri, bool>? openBrowser = null)
     {
@@ -33,6 +35,7 @@ internal sealed class OneDriveAuthenticationService
 
         _clientId = clientId.Trim();
         _requestedTenantId = string.IsNullOrWhiteSpace(tenantId) ? "common" : tenantId.Trim();
+        _tokenCachePrefix = string.IsNullOrWhiteSpace(cacheKeyPrefix) ? _clientId : cacheKeyPrefix.Trim();
         _tokenStore = tokenStore ?? new OneDriveTokenStore();
         _openBrowser = openBrowser ?? OpenBrowser;
     }
@@ -264,11 +267,6 @@ internal sealed class OneDriveAuthenticationService
     private IEnumerable<string> GetAuthorityTenantIds()
     {
         yield return _requestedTenantId;
-
-        if (string.Equals(_requestedTenantId, "common", StringComparison.OrdinalIgnoreCase))
-        {
-            yield return "consumers";
-        }
     }
 
     private string BuildAuthorizationEndpoint(string authorityTenantId) =>
@@ -278,7 +276,7 @@ internal sealed class OneDriveAuthenticationService
         $"https://login.microsoftonline.com/{authorityTenantId}/oauth2/v2.0/token";
 
     private string BuildCacheKey(string authorityTenantId) =>
-        $"{_clientId}|{authorityTenantId}|{TokenCacheScopeKey}";
+        $"{_tokenCachePrefix}|{authorityTenantId}|{TokenCacheScopeKey}";
 
     private static OneDriveAuthToken ParseTokenResponse(string payload, string? existingRefreshToken)
     {

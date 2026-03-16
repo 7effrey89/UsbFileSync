@@ -62,6 +62,26 @@ public sealed class UniversalSourceLocationPickerDialogTests
     }
 
     [Fact]
+    public void SelectInitialRootPath_PrefersLocalRoot_WhenNoInitialPathIsProvided()
+    {
+        var rootPath = UniversalSourceLocationPickerDialog.SelectInitialRootPath(
+            [GoogleDrivePath.RootPath, OneDrivePath.RootPath, @"C:\\", @"F:\\"],
+            initialRootPath: null);
+
+        Assert.Equal(@"C:\\", rootPath);
+    }
+
+    [Fact]
+    public void SelectInitialRootPath_UsesInitialRoot_WhenProvided()
+    {
+        var rootPath = UniversalSourceLocationPickerDialog.SelectInitialRootPath(
+            [GoogleDrivePath.RootPath, @"C:\\"],
+            initialRootPath: GoogleDrivePath.RootPath);
+
+        Assert.Equal(GoogleDrivePath.RootPath, rootPath);
+    }
+
+    [Fact]
     public void BuildBreadcrumbSegments_UsesGoogleDriveDisplayName_ForGoogleDriveRoot()
     {
         var segments = UniversalSourceLocationPickerDialog.BuildBreadcrumbSegments(GoogleDrivePath.RootPath, "Photos/2024");

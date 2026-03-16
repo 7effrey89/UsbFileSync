@@ -112,7 +112,9 @@ public sealed class WindowsSourceLocationPickerServiceTests
         {
             new UsbFileSync.Core.Models.CloudProviderAppRegistration
             {
+                RegistrationId = "onedrive-account",
                 Provider = UsbFileSync.Core.Models.CloudStorageProvider.OneDrive,
+                Alias = "Personal OneDrive",
                 ClientId = "onedrive-client-id",
                 TenantId = "common"
             }
@@ -126,6 +128,32 @@ public sealed class WindowsSourceLocationPickerServiceTests
         Assert.NotNull(volume);
         Assert.False(volume!.IsReadOnly);
         Assert.Equal("OneDrive", volume.FileSystemType);
+        Assert.True(string.IsNullOrWhiteSpace(failureReason));
+    }
+
+    [Fact]
+    public void CreateDestinationBrowseVolumeService_ResolvesDropboxRoot_WhenCustomCredentialsAreConfigured()
+    {
+        var registrations = new[]
+        {
+            new UsbFileSync.Core.Models.CloudProviderAppRegistration
+            {
+                RegistrationId = "dropbox-account",
+                Provider = UsbFileSync.Core.Models.CloudStorageProvider.Dropbox,
+                Alias = "Team Dropbox",
+                ClientId = "dropbox-app-key",
+                ClientSecret = "dropbox-app-secret"
+            }
+        };
+
+        var browseService = SyncVolumeServiceFactory.CreateDestinationBrowseVolumeService(true, registrations);
+
+        var success = browseService.TryCreateVolume(DropboxPath.BuildRootPath("dropbox-account"), out var volume, out var failureReason);
+
+        Assert.True(success);
+        Assert.NotNull(volume);
+        Assert.False(volume!.IsReadOnly);
+        Assert.Equal("Dropbox", volume.FileSystemType);
         Assert.True(string.IsNullOrWhiteSpace(failureReason));
     }
 

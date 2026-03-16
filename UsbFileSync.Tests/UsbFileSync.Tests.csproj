@@ -36,6 +36,10 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
+    <Compile Remove="DropboxApiClientTests.cs" />
+    <Compile Remove="DropboxAuthenticationServiceTests.cs" />
+    <Compile Remove="DropboxTokenStoreTests.cs" />
+    <Compile Remove="DropboxVolumeSourceTests.cs" />
     <Compile Remove="ExtVolumeServiceTests.cs" />
     <Compile Remove="GoogleDriveVolumeSourceTests.cs" />
     <Compile Remove="ImagePreviewZoomCalculatorTests.cs" />

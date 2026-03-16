@@ -2,32 +2,28 @@ using UsbFileSync.Core.Volumes;
 
 namespace UsbFileSync.Platform.Windows;
 
-public sealed class OneDriveVolumeSource : IVolumeSource
+public sealed class DropboxVolumeSource : IVolumeSource
 {
-    private readonly IOneDriveClient _apiClient;
+    private readonly IDropboxClient _apiClient;
     private readonly bool _allowWriteAccess;
     private readonly string _rootPath;
     private readonly string _displayName;
     private readonly string _id;
 
-    internal OneDriveVolumeSource(
-        IOneDriveClient apiClient,
-        string? registrationId = null,
-        string? displayName = null,
-        bool allowWriteAccess = false)
+    internal DropboxVolumeSource(IDropboxClient apiClient, string? registrationId = null, string? displayName = null, bool allowWriteAccess = false)
     {
         _apiClient = apiClient ?? throw new ArgumentNullException(nameof(apiClient));
         _allowWriteAccess = allowWriteAccess;
-        _rootPath = OneDrivePath.BuildRootPath(registrationId);
-        _displayName = string.IsNullOrWhiteSpace(displayName) ? "OneDrive" : displayName.Trim();
-        _id = string.IsNullOrWhiteSpace(registrationId) ? "onedrive::root" : $"onedrive::{registrationId.Trim()}";
+        _rootPath = DropboxPath.BuildRootPath(registrationId);
+        _displayName = string.IsNullOrWhiteSpace(displayName) ? "Dropbox" : displayName.Trim();
+        _id = string.IsNullOrWhiteSpace(registrationId) ? "dropbox::root" : $"dropbox::{registrationId.Trim()}";
     }
 
     public string Id => _id;
 
     public string DisplayName => _displayName;
 
-    public string FileSystemType => "OneDrive";
+    public string FileSystemType => "Dropbox";
 
     public bool IsReadOnly => !_allowWriteAccess;
 
@@ -37,8 +33,8 @@ public sealed class OneDriveVolumeSource : IVolumeSource
     {
         var normalizedRelativePath = NormalizeRelativePath(path);
         var item = _apiClient.GetEntryAsync(normalizedRelativePath).GetAwaiter().GetResult();
-        return new OneDriveFileEntry(
-            FullPath: OneDrivePath.BuildPath(GetRegistrationId(), normalizedRelativePath),
+        return new DropboxFileEntry(
+            FullPath: DropboxPath.BuildPath(GetRegistrationId(), normalizedRelativePath),
             Name: string.IsNullOrEmpty(normalizedRelativePath) ? DisplayName : item.Name,
             IsDirectory: item.IsDirectory,
             Size: item.Size,
@@ -51,8 +47,8 @@ public sealed class OneDriveVolumeSource : IVolumeSource
         var normalizedRelativePath = NormalizeRelativePath(path);
         var items = _apiClient.EnumerateAsync(normalizedRelativePath).GetAwaiter().GetResult();
         return items
-            .Select(item => (IFileEntry)new OneDriveFileEntry(
-                FullPath: OneDrivePath.BuildPath(GetRegistrationId(), CombineRelativePath(normalizedRelativePath, item.Name)),
+            .Select(item => (IFileEntry)new DropboxFileEntry(
+                FullPath: DropboxPath.BuildPath(GetRegistrationId(), CombineRelativePath(normalizedRelativePath, item.Name)),
                 Name: item.Name,
                 IsDirectory: item.IsDirectory,
                 Size: item.Size,
@@ -66,7 +62,7 @@ public sealed class OneDriveVolumeSource : IVolumeSource
     public Stream OpenWrite(string path, bool overwrite = true)
     {
         EnsureWritable();
-        return new OneDriveWriteStream(_apiClient, NormalizeRelativePath(path), overwrite);
+        return new DropboxWriteStream(_apiClient, NormalizeRelativePath(path), overwrite);
     }
 
     public void CreateDirectory(string path)
@@ -107,6 +103,12 @@ public sealed class OneDriveVolumeSource : IVolumeSource
         }
     }
 
+    private string? GetRegistrationId()
+    {
+        DropboxPath.TryParse(_rootPath, out var registrationId, out _);
+        return registrationId;
+    }
+
     private static string NormalizeRelativePath(string? path) =>
         string.IsNullOrWhiteSpace(path)
             ? string.Empty
@@ -117,13 +119,7 @@ public sealed class OneDriveVolumeSource : IVolumeSource
             ? childName
             : $"{parentRelativePath}/{childName}";
 
-    private string? GetRegistrationId()
-    {
-        OneDrivePath.TryParse(_rootPath, out var registrationId, out _);
-        return registrationId;
-    }
-
-    private sealed record OneDriveFileEntry(
+    private sealed record DropboxFileEntry(
         string FullPath,
         string Name,
         bool IsDirectory,
@@ -131,22 +127,22 @@ public sealed class OneDriveVolumeSource : IVolumeSource
         DateTime? LastWriteTimeUtc,
         bool Exists) : IFileEntry;
 
-    private sealed class OneDriveWriteStream : Stream
+    private sealed class DropboxWriteStream : Stream
     {
-        private readonly IOneDriveClient _apiClient;
+        private readonly IDropboxClient _apiClient;
         private readonly string _relativePath;
         private readonly bool _overwrite;
         private readonly string _temporaryFilePath;
         private readonly FileStream _innerStream;
         private bool _committed;
 
-        public OneDriveWriteStream(IOneDriveClient apiClient, string relativePath, bool overwrite)
+        public DropboxWriteStream(IDropboxClient apiClient, string relativePath, bool overwrite)
         {
             _apiClient = apiClient;
             _relativePath = relativePath;
             _overwrite = overwrite;
 
-            var tempDirectory = Path.Combine(Path.GetTempPath(), "UsbFileSync", "OneDriveUploads");
+            var tempDirectory = Path.Combine(Path.GetTempPath(), "UsbFileSync", "DropboxUploads");
             Directory.CreateDirectory(tempDirectory);
             _temporaryFilePath = Path.Combine(tempDirectory, $"{Guid.NewGuid():N}.tmp");
             _innerStream = new FileStream(_temporaryFilePath, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 1024 * 128, useAsync: true);

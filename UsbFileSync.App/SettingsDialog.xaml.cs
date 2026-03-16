@@ -1,5 +1,5 @@
-using System.Globalization;
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Text.Json;
 using System.Windows;
 using UsbFileSync.App.Services;
@@ -11,18 +11,8 @@ namespace UsbFileSync.App;
 
 public partial class SettingsDialog : Window
 {
-    private const string FixedOneDriveTenantId = "common";
-
-    private enum ConnectionTestStatus
-    {
-        None,
-        Success,
-        Failure,
-    }
-
-    private static readonly System.Windows.Media.Brush NeutralStatusBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x61, 0x61, 0x61));
-    private static readonly System.Windows.Media.Brush SuccessStatusBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1b, 0x5e, 0x20));
-    private static readonly System.Windows.Media.Brush ErrorStatusBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xb7, 0x1c, 0x1c));
+    private const string FixedOneDriveTenantId = "consumers";
+    private const string DropboxRedirectUri = "http://127.0.0.1:53682/";
 
     public SettingsDialog(
         int parallelCopyCount,
@@ -39,6 +29,7 @@ public partial class SettingsDialog : Window
         HideMacOsSystemFilesCheckBox.IsChecked = HideMacOsSystemFiles;
         UseCustomProviderCredentialsCheckBox.IsChecked = UseCustomCloudProviderCredentials;
         ProviderOptions = Enum.GetValues<PreviewProviderKind>();
+        CloudStorageProviderOptions = Enum.GetValues<CloudStorageProvider>();
         PreviewProviderMappingItems = CreateMappingItems(previewProviderMappings);
         CloudProviderAppRegistrationItems = CreateCloudProviderAppRegistrationItems(cloudProviderAppRegistrations);
         PreviewProviderMappingsDataGrid.ItemsSource = PreviewProviderMappingItems;
@@ -53,22 +44,15 @@ public partial class SettingsDialog : Window
             comboColumn.ItemsSource = ProviderOptions;
         }
 
-        UseCustomProviderCredentialsCheckBox.Checked += (_, _) =>
+        if (CloudProviderRegistrationsDataGrid.Columns[0] is System.Windows.Controls.DataGridComboBoxColumn providerComboColumn)
         {
-            UpdateGoogleDriveConnectionUi();
-            UpdateOneDriveConnectionUi();
-        };
-        UseCustomProviderCredentialsCheckBox.Unchecked += (_, _) =>
-        {
-            UpdateGoogleDriveConnectionUi();
-            UpdateOneDriveConnectionUi();
-        };
+            providerComboColumn.ItemsSource = CloudStorageProviderOptions;
+        }
+
         Loaded += (_, _) =>
         {
             ParallelCopyCountTextBox.Focus();
             ParallelCopyCountTextBox.SelectAll();
-            UpdateGoogleDriveConnectionUi();
-            UpdateOneDriveConnectionUi();
         };
     }
 
@@ -84,15 +68,10 @@ public partial class SettingsDialog : Window
 
     public Array ProviderOptions { get; }
 
-    private bool _isTestingGoogleDriveConnection;
-    private ConnectionTestStatus _googleDriveTestStatus;
-    private string _lastTestedGoogleDriveClientId = string.Empty;
-    private string _lastGoogleDriveTestMessage = string.Empty;
-    private bool _isTestingOneDriveConnection;
-    private ConnectionTestStatus _oneDriveTestStatus;
-    private string _lastTestedOneDriveClientId = string.Empty;
-    private string _lastTestedOneDriveTenantId = string.Empty;
-    private string _lastOneDriveTestMessage = string.Empty;
+    public Array CloudStorageProviderOptions { get; }
+
+    private bool _isTestingCloudProviderConnection;
+    private string _testingRegistrationId = string.Empty;
 
     private void OnSaveClicked(object sender, RoutedEventArgs e)
     {
@@ -162,102 +141,28 @@ public partial class SettingsDialog : Window
         }
     }
 
-    private async void OnTestGoogleDriveConnectionClicked(object sender, RoutedEventArgs e)
+    private void OnAddCloudAccountClicked(object sender, RoutedEventArgs e)
     {
-        CloudProviderRegistrationsDataGrid.CommitEdit(System.Windows.Controls.DataGridEditingUnit.Cell, true);
-        CloudProviderRegistrationsDataGrid.CommitEdit(System.Windows.Controls.DataGridEditingUnit.Row, true);
+        var item = new CloudProviderAppRegistrationViewModel(CloudStorageProvider.GoogleDrive)
+        {
+            Alias = CreateSuggestedAlias(CloudStorageProvider.GoogleDrive, CloudProviderAppRegistrationItems),
+            ConnectionStatusText = "Add credentials, then test this account.",
+        };
 
-        var registration = GetCloudProviderRegistrationItem(CloudStorageProvider.GoogleDrive);
-        if (!CanTestGoogleDriveConnection(UseCustomProviderCredentialsCheckBox.IsChecked == true, CloudProviderAppRegistrationItems))
-        {
-            var message = GetGoogleDriveConnectionGuidance(UseCustomProviderCredentialsCheckBox.IsChecked == true, registration);
-            System.Windows.MessageBox.Show(this, message, "Google Drive test unavailable", MessageBoxButton.OK, MessageBoxImage.Information);
-            SetGoogleDriveConnectionStatus(message, ErrorStatusBrush);
-            return;
-        }
-
-        var normalizedClientId = registration!.ClientId.Trim();
-        var normalizedClientSecret = registration.ClientSecret.Trim();
-        if (!TryNormalizeGoogleDriveCredentials(normalizedClientId, normalizedClientSecret, out normalizedClientId, out normalizedClientSecret, out var normalizationErrorMessage))
-        {
-            SetGoogleDriveConnectionStatus(normalizationErrorMessage, ErrorStatusBrush);
-            System.Windows.MessageBox.Show(this, normalizationErrorMessage, "Invalid Google Drive credentials", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        _isTestingGoogleDriveConnection = true;
-        UpdateGoogleDriveConnectionUi();
-        SetGoogleDriveConnectionStatus("Opening Google Drive sign-in in your browser...", NeutralStatusBrush);
-
-        try
-        {
-            await GoogleDriveConnectionTester.TestConnectionAsync(normalizedClientId, normalizedClientSecret).ConfigureAwait(true);
-            _lastTestedGoogleDriveClientId = normalizedClientId;
-            _googleDriveTestStatus = ConnectionTestStatus.Success;
-            _lastGoogleDriveTestMessage = "Google Drive connection succeeded. The saved client ID can authenticate and open Drive.";
-            SetGoogleDriveConnectionStatus(_lastGoogleDriveTestMessage, SuccessStatusBrush);
-        }
-        catch (Exception exception)
-        {
-            var message = $"Google Drive connection failed. {exception.Message}";
-            _lastTestedGoogleDriveClientId = normalizedClientId;
-            _googleDriveTestStatus = ConnectionTestStatus.Failure;
-            _lastGoogleDriveTestMessage = message;
-            SetGoogleDriveConnectionStatus(message, ErrorStatusBrush);
-            System.Windows.MessageBox.Show(this, message, "Google Drive connection failed", MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
-        finally
-        {
-            _isTestingGoogleDriveConnection = false;
-            UpdateGoogleDriveConnectionUi();
-        }
+        item.PropertyChanged += OnCloudProviderAppRegistrationItemPropertyChanged;
+        CloudProviderAppRegistrationItems.Add(item);
+        CloudProviderRegistrationsDataGrid.SelectedItem = item;
+        CloudProviderRegistrationsDataGrid.ScrollIntoView(item);
     }
 
-    private async void OnTestOneDriveConnectionClicked(object sender, RoutedEventArgs e)
+    private void OnRemoveCloudAccountClicked(object sender, RoutedEventArgs e)
     {
-        CloudProviderRegistrationsDataGrid.CommitEdit(System.Windows.Controls.DataGridEditingUnit.Cell, true);
-        CloudProviderRegistrationsDataGrid.CommitEdit(System.Windows.Controls.DataGridEditingUnit.Row, true);
-
-        var registration = GetCloudProviderRegistrationItem(CloudStorageProvider.OneDrive);
-        if (!CanTestOneDriveConnection(UseCustomProviderCredentialsCheckBox.IsChecked == true, CloudProviderAppRegistrationItems))
+        if (CloudProviderRegistrationsDataGrid.SelectedItem is not CloudProviderAppRegistrationViewModel registration)
         {
-            var message = GetOneDriveConnectionGuidance(UseCustomProviderCredentialsCheckBox.IsChecked == true, registration);
-            System.Windows.MessageBox.Show(this, message, "OneDrive test unavailable", MessageBoxButton.OK, MessageBoxImage.Information);
-            SetOneDriveConnectionStatus(message, ErrorStatusBrush);
             return;
         }
 
-        var normalizedClientId = registration!.ClientId.Trim();
-        var normalizedTenantId = FixedOneDriveTenantId;
-
-        _isTestingOneDriveConnection = true;
-        UpdateOneDriveConnectionUi();
-        SetOneDriveConnectionStatus("Opening OneDrive sign-in in your browser...", NeutralStatusBrush);
-
-        try
-        {
-            await OneDriveConnectionTester.TestConnectionAsync(normalizedClientId, normalizedTenantId).ConfigureAwait(true);
-            _lastTestedOneDriveClientId = normalizedClientId;
-            _lastTestedOneDriveTenantId = normalizedTenantId;
-            _oneDriveTestStatus = ConnectionTestStatus.Success;
-            _lastOneDriveTestMessage = "OneDrive connection succeeded. The saved client ID can authenticate and open OneDrive.";
-            SetOneDriveConnectionStatus(_lastOneDriveTestMessage, SuccessStatusBrush);
-        }
-        catch (Exception exception)
-        {
-            var message = $"OneDrive connection failed. {exception.Message}";
-            _lastTestedOneDriveClientId = normalizedClientId;
-            _lastTestedOneDriveTenantId = normalizedTenantId;
-            _oneDriveTestStatus = ConnectionTestStatus.Failure;
-            _lastOneDriveTestMessage = message;
-            SetOneDriveConnectionStatus(message, ErrorStatusBrush);
-            System.Windows.MessageBox.Show(this, message, "OneDrive connection failed", MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
-        finally
-        {
-            _isTestingOneDriveConnection = false;
-            UpdateOneDriveConnectionUi();
-        }
+        CloudProviderAppRegistrationItems.Remove(registration);
     }
 
     public static bool TryParseParallelCopyCount(string? text, out int value)
@@ -300,66 +205,52 @@ public partial class SettingsDialog : Window
         return true;
     }
 
-    public static bool CanTestGoogleDriveConnection(
+    public static bool CanTestCloudProviderConnection(
         bool useCustomCloudProviderCredentials,
-        IEnumerable<CloudProviderAppRegistrationViewModel> registrations)
+        CloudProviderAppRegistrationViewModel? registration)
     {
         if (!useCustomCloudProviderCredentials)
         {
             return false;
         }
 
-        var googleDriveRegistration = registrations.FirstOrDefault(item => item.Provider == CloudStorageProvider.GoogleDrive);
-        return googleDriveRegistration is not null && !string.IsNullOrWhiteSpace(googleDriveRegistration.ClientId);
+        return registration is not null && !string.IsNullOrWhiteSpace(registration.ClientId);
     }
 
-    public static string GetGoogleDriveConnectionGuidance(
+    public static string GetCloudProviderConnectionGuidance(
         bool useCustomCloudProviderCredentials,
-        CloudProviderAppRegistrationViewModel? googleDriveRegistration)
+        CloudProviderAppRegistrationViewModel? registration)
     {
         if (!useCustomCloudProviderCredentials)
         {
-            return "Turn on 'Use custom provider credentials' before testing Google Drive.";
+            return "Turn on 'Use custom provider credentials' before testing a cloud account.";
         }
 
-        if (googleDriveRegistration is null || string.IsNullOrWhiteSpace(googleDriveRegistration.ClientId))
+        if (registration is null)
         {
-            return "Enter a Google OAuth client ID before testing Google Drive.";
+            return "Select a cloud account row before testing.";
         }
 
-        return string.IsNullOrWhiteSpace(googleDriveRegistration.ClientSecret)
-            ? "Google Drive is ready to test. Add a client secret too if your Google OAuth client requires one."
-            : "Google Drive is ready to test.";
-    }
-
-    public static bool CanTestOneDriveConnection(
-        bool useCustomCloudProviderCredentials,
-        IEnumerable<CloudProviderAppRegistrationViewModel> registrations)
-    {
-        if (!useCustomCloudProviderCredentials)
+        if (string.IsNullOrWhiteSpace(registration.ClientId))
         {
-            return false;
+            return registration.Provider switch
+            {
+                CloudStorageProvider.Dropbox => "Enter a Dropbox app key before testing this Dropbox account.",
+                CloudStorageProvider.OneDrive => "Enter a Microsoft application client ID before testing this OneDrive account.",
+                _ => "Enter a Google OAuth client ID before testing this Google Drive account.",
+            };
         }
 
-        var oneDriveRegistration = registrations.FirstOrDefault(item => item.Provider == CloudStorageProvider.OneDrive);
-        return oneDriveRegistration is not null && !string.IsNullOrWhiteSpace(oneDriveRegistration.ClientId);
-    }
-
-    public static string GetOneDriveConnectionGuidance(
-        bool useCustomCloudProviderCredentials,
-        CloudProviderAppRegistrationViewModel? oneDriveRegistration)
-    {
-        if (!useCustomCloudProviderCredentials)
+        return registration.Provider switch
         {
-            return "Turn on 'Use custom provider credentials' before testing OneDrive.";
-        }
-
-        if (oneDriveRegistration is null || string.IsNullOrWhiteSpace(oneDriveRegistration.ClientId))
-        {
-            return "Enter a Microsoft application client ID before testing OneDrive.";
-        }
-
-        return $"OneDrive is ready to test. UsbFileSync uses the fixed '{FixedOneDriveTenantId}' tenant.";
+            CloudStorageProvider.Dropbox => string.IsNullOrWhiteSpace(registration.ClientSecret)
+                ? $"Dropbox is ready to test. In your Dropbox app settings, register redirect URI '{DropboxRedirectUri}'. Add an app secret too if your Dropbox app requires it."
+                : $"Dropbox is ready to test. In your Dropbox app settings, register redirect URI '{DropboxRedirectUri}'.",
+            CloudStorageProvider.OneDrive => $"OneDrive is ready to test. UsbFileSync uses the fixed '{FixedOneDriveTenantId}' tenant.",
+            _ => string.IsNullOrWhiteSpace(registration.ClientSecret)
+                ? "Google Drive is ready to test. Add a client secret too if your Google OAuth client requires one."
+                : "Google Drive is ready to test.",
+        };
     }
 
     public static bool TryCreateCloudProviderAppRegistrations(
@@ -368,37 +259,290 @@ public partial class SettingsDialog : Window
         out string errorMessage)
     {
         serializedRegistrations = [];
+        var aliasesByProvider = new Dictionary<CloudStorageProvider, HashSet<string>>();
+
         foreach (var registration in registrations
-            .OrderBy(item => item.Provider))
+            .Where(item => item is not null))
         {
+            var alias = registration.Alias.Trim();
             var clientId = registration.ClientId.Trim();
             var clientSecret = registration.ClientSecret.Trim();
+
             if (registration.Provider == CloudStorageProvider.GoogleDrive &&
                 !TryNormalizeGoogleDriveCredentials(clientId, clientSecret, out clientId, out clientSecret, out errorMessage))
             {
                 return false;
             }
 
-            if (string.IsNullOrWhiteSpace(clientId))
+            if (registration.Provider == CloudStorageProvider.OneDrive)
+            {
+                registration.TenantId = FixedOneDriveTenantId;
+            }
+
+            if (string.IsNullOrWhiteSpace(clientId) &&
+                string.IsNullOrWhiteSpace(clientSecret) &&
+                string.IsNullOrWhiteSpace(alias))
             {
                 continue;
             }
 
+            if (string.IsNullOrWhiteSpace(clientId))
+            {
+                errorMessage = $"The {registration.ProviderDisplayName} account '{GetAccountLabel(alias)}' is missing the OAuth client ID / app key.";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(alias))
+            {
+                errorMessage = $"Enter an alias for the configured {registration.ProviderDisplayName} account with client ID/app key '{clientId}'.";
+                return false;
+            }
+
+            if (!aliasesByProvider.TryGetValue(registration.Provider, out var aliases))
+            {
+                aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                aliasesByProvider[registration.Provider] = aliases;
+            }
+
+            if (!aliases.Add(alias))
+            {
+                errorMessage = $"The alias '{alias}' is listed more than once for {registration.ProviderDisplayName}. Use a unique alias for each account.";
+                return false;
+            }
+
             serializedRegistrations.Add(new CloudProviderAppRegistration
             {
+                RegistrationId = EnsureRegistrationId(registration),
                 Provider = registration.Provider,
+                Alias = alias,
                 ClientId = clientId,
-                ClientSecret = registration.Provider == CloudStorageProvider.GoogleDrive
-                    ? clientSecret
-                    : string.Empty,
+                ClientSecret = registration.Provider == CloudStorageProvider.OneDrive
+                    ? string.Empty
+                    : clientSecret,
                 TenantId = registration.Provider == CloudStorageProvider.OneDrive
                     ? FixedOneDriveTenantId
                     : string.Empty,
             });
         }
 
+        serializedRegistrations = serializedRegistrations
+            .OrderBy(item => item.Provider)
+            .ThenBy(item => item.Alias, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
         errorMessage = string.Empty;
         return true;
+    }
+
+    private static string EnsureRegistrationId(CloudProviderAppRegistrationViewModel registration)
+    {
+        if (string.IsNullOrWhiteSpace(registration.RegistrationId))
+        {
+            registration.RegistrationId = Guid.NewGuid().ToString("N");
+        }
+
+        return registration.RegistrationId;
+    }
+
+    private static string GetAccountLabel(string alias) => string.IsNullOrWhiteSpace(alias) ? "(unnamed account)" : alias;
+
+    private static string CreateSuggestedAlias(
+        CloudStorageProvider provider,
+        IEnumerable<CloudProviderAppRegistrationViewModel> registrations)
+    {
+        var baseAlias = provider switch
+        {
+            CloudStorageProvider.Dropbox => "Dropbox account",
+            CloudStorageProvider.OneDrive => "OneDrive account",
+            _ => "Google Drive account",
+        };
+
+        var usedAliases = registrations
+            .Where(item => item.Provider == provider)
+            .Select(item => item.Alias?.Trim() ?? string.Empty)
+            .Where(alias => !string.IsNullOrWhiteSpace(alias))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (!usedAliases.Contains(baseAlias))
+        {
+            return baseAlias;
+        }
+
+        var index = 2;
+        while (usedAliases.Contains($"{baseAlias} {index}"))
+        {
+            index++;
+        }
+
+        return $"{baseAlias} {index}";
+    }
+
+    private static bool IsMeaningfulCloudRegistrationProperty(string? propertyName) =>
+        propertyName is nameof(CloudProviderAppRegistrationViewModel.Provider)
+            or nameof(CloudProviderAppRegistrationViewModel.Alias)
+            or nameof(CloudProviderAppRegistrationViewModel.ClientId)
+            or nameof(CloudProviderAppRegistrationViewModel.ClientSecret)
+            or nameof(CloudProviderAppRegistrationViewModel.TenantId);
+
+    private async void OnTestCloudProviderConnectionClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: CloudProviderAppRegistrationViewModel registration })
+        {
+            return;
+        }
+
+        CloudProviderRegistrationsDataGrid.CommitEdit(System.Windows.Controls.DataGridEditingUnit.Cell, true);
+        CloudProviderRegistrationsDataGrid.CommitEdit(System.Windows.Controls.DataGridEditingUnit.Row, true);
+
+        var useCustomCloudProviderCredentials = UseCustomProviderCredentialsCheckBox.IsChecked == true;
+        if (!CanTestCloudProviderConnection(useCustomCloudProviderCredentials, registration))
+        {
+            var message = GetCloudProviderConnectionGuidance(useCustomCloudProviderCredentials, registration);
+            registration.ConnectionStatusText = message;
+            System.Windows.MessageBox.Show(this, message, $"{registration.ProviderDisplayName} test unavailable", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (_isTestingCloudProviderConnection && !string.Equals(_testingRegistrationId, registration.RegistrationId, StringComparison.OrdinalIgnoreCase))
+        {
+            System.Windows.MessageBox.Show(this, "Wait for the current cloud account test to finish before starting another one.", "Cloud test already running", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var normalizedClientId = registration.ClientId.Trim();
+        var normalizedClientSecret = registration.ClientSecret.Trim();
+        if (registration.Provider == CloudStorageProvider.GoogleDrive &&
+            !TryNormalizeGoogleDriveCredentials(normalizedClientId, normalizedClientSecret, out normalizedClientId, out normalizedClientSecret, out var normalizationErrorMessage))
+        {
+            registration.ConnectionStatusText = normalizationErrorMessage;
+            System.Windows.MessageBox.Show(this, normalizationErrorMessage, "Invalid Google Drive credentials", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        _isTestingCloudProviderConnection = true;
+        _testingRegistrationId = EnsureRegistrationId(registration);
+        registration.ConnectionStatusText = $"Testing {registration.AccountDisplayName}...";
+
+        try
+        {
+            switch (registration.Provider)
+            {
+                case CloudStorageProvider.Dropbox:
+                    await DropboxConnectionTester.TestConnectionAsync(normalizedClientId, normalizedClientSecret, registration.RegistrationId).ConfigureAwait(true);
+                    registration.ConnectionStatusText = "Dropbox connection succeeded.";
+                    break;
+                case CloudStorageProvider.OneDrive:
+                    await OneDriveConnectionTester.TestConnectionAsync(normalizedClientId, FixedOneDriveTenantId, registration.RegistrationId).ConfigureAwait(true);
+                    registration.ConnectionStatusText = "OneDrive connection succeeded.";
+                    break;
+                default:
+                    await GoogleDriveConnectionTester.TestConnectionAsync(normalizedClientId, normalizedClientSecret, registration.RegistrationId).ConfigureAwait(true);
+                    registration.ConnectionStatusText = "Google Drive connection succeeded.";
+                    break;
+            }
+        }
+        catch (Exception exception)
+        {
+            var message = GetCloudProviderTestFailureMessage(registration.Provider, exception.Message);
+            registration.ConnectionStatusText = message;
+            System.Windows.MessageBox.Show(this, message, $"{registration.ProviderDisplayName} connection failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            _isTestingCloudProviderConnection = false;
+            _testingRegistrationId = string.Empty;
+        }
+    }
+
+    private static bool TryNormalizeExistingRegistration(
+        CloudProviderAppRegistration registration,
+        out CloudProviderAppRegistration normalizedRegistration)
+    {
+        normalizedRegistration = registration;
+
+        var registrationId = string.IsNullOrWhiteSpace(registration.RegistrationId)
+            ? Guid.NewGuid().ToString("N")
+            : registration.RegistrationId.Trim();
+        var alias = string.IsNullOrWhiteSpace(registration.Alias)
+            ? CloudStorageProviderInfo.GetDisplayName(registration.Provider)
+            : registration.Alias.Trim();
+
+        normalizedRegistration = new CloudProviderAppRegistration
+        {
+            RegistrationId = registrationId,
+            Provider = registration.Provider,
+            Alias = alias,
+            ClientId = registration.ClientId?.Trim() ?? string.Empty,
+            ClientSecret = registration.Provider == CloudStorageProvider.OneDrive
+                ? string.Empty
+                : registration.ClientSecret?.Trim() ?? string.Empty,
+            TenantId = registration.Provider == CloudStorageProvider.OneDrive
+                ? FixedOneDriveTenantId
+                : string.Empty,
+        };
+
+        return true;
+    }
+
+    private static string GetCloudProviderTestFailureMessage(CloudStorageProvider provider, string exceptionMessage)
+    {
+        if (provider != CloudStorageProvider.Dropbox)
+        {
+            return exceptionMessage;
+        }
+
+        if (exceptionMessage.Contains("folder listing failed", StringComparison.OrdinalIgnoreCase) ||
+            exceptionMessage.Contains("missing_scope", StringComparison.OrdinalIgnoreCase) ||
+            exceptionMessage.Contains("insufficient_scope", StringComparison.OrdinalIgnoreCase) ||
+            exceptionMessage.Contains("not_authorized", StringComparison.OrdinalIgnoreCase))
+        {
+            return exceptionMessage + " Confirm the Dropbox app Permissions section enables files.metadata.read, files.content.read, files.metadata.write, and files.content.write, then retry sign-in.";
+        }
+
+        return exceptionMessage;
+    }
+
+    private static ObservableCollection<CloudProviderAppRegistrationViewModel> CreateCloudProviderAppRegistrationItems(
+        IReadOnlyList<CloudProviderAppRegistration>? cloudProviderAppRegistrations)
+    {
+        var items = new ObservableCollection<CloudProviderAppRegistrationViewModel>();
+        foreach (var existingRegistration in (cloudProviderAppRegistrations ?? Array.Empty<CloudProviderAppRegistration>())
+            .OrderBy(item => item.Provider)
+            .ThenBy(item => item.Alias, StringComparer.OrdinalIgnoreCase))
+        {
+            TryNormalizeExistingRegistration(existingRegistration, out var normalizedRegistration);
+            items.Add(new CloudProviderAppRegistrationViewModel(normalizedRegistration.Provider)
+            {
+                RegistrationId = normalizedRegistration.RegistrationId,
+                Alias = normalizedRegistration.Alias,
+                ClientId = normalizedRegistration.ClientId,
+                ClientSecret = normalizedRegistration.ClientSecret,
+                TenantId = normalizedRegistration.Provider == CloudStorageProvider.OneDrive ? FixedOneDriveTenantId : string.Empty,
+                ConnectionStatusText = GetCloudProviderConnectionGuidance(true, new CloudProviderAppRegistrationViewModel(normalizedRegistration.Provider)
+                {
+                    ClientId = normalizedRegistration.ClientId,
+                    ClientSecret = normalizedRegistration.ClientSecret,
+                    TenantId = normalizedRegistration.TenantId,
+                }),
+            });
+        }
+
+        return items;
+    }
+
+    private void OnCloudProviderAppRegistrationItemPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (sender is not CloudProviderAppRegistrationViewModel registration || !IsMeaningfulCloudRegistrationProperty(e.PropertyName))
+        {
+            return;
+        }
+
+        if (registration.Provider == CloudStorageProvider.OneDrive)
+        {
+            registration.TenantId = FixedOneDriveTenantId;
+        }
+
+        registration.ConnectionStatusText = GetCloudProviderConnectionGuidance(UseCustomProviderCredentialsCheckBox.IsChecked == true, registration);
     }
 
     private static bool TryNormalizeGoogleDriveCredentials(
@@ -519,121 +663,4 @@ public partial class SettingsDialog : Window
         return items;
     }
 
-    private static ObservableCollection<CloudProviderAppRegistrationViewModel> CreateCloudProviderAppRegistrationItems(
-        IReadOnlyList<CloudProviderAppRegistration>? cloudProviderAppRegistrations)
-    {
-        var registrationsByProvider = (cloudProviderAppRegistrations ?? Array.Empty<CloudProviderAppRegistration>())
-            .GroupBy(item => item.Provider)
-            .ToDictionary(group => group.Key, group => group.Last());
-        var items = new ObservableCollection<CloudProviderAppRegistrationViewModel>();
-        foreach (var provider in Enum.GetValues<CloudStorageProvider>())
-        {
-            registrationsByProvider.TryGetValue(provider, out var existingRegistration);
-            items.Add(new CloudProviderAppRegistrationViewModel(provider)
-            {
-                ClientId = existingRegistration?.ClientId ?? string.Empty,
-                ClientSecret = existingRegistration?.ClientSecret ?? string.Empty,
-                TenantId = provider == CloudStorageProvider.OneDrive ? FixedOneDriveTenantId : string.Empty,
-            });
-        }
-
-        return items;
-    }
-
-    private void OnCloudProviderAppRegistrationItemPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
-    {
-        if (e.PropertyName is nameof(CloudProviderAppRegistrationViewModel.ClientId) or nameof(CloudProviderAppRegistrationViewModel.ClientSecret) or nameof(CloudProviderAppRegistrationViewModel.TenantId))
-        {
-            ClearGoogleDriveTestStatus();
-            ClearOneDriveTestStatus();
-            UpdateGoogleDriveConnectionUi();
-            UpdateOneDriveConnectionUi();
-        }
-    }
-
-    private CloudProviderAppRegistrationViewModel? GetCloudProviderRegistrationItem(CloudStorageProvider provider) =>
-        CloudProviderAppRegistrationItems.FirstOrDefault(item => item.Provider == provider);
-
-    private void UpdateGoogleDriveConnectionUi()
-    {
-        var useCustomCloudProviderCredentials = UseCustomProviderCredentialsCheckBox.IsChecked == true;
-        var googleDriveRegistration = GetCloudProviderRegistrationItem(CloudStorageProvider.GoogleDrive);
-        TestGoogleDriveConnectionButton.IsEnabled = !_isTestingGoogleDriveConnection && CanTestGoogleDriveConnection(useCustomCloudProviderCredentials, CloudProviderAppRegistrationItems);
-        TestGoogleDriveConnectionButton.Content = _isTestingGoogleDriveConnection ? "Testing..." : "Test Google Drive";
-
-        if (_isTestingGoogleDriveConnection)
-        {
-            return;
-        }
-
-        var currentGoogleDriveClientId = googleDriveRegistration?.ClientId.Trim() ?? string.Empty;
-        if (_googleDriveTestStatus != ConnectionTestStatus.None &&
-            useCustomCloudProviderCredentials &&
-            string.Equals(currentGoogleDriveClientId, _lastTestedGoogleDriveClientId, StringComparison.Ordinal))
-        {
-            SetGoogleDriveConnectionStatus(
-                _lastGoogleDriveTestMessage,
-                _googleDriveTestStatus == ConnectionTestStatus.Success ? SuccessStatusBrush : ErrorStatusBrush);
-            return;
-        }
-
-        var guidance = GetGoogleDriveConnectionGuidance(useCustomCloudProviderCredentials, googleDriveRegistration);
-        SetGoogleDriveConnectionStatus(guidance, NeutralStatusBrush);
-    }
-
-    private void ClearGoogleDriveTestStatus()
-    {
-        _googleDriveTestStatus = ConnectionTestStatus.None;
-        _lastTestedGoogleDriveClientId = string.Empty;
-        _lastGoogleDriveTestMessage = string.Empty;
-    }
-
-    private void SetGoogleDriveConnectionStatus(string message, System.Windows.Media.Brush foreground)
-    {
-        GoogleDriveConnectionStatusTextBlock.Text = message;
-        GoogleDriveConnectionStatusTextBlock.Foreground = foreground;
-    }
-
-    private void UpdateOneDriveConnectionUi()
-    {
-        var useCustomCloudProviderCredentials = UseCustomProviderCredentialsCheckBox.IsChecked == true;
-        var oneDriveRegistration = GetCloudProviderRegistrationItem(CloudStorageProvider.OneDrive);
-        TestOneDriveConnectionButton.IsEnabled = !_isTestingOneDriveConnection && CanTestOneDriveConnection(useCustomCloudProviderCredentials, CloudProviderAppRegistrationItems);
-        TestOneDriveConnectionButton.Content = _isTestingOneDriveConnection ? "Testing..." : "Test OneDrive";
-
-        if (_isTestingOneDriveConnection)
-        {
-            return;
-        }
-
-        var currentClientId = oneDriveRegistration?.ClientId.Trim() ?? string.Empty;
-        var currentTenantId = FixedOneDriveTenantId;
-        if (_oneDriveTestStatus != ConnectionTestStatus.None &&
-            useCustomCloudProviderCredentials &&
-            string.Equals(currentClientId, _lastTestedOneDriveClientId, StringComparison.Ordinal) &&
-            string.Equals(currentTenantId, _lastTestedOneDriveTenantId, StringComparison.OrdinalIgnoreCase))
-        {
-            SetOneDriveConnectionStatus(
-                _lastOneDriveTestMessage,
-                _oneDriveTestStatus == ConnectionTestStatus.Success ? SuccessStatusBrush : ErrorStatusBrush);
-            return;
-        }
-
-        var guidance = GetOneDriveConnectionGuidance(useCustomCloudProviderCredentials, oneDriveRegistration);
-        SetOneDriveConnectionStatus(guidance, NeutralStatusBrush);
-    }
-
-    private void ClearOneDriveTestStatus()
-    {
-        _oneDriveTestStatus = ConnectionTestStatus.None;
-        _lastTestedOneDriveClientId = string.Empty;
-        _lastTestedOneDriveTenantId = string.Empty;
-        _lastOneDriveTestMessage = string.Empty;
-    }
-
-    private void SetOneDriveConnectionStatus(string message, System.Windows.Media.Brush foreground)
-    {
-        OneDriveConnectionStatusTextBlock.Text = message;
-        OneDriveConnectionStatusTextBlock.Foreground = foreground;
-    }
 }

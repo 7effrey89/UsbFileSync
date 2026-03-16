@@ -2,11 +2,11 @@ namespace UsbFileSync.Platform.Windows;
 
 public static class OneDriveConnectionTester
 {
-    public static async Task TestConnectionAsync(string clientId, string? tenantId = null, CancellationToken cancellationToken = default)
+    public static async Task TestConnectionAsync(string clientId, string? tenantId = null, string? cacheKeyPrefix = null, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(clientId);
 
-        var authenticationService = new OneDriveAuthenticationService(clientId, string.IsNullOrWhiteSpace(tenantId) ? "common" : tenantId);
+        var authenticationService = new OneDriveAuthenticationService(clientId, string.IsNullOrWhiteSpace(tenantId) ? "common" : tenantId, cacheKeyPrefix: cacheKeyPrefix);
         var apiClient = new OneDriveApiClient(authenticationService);
 
         var accessToken = await authenticationService.GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);

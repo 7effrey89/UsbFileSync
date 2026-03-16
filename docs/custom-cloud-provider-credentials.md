@@ -167,6 +167,8 @@ These are **sanitized examples** that show the expected format only.
 ### What you need from Dropbox
 
 - **App key** (this is the value to use as the client ID in UsbFileSync)
+- **Optional app secret** if your Dropbox app requires one during token exchange
+- **Redirect URI**: `http://127.0.0.1:53682/`
 
 ### Step-by-step
 
@@ -178,21 +180,34 @@ These are **sanitized examples** that show the expected format only.
    - **Full Dropbox** for broader account access
 5. Enter an app name and create the app.
 6. Open the new app in the App Console.
-7. Review the **Permissions** section and enable the scopes you expect to need later.
-8. Open the app **Settings** or overview page.
-9. Copy the **App key**.
-10. In UsbFileSync, paste the **App key** into the **Dropbox** client ID field.
+7. Open the app **Permissions** section and enable these Dropbox scopes:
+   - `files.metadata.read`
+   - `files.content.read`
+   - `files.metadata.write`
+   - `files.content.write`
+   These cover browsing cloud folders, reading files, creating folders, uploading files, replacing files, and writing sync metadata.
+8. Open the app **Settings** page.
+9. Under **OAuth 2**, add this exact redirect URI:
+   - `http://127.0.0.1:53682/`
+10. Copy the **App key**.
+11. If your Dropbox app uses a secret for code exchange, copy the **App secret** too.
+12. In UsbFileSync, paste the **App key** into the **Dropbox** client ID / app key field.
+13. If needed, paste the **App secret** into the **Client secret / App secret** field.
+14. Click **Test** on that Dropbox row, or browse to the Dropbox root from the source or destination picker.
 
 ### Where to find it later
 
 1. Return to the **Dropbox App Console**.
 2. Open your app.
-3. On the app overview/settings page, copy the **App key** again.
+3. On the app settings page, copy the **App key** again.
+4. Confirm that **OAuth 2** still lists `http://127.0.0.1:53682/` as an allowed redirect URI.
 
 ### Notes
 
-- Dropbox may also show an **App secret**, but the current UsbFileSync settings page does not store it.
-- If Dropbox asks for redirect URIs during your own testing, configure them in the Dropbox app console, but only the **App key** is stored by this branch today.
+- UsbFileSync can store the Dropbox **App key** and an optional **App secret**.
+- Dropbox browsing and testing use the fixed redirect URI `http://127.0.0.1:53682/`. If that URI is missing from your Dropbox app settings, Dropbox shows `Invalid redirect_uri` in the browser.
+- UsbFileSync relies on the Dropbox app's configured permissions. The four scopes listed above must be enabled in the Dropbox App Console **before** you test or browse. UsbFileSync does not override them per-request; Dropbox grants whichever scopes the app has enabled.
+- If the browser sign-in succeeds but UsbFileSync still reports a Dropbox folder-listing failure, re-check the four Dropbox permissions above, save them in the Dropbox App Console, then sign in again.
 
 ---
 
@@ -274,9 +289,9 @@ OneDrive custom credentials are managed through a **Microsoft Entra ID app regis
 2. Turn on **Use custom provider credentials**.
 3. Paste the values you collected:
    - **Google Drive** → Google **Client ID**
-   - **Dropbox** → Dropbox **App key**
+   - **Dropbox** → Dropbox **App key** and optional **App secret**
    - **OneDrive** → Microsoft **Application (client) ID**
-   - **OneDrive tenant** → Microsoft **Directory (tenant) ID**, or leave it blank to use `common`
+   - **OneDrive tenant** → leave the fixed `common` value as-is
 4. Save the settings.
 
 ## Troubleshooting
@@ -298,7 +313,16 @@ OneDrive custom credentials are managed through a **Microsoft Entra ID app regis
 
 - **Google says `client_secret is missing` after the browser says connected**  
    First confirm the client is a **Desktop app** OAuth client. If it is, copy the Google **client secret** for that client and paste it into UsbFileSync under **Client secret (Google optional)**, then run **Test Google Drive** again.
+
+- **Dropbox shows `Invalid redirect_uri` in the browser**  
+   Open your app in the **Dropbox App Console**, go to **Settings**, and add `http://127.0.0.1:53682/` under **OAuth 2 redirect URIs**. Then retry the Dropbox test or browse flow.
+
+- **Dropbox says the local callback listener could not start**  
+   Confirm the Dropbox app is using `http://127.0.0.1:53682/`, not `http://localhost:53682/`. The app now uses the numeric loopback address to avoid Windows `localhost` URL reservation conflicts.
    If the client is not a Desktop app client, create a new OAuth client with **Application type = Desktop app** and use that client ID instead.
+
+- **Dropbox connects in the browser but UsbFileSync says folder listing failed**  
+   Open the Dropbox app's **Permissions** page and enable `files.metadata.read`, `files.content.read`, `files.metadata.write`, and `files.content.write`. Save the permissions, then sign in again so Dropbox issues a token with the updated scopes.
 
 - **I am not sure whether to enter a OneDrive tenant**  
   Leave it blank unless you specifically need to lock the login flow to one tenant. Blank stores `common`.

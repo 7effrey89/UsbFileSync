@@ -3,17 +3,17 @@ using UsbFileSync.Core.Volumes;
 
 namespace UsbFileSync.Platform.Windows;
 
-public sealed class OneDriveVolumeService : ISourceVolumeService, ICloudRootProvider
+public sealed class DropboxVolumeService : ISourceVolumeService, ICloudRootProvider
 {
     private readonly bool _allowWriteAccess;
     private readonly IReadOnlyList<CloudProviderAppRegistration> _registrations;
 
-    public OneDriveVolumeService(bool useCustomCloudProviderCredentials, IReadOnlyList<CloudProviderAppRegistration>? registrations, bool allowWriteAccess = false)
+    public DropboxVolumeService(bool useCustomCloudProviderCredentials, IReadOnlyList<CloudProviderAppRegistration>? registrations, bool allowWriteAccess = false)
     {
         _allowWriteAccess = allowWriteAccess;
         _registrations = useCustomCloudProviderCredentials
             ? (registrations ?? Array.Empty<CloudProviderAppRegistration>())
-                .Where(item => item.Provider == CloudStorageProvider.OneDrive && !string.IsNullOrWhiteSpace(item.ClientId))
+                .Where(item => item.Provider == CloudStorageProvider.Dropbox && !string.IsNullOrWhiteSpace(item.ClientId))
                 .ToArray()
             : Array.Empty<CloudProviderAppRegistration>();
     }
@@ -23,7 +23,7 @@ public sealed class OneDriveVolumeService : ISourceVolumeService, ICloudRootProv
         volume = null;
         failureReason = null;
 
-        if (!OneDrivePath.TryParse(path, out var registrationId, out var relativePath))
+        if (!DropboxPath.TryParse(path, out var registrationId, out var relativePath))
         {
             return false;
         }
@@ -31,16 +31,15 @@ public sealed class OneDriveVolumeService : ISourceVolumeService, ICloudRootProv
         var registration = ResolveRegistration(registrationId);
         if (registration is null || string.IsNullOrWhiteSpace(registration.ClientId))
         {
-            failureReason = "OneDrive custom credentials are not configured. Enter a Microsoft application client ID in Application Settings and enable custom provider credentials.";
+            failureReason = "Dropbox custom credentials are not configured. Enter a Dropbox app key in Application Settings and enable custom provider credentials.";
             return false;
         }
 
         try
         {
-            var tenantId = string.IsNullOrWhiteSpace(registration.TenantId) ? "common" : registration.TenantId;
-            var authenticationService = new OneDriveAuthenticationService(registration.ClientId, tenantId, cacheKeyPrefix: registration.RegistrationId);
-            var apiClient = new OneDriveApiClient(authenticationService);
-            var rootVolume = new OneDriveVolumeSource(apiClient, registration.RegistrationId, BuildDisplayName(registration), _allowWriteAccess);
+            var authenticationService = new DropboxAuthenticationService(registration.ClientId, registration.ClientSecret, tokenCacheKey: registration.RegistrationId);
+            var apiClient = new DropboxApiClient(authenticationService);
+            var rootVolume = new DropboxVolumeSource(apiClient, registration.RegistrationId, BuildDisplayName(registration), _allowWriteAccess);
 
             _ = rootVolume.GetEntry(string.Empty);
 
@@ -51,7 +50,7 @@ public sealed class OneDriveVolumeService : ISourceVolumeService, ICloudRootProv
         }
         catch (DirectoryNotFoundException)
         {
-            failureReason = $"The OneDrive folder '{path}' was not found.";
+            failureReason = $"The Dropbox folder '{path}' was not found.";
             return false;
         }
         catch (Exception exception)
@@ -64,7 +63,7 @@ public sealed class OneDriveVolumeService : ISourceVolumeService, ICloudRootProv
     public IReadOnlyList<CloudRootDefinition> GetAvailableRoots() =>
         _registrations
             .Select(registration => new CloudRootDefinition(
-                OneDrivePath.BuildRootPath(registration.RegistrationId),
+                DropboxPath.BuildRootPath(registration.RegistrationId),
                 BuildDisplayName(registration),
                 CreateRootVolume(registration)))
             .ToArray();
@@ -79,16 +78,15 @@ public sealed class OneDriveVolumeService : ISourceVolumeService, ICloudRootProv
         return _registrations.LastOrDefault();
     }
 
-    private OneDriveVolumeSource CreateRootVolume(CloudProviderAppRegistration registration)
+    private DropboxVolumeSource CreateRootVolume(CloudProviderAppRegistration registration)
     {
-        var tenantId = string.IsNullOrWhiteSpace(registration.TenantId) ? "common" : registration.TenantId;
-        var authenticationService = new OneDriveAuthenticationService(registration.ClientId, tenantId, cacheKeyPrefix: registration.RegistrationId);
-        var apiClient = new OneDriveApiClient(authenticationService);
-        return new OneDriveVolumeSource(apiClient, registration.RegistrationId, BuildDisplayName(registration), _allowWriteAccess);
+        var authenticationService = new DropboxAuthenticationService(registration.ClientId, registration.ClientSecret, tokenCacheKey: registration.RegistrationId);
+        var apiClient = new DropboxApiClient(authenticationService);
+        return new DropboxVolumeSource(apiClient, registration.RegistrationId, BuildDisplayName(registration), _allowWriteAccess);
     }
 
     private static string BuildDisplayName(CloudProviderAppRegistration registration) =>
         string.IsNullOrWhiteSpace(registration.Alias)
-            ? "OneDrive"
-            : $"OneDrive - {registration.Alias.Trim()}";
+            ? "Dropbox"
+            : $"Dropbox - {registration.Alias.Trim()}";
 }

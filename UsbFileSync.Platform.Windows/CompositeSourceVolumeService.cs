@@ -2,7 +2,7 @@ using UsbFileSync.Core.Volumes;
 
 namespace UsbFileSync.Platform.Windows;
 
-public sealed class CompositeSourceVolumeService : ISourceVolumeService
+public sealed class CompositeSourceVolumeService : ISourceVolumeService, ICloudRootProvider
 {
     private readonly IReadOnlyList<ISourceVolumeService> _services;
 
@@ -39,4 +39,10 @@ public sealed class CompositeSourceVolumeService : ISourceVolumeService
             : string.Join(" ", failures.Distinct(StringComparer.Ordinal));
         return false;
     }
+
+    public IReadOnlyList<CloudRootDefinition> GetAvailableRoots() =>
+        _services
+            .OfType<ICloudRootProvider>()
+            .SelectMany(service => service.GetAvailableRoots())
+            .ToArray();
 }

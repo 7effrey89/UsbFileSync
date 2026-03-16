@@ -21,7 +21,7 @@ public sealed class OneDriveApiClientTests
                     ExpiresAtUtc: DateTime.UtcNow.AddHours(1),
                     Scope: "Files.ReadWrite offline_access User.Read"));
 
-            var authenticationService = new OneDriveAuthenticationService("client-id", "common", tokenStore);
+            var authenticationService = new OneDriveAuthenticationService("client-id", "common", tokenStore: tokenStore);
             var handler = new FakeOneDriveHandler();
             using var httpClient = new HttpClient(handler);
             var apiClient = new OneDriveApiClient(authenticationService, httpClient);

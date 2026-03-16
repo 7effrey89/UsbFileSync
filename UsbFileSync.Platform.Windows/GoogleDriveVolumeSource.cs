@@ -6,29 +6,39 @@ public sealed class GoogleDriveVolumeSource : IVolumeSource
 {
     private readonly IGoogleDriveClient _apiClient;
     private readonly bool _allowWriteAccess;
+    private readonly string _rootPath;
+    private readonly string _displayName;
+    private readonly string _id;
 
-    internal GoogleDriveVolumeSource(IGoogleDriveClient apiClient, bool allowWriteAccess = false)
+    internal GoogleDriveVolumeSource(
+        IGoogleDriveClient apiClient,
+        string? registrationId = null,
+        string? displayName = null,
+        bool allowWriteAccess = false)
     {
         _apiClient = apiClient ?? throw new ArgumentNullException(nameof(apiClient));
         _allowWriteAccess = allowWriteAccess;
+        _rootPath = GoogleDrivePath.BuildRootPath(registrationId);
+        _displayName = string.IsNullOrWhiteSpace(displayName) ? "Google Drive" : displayName.Trim();
+        _id = string.IsNullOrWhiteSpace(registrationId) ? "gdrive::root" : $"gdrive::{registrationId.Trim()}";
     }
 
-    public string Id => "gdrive::root";
+    public string Id => _id;
 
-    public string DisplayName => "Google Drive";
+    public string DisplayName => _displayName;
 
     public string FileSystemType => "Google Drive";
 
     public bool IsReadOnly => !_allowWriteAccess;
 
-    public string Root => GoogleDrivePath.RootPath;
+    public string Root => _rootPath;
 
     public IFileEntry GetEntry(string path)
     {
         var normalizedRelativePath = NormalizeRelativePath(path);
         var item = _apiClient.GetEntryAsync(normalizedRelativePath).GetAwaiter().GetResult();
         return new GoogleDriveFileEntry(
-            FullPath: GoogleDrivePath.BuildPath(normalizedRelativePath),
+            FullPath: GoogleDrivePath.BuildPath(GetRegistrationId(), normalizedRelativePath),
             Name: string.IsNullOrEmpty(normalizedRelativePath) ? DisplayName : item.Name,
             IsDirectory: item.IsDirectory,
             Size: item.Size,
@@ -44,7 +54,7 @@ public sealed class GoogleDriveVolumeSource : IVolumeSource
 
         return items
             .Select(item => (IFileEntry)new GoogleDriveFileEntry(
-                FullPath: GoogleDrivePath.BuildPath(CombineRelativePath(normalizedRelativePath, item.Name)),
+                FullPath: GoogleDrivePath.BuildPath(GetRegistrationId(), CombineRelativePath(normalizedRelativePath, item.Name)),
                 Name: item.Name,
                 IsDirectory: item.IsDirectory,
                 Size: item.Size,
@@ -123,9 +133,15 @@ public sealed class GoogleDriveVolumeSource : IVolumeSource
 
         var displayPath = string.IsNullOrWhiteSpace(relativePath)
             ? "Google Drive root"
-            : GoogleDrivePath.BuildPath(relativePath);
+            : GoogleDrivePath.BuildPath(null, relativePath);
         throw new InvalidOperationException(
             $"Google Drive folder '{displayPath}' contains multiple items named '{duplicateName}'. UsbFileSync currently uses name-based Google Drive paths, so duplicate sibling names in the same Drive folder are not supported.");
+    }
+
+    private string? GetRegistrationId()
+    {
+        GoogleDrivePath.TryParse(_rootPath, out var registrationId, out _);
+        return registrationId;
     }
 
     private sealed record GoogleDriveFileEntry(

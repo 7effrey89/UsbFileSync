@@ -26,6 +26,7 @@ internal sealed class GoogleDriveAuthenticationService
     public GoogleDriveAuthenticationService(
         string clientId,
         string? clientSecret = null,
+        string? tokenCacheKey = null,
         GoogleDriveTokenStore? tokenStore = null,
         Func<Uri, bool>? openBrowser = null)
     {
@@ -36,7 +37,9 @@ internal sealed class GoogleDriveAuthenticationService
 
         _clientId = clientId;
         _clientSecret = clientSecret?.Trim() ?? string.Empty;
-        _tokenCacheKey = $"{_clientId}|{TokenCacheScopeKey}";
+        _tokenCacheKey = string.IsNullOrWhiteSpace(tokenCacheKey)
+            ? $"{_clientId}|{TokenCacheScopeKey}"
+            : $"{tokenCacheKey.Trim()}|{TokenCacheScopeKey}";
         _tokenStore = tokenStore ?? new GoogleDriveTokenStore();
         _openBrowser = openBrowser ?? OpenBrowser;
     }

@@ -12,6 +12,10 @@ namespace UsbFileSync.App;
 
 public partial class UniversalSourceLocationPickerDialog : Window
 {
+    private static readonly ImageSource GoogleDriveRootIcon = CreateGoogleDriveIcon();
+    private static readonly ImageSource OneDriveRootIcon = CreateOneDriveIcon();
+    private static readonly ImageSource DropboxRootIcon = CreateDropboxIcon();
+
     private static readonly DialogTextOptions DefaultTextOptions = new(
         WindowTitle: "Select Folder",
         Heading: "Browse folders across supported volumes",
@@ -34,7 +38,9 @@ public partial class UniversalSourceLocationPickerDialog : Window
         InitializeComponent();
         _iconProvider = ShellFileIconProvider.Instance;
         _textOptions = textOptions ?? DefaultTextOptions;
-        _roots = roots.OrderBy(root => root.RootPath, StringComparer.OrdinalIgnoreCase).ToList();
+        _roots = roots
+            .OrderBy(root => LooksLikeCustomRoot(root.RootPath) ? $"0|{root.DisplayText}" : $"1|{root.RootPath}", StringComparer.OrdinalIgnoreCase)
+            .ToList();
         _rootItems = _roots.Select(root => new RootListItem(root, GetRootIcon(root))).ToList();
         RootsListBox.ItemsSource = _rootItems;
         Title = _textOptions.WindowTitle;
@@ -55,12 +61,13 @@ public partial class UniversalSourceLocationPickerDialog : Window
         }
 
         var initialRoot = FindInitialRoot(initialPath, out var initialRelativePath);
-        var selectedRootItem = _rootItems.FirstOrDefault(item => item.Root == initialRoot) ?? _rootItems[0];
+        var selectedRootPath = SelectInitialRootPath(_roots.Select(root => root.RootPath), initialRoot?.RootPath);
+        var selectedRootItem = _rootItems.FirstOrDefault(item => string.Equals(item.Root.RootPath, selectedRootPath, StringComparison.OrdinalIgnoreCase)) ?? _rootItems[0];
         RootsListBox.SelectedItem = selectedRootItem;
 
         if (selectedRootItem is not null)
         {
-            NavigateTo(selectedRootItem.Root, initialRelativePath);
+            TryNavigateTo(selectedRootItem.Root, initialRelativePath, showMessageBox: false);
         }
     }
 
@@ -103,7 +110,7 @@ public partial class UniversalSourceLocationPickerDialog : Window
     {
         if (RootsListBox.SelectedItem is RootListItem rootItem)
         {
-            NavigateTo(rootItem.Root, string.Empty);
+            TryNavigateTo(rootItem.Root, string.Empty, showMessageBox: true);
         }
     }
 
@@ -111,7 +118,7 @@ public partial class UniversalSourceLocationPickerDialog : Window
     {
         if (FoldersListBox.SelectedItem is BrowserEntry entry)
         {
-            NavigateTo(_currentRoot, CombineRelativePath(_currentRelativePath, entry.RelativePath));
+            TryNavigateTo(_currentRoot, CombineRelativePath(_currentRelativePath, entry.RelativePath), showMessageBox: true);
         }
     }
 
@@ -119,7 +126,7 @@ public partial class UniversalSourceLocationPickerDialog : Window
     {
         if (FoldersListBox.SelectedItem is BrowserEntry entry)
         {
-            NavigateTo(_currentRoot, CombineRelativePath(_currentRelativePath, entry.RelativePath));
+            TryNavigateTo(_currentRoot, CombineRelativePath(_currentRelativePath, entry.RelativePath), showMessageBox: true);
         }
     }
 
@@ -131,7 +138,7 @@ public partial class UniversalSourceLocationPickerDialog : Window
         }
 
         var parentRelativePath = GetParentRelativePath(_currentRelativePath);
-        NavigateTo(_currentRoot, parentRelativePath);
+        TryNavigateTo(_currentRoot, parentRelativePath, showMessageBox: true);
     }
 
     private void OnSelectCurrentFolderClicked(object sender, RoutedEventArgs e)
@@ -317,7 +324,7 @@ public partial class UniversalSourceLocationPickerDialog : Window
 
         try
         {
-            NavigateTo(root, relativePath);
+            TryNavigateTo(root, relativePath, showMessageBox: true);
         }
         catch (DirectoryNotFoundException)
         {
@@ -335,7 +342,12 @@ public partial class UniversalSourceLocationPickerDialog : Window
     private void RenderBreadcrumbs(RootOption root, string relativePath)
     {
         BreadcrumbPanel.Children.Clear();
-        var segments = BuildBreadcrumbSegments(root.RootPath, relativePath);
+        var segments = BuildBreadcrumbSegments(root.RootPath, relativePath).ToList();
+        if (segments.Count > 0)
+        {
+            segments[0] = new BreadcrumbSegment(root.DisplayText, string.Empty);
+        }
+
         for (var index = 0; index < segments.Count; index++)
         {
             var segment = segments[index];
@@ -367,8 +379,29 @@ public partial class UniversalSourceLocationPickerDialog : Window
     {
         if (sender is System.Windows.Controls.Button { Tag: string relativePath })
         {
-            NavigateTo(_currentRoot, relativePath);
+            TryNavigateTo(_currentRoot, relativePath, showMessageBox: true);
         }
+    }
+
+    internal static string SelectInitialRootPath(IEnumerable<string> rootPaths, string? initialRootPath)
+    {
+        ArgumentNullException.ThrowIfNull(rootPaths);
+
+        var availableRootPaths = rootPaths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .ToList();
+        if (availableRootPaths.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        if (!string.IsNullOrWhiteSpace(initialRootPath))
+        {
+            return initialRootPath;
+        }
+
+        return availableRootPaths.FirstOrDefault(path => !LooksLikeCustomRoot(path))
+            ?? availableRootPaths[0];
     }
 
     private static IVolumeSource CreateScopedVolume(IVolumeSource rootVolume, string? relativePath)
@@ -499,13 +532,24 @@ public partial class UniversalSourceLocationPickerDialog : Window
             return "OneDrive";
         }
 
+        if (DropboxPath.IsDropboxPath(rootPath))
+        {
+            return "Dropbox";
+        }
+
         return rootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
 
     private static ImageSource? GetRootIcon(RootOption root) =>
-        LooksLikeCustomRoot(root.RootPath)
-            ? ShellFileIconProvider.Instance.GetIcon(root.DisplayText, isDirectory: true)
-            : ShellFileIconProvider.Instance.GetDriveIcon(root.RootPath);
+        root.Volume.FileSystemType switch
+        {
+            "Google Drive" => GoogleDriveRootIcon,
+            "OneDrive" => OneDriveRootIcon,
+            "Dropbox" => DropboxRootIcon,
+            _ => LooksLikeCustomRoot(root.RootPath)
+                ? ShellFileIconProvider.Instance.GetIcon(root.DisplayText, isDirectory: true)
+                : ShellFileIconProvider.Instance.GetDriveIcon(root.RootPath),
+        };
 
     private RootOption? FindCustomRoot(string initialPath, out string relativePath)
     {
@@ -560,6 +604,45 @@ public partial class UniversalSourceLocationPickerDialog : Window
         return relativePath
             .Replace('\\', '/')
             .Trim('/');
+    }
+
+    private void TryNavigateTo(RootOption? root, string? relativePath, bool showMessageBox)
+    {
+        if (root is null)
+        {
+            return;
+        }
+
+        try
+        {
+            NavigateTo(root, relativePath);
+        }
+        catch (DirectoryNotFoundException)
+        {
+            FolderStatusTextBlock.Text = _textOptions.FolderNotFoundMessage;
+            if (showMessageBox)
+            {
+                System.Windows.MessageBox.Show(
+                    this,
+                    _textOptions.FolderNotFoundMessage,
+                    _textOptions.FolderNotFoundTitle,
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+        }
+        catch (Exception exception)
+        {
+            FolderStatusTextBlock.Text = exception.Message;
+            if (showMessageBox)
+            {
+                System.Windows.MessageBox.Show(
+                    this,
+                    $"Could not browse that location.\n\n{exception.Message}",
+                    "Browse failed",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+        }
     }
 
     private void UpdateNewFolderButtonState(IVolumeSource scopedVolume)
@@ -621,5 +704,44 @@ public partial class UniversalSourceLocationPickerDialog : Window
         public ImageSource? IconSource { get; } = iconSource;
 
         public string IconGlyph { get; } = iconGlyph;
+    }
+
+    private static ImageSource CreateGoogleDriveIcon()
+    {
+        var geometryGroup = new GeometryGroup();
+        geometryGroup.Children.Add(Geometry.Parse("M8,1 L14,11 L10.8,16.5 L4.5,6 Z"));
+        geometryGroup.Children.Add(Geometry.Parse("M8,1 L4.5,6 L1.2,11.7 L4.4,17.2 L7.7,11.6 L11,6 Z"));
+        geometryGroup.Children.Add(Geometry.Parse("M14,11 L7.7,11.6 L4.4,17.2 L11,17.2 L14.2,11.6 Z"));
+
+        var drawingGroup = new DrawingGroup();
+        drawingGroup.Children.Add(new GeometryDrawing(new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x42, 0x85, 0xF4)), null, Geometry.Parse("M8,1 L14,11 L11,11.6 L4.5,6 Z")));
+        drawingGroup.Children.Add(new GeometryDrawing(new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x0F, 0x9D, 0x58)), null, Geometry.Parse("M4.5,6 L1.2,11.7 L4.4,17.2 L7.7,11.6 Z")));
+        drawingGroup.Children.Add(new GeometryDrawing(new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xF4, 0xB4, 0x00)), null, Geometry.Parse("M14,11 L11,17.2 L4.4,17.2 L7.7,11.6 Z")));
+        drawingGroup.Freeze();
+        return new DrawingImage(drawingGroup);
+    }
+
+    private static ImageSource CreateOneDriveIcon()
+    {
+        var drawingGroup = new DrawingGroup();
+        var cloudGeometry = Geometry.Parse("M4,13 C4.3,10.5 6.3,8.7 8.8,8.7 C9.6,6.7 11.5,5.4 13.7,5.4 C16.8,5.4 19.3,7.8 19.5,10.9 C21.1,11.2 22.3,12.6 22.3,14.3 C22.3,16.4 20.6,18 18.5,18 L7.2,18 C4.9,18 3,16.2 3,13.9 C3,13.6 3.1,13.3 3.1,13 Z");
+        drawingGroup.Children.Add(new GeometryDrawing(new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x00, 0x78, 0xD4)), null, cloudGeometry));
+        drawingGroup.Freeze();
+        return new DrawingImage(drawingGroup);
+    }
+
+    private static ImageSource CreateDropboxIcon()
+    {
+        var blue = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x00, 0x71, 0xE3));
+        blue.Freeze();
+
+        var drawingGroup = new DrawingGroup();
+        drawingGroup.Children.Add(new GeometryDrawing(blue, null, Geometry.Parse("M4,3 L8,5.6 L4,8.2 L0,5.6 Z")));
+        drawingGroup.Children.Add(new GeometryDrawing(blue, null, Geometry.Parse("M12,3 L16,5.6 L12,8.2 L8,5.6 Z")));
+        drawingGroup.Children.Add(new GeometryDrawing(blue, null, Geometry.Parse("M4,10 L8,12.6 L4,15.2 L0,12.6 Z")));
+        drawingGroup.Children.Add(new GeometryDrawing(blue, null, Geometry.Parse("M12,10 L16,12.6 L12,15.2 L8,12.6 Z")));
+        drawingGroup.Children.Add(new GeometryDrawing(blue, null, Geometry.Parse("M8,16.6 L12,19.2 L8,21.8 L4,19.2 Z")));
+        drawingGroup.Freeze();
+        return new DrawingImage(drawingGroup);
     }
 }

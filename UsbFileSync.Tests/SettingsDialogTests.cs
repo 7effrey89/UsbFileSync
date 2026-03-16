@@ -84,12 +84,16 @@ public sealed class SettingsDialogTests
         {
             new CloudProviderAppRegistrationViewModel(CloudStorageProvider.GoogleDrive)
             {
+                RegistrationId = "google-account",
+                Alias = "Personal Drive",
                 ClientId = " google-client-id ",
                 ClientSecret = " google-secret "
             },
             new CloudProviderAppRegistrationViewModel(CloudStorageProvider.Dropbox),
             new CloudProviderAppRegistrationViewModel(CloudStorageProvider.OneDrive)
             {
+                RegistrationId = "onedrive-account",
+                Alias = "Personal OneDrive",
                 ClientId = "onedrive-client-id",
                 TenantId = "contoso-tenant"
             },
@@ -103,14 +107,18 @@ public sealed class SettingsDialogTests
             serializedRegistrations,
             google =>
             {
+                Assert.Equal("google-account", google.RegistrationId);
                 Assert.Equal(CloudStorageProvider.GoogleDrive, google.Provider);
+                Assert.Equal("Personal Drive", google.Alias);
                 Assert.Equal("google-client-id", google.ClientId);
                 Assert.Equal("google-secret", google.ClientSecret);
                 Assert.Equal(string.Empty, google.TenantId);
             },
             oneDrive =>
             {
+                Assert.Equal("onedrive-account", oneDrive.RegistrationId);
                 Assert.Equal(CloudStorageProvider.OneDrive, oneDrive.Provider);
+                Assert.Equal("Personal OneDrive", oneDrive.Alias);
                 Assert.Equal("onedrive-client-id", oneDrive.ClientId);
                 Assert.Equal("common", oneDrive.TenantId);
             });
@@ -123,6 +131,7 @@ public sealed class SettingsDialogTests
         {
             new CloudProviderAppRegistrationViewModel(CloudStorageProvider.OneDrive)
             {
+                Alias = "Consumer Account",
                 ClientId = "onedrive-client-id",
                 TenantId = "contoso-tenant"
             },
@@ -137,12 +146,53 @@ public sealed class SettingsDialogTests
     }
 
     [Fact]
+    public void TryCreateCloudProviderAppRegistrations_RequiresAliasForConfiguredAccounts()
+    {
+        var registrations = new[]
+        {
+            new CloudProviderAppRegistrationViewModel(CloudStorageProvider.Dropbox)
+            {
+                ClientId = "dropbox-app-key"
+            }
+        };
+
+        var success = SettingsDialog.TryCreateCloudProviderAppRegistrations(registrations, out _, out var errorMessage);
+
+        Assert.False(success);
+        Assert.Contains("Enter an alias", errorMessage);
+    }
+
+    [Fact]
+    public void TryCreateCloudProviderAppRegistrations_RejectsDuplicateAliasesPerProvider()
+    {
+        var registrations = new[]
+        {
+            new CloudProviderAppRegistrationViewModel(CloudStorageProvider.GoogleDrive)
+            {
+                Alias = "Work",
+                ClientId = "google-a"
+            },
+            new CloudProviderAppRegistrationViewModel(CloudStorageProvider.GoogleDrive)
+            {
+                Alias = "Work",
+                ClientId = "google-b"
+            },
+        };
+
+        var success = SettingsDialog.TryCreateCloudProviderAppRegistrations(registrations, out _, out var errorMessage);
+
+        Assert.False(success);
+        Assert.Contains("listed more than once", errorMessage);
+    }
+
+    [Fact]
     public void TryCreateCloudProviderAppRegistrations_ExtractsGoogleCredentialsFromDesktopClientJson()
     {
         var registrations = new[]
         {
             new CloudProviderAppRegistrationViewModel(CloudStorageProvider.GoogleDrive)
             {
+                                Alias = "Imported Google Drive",
                 ClientSecret = """
                     {
                       "installed": {
@@ -190,65 +240,65 @@ public sealed class SettingsDialogTests
         Assert.True(oneDrive.UsesTenantId);
         Assert.Equal("Dropbox", dropbox.ProviderDisplayName);
         Assert.False(dropbox.UsesTenantId);
+        Assert.True(dropbox.UsesClientSecret);
     }
 
     [Fact]
-    public void CanTestGoogleDriveConnection_RequiresCustomModeAndClientId()
+    public void CanTestCloudProviderConnection_RequiresCustomModeAndClientId()
     {
-        var registrations = new[]
+        var registration = new CloudProviderAppRegistrationViewModel(CloudStorageProvider.GoogleDrive)
         {
-            new CloudProviderAppRegistrationViewModel(CloudStorageProvider.GoogleDrive)
-            {
-                ClientId = "google-client-id"
-            },
+            ClientId = "google-client-id"
         };
 
-        Assert.False(SettingsDialog.CanTestGoogleDriveConnection(false, registrations));
-        Assert.True(SettingsDialog.CanTestGoogleDriveConnection(true, registrations));
+        Assert.False(SettingsDialog.CanTestCloudProviderConnection(false, registration));
+        Assert.True(SettingsDialog.CanTestCloudProviderConnection(true, registration));
     }
 
     [Fact]
-    public void CanTestOneDriveConnection_RequiresCustomModeAndClientId()
-    {
-        var registrations = new[]
-        {
-            new CloudProviderAppRegistrationViewModel(CloudStorageProvider.OneDrive)
-            {
-                ClientId = "onedrive-client-id"
-            },
-        };
-
-        Assert.False(SettingsDialog.CanTestOneDriveConnection(false, registrations));
-        Assert.True(SettingsDialog.CanTestOneDriveConnection(true, registrations));
-    }
-
-    [Fact]
-    public void GetGoogleDriveConnectionGuidance_ExplainsWhyTestingIsUnavailable()
+    public void GetCloudProviderConnectionGuidance_ExplainsWhyTestingIsUnavailable()
     {
         var googleDrive = new CloudProviderAppRegistrationViewModel(CloudStorageProvider.GoogleDrive);
+        var dropbox = new CloudProviderAppRegistrationViewModel(CloudStorageProvider.Dropbox);
+        var oneDrive = new CloudProviderAppRegistrationViewModel(CloudStorageProvider.OneDrive);
 
-        Assert.Contains("Turn on", SettingsDialog.GetGoogleDriveConnectionGuidance(false, googleDrive));
-        Assert.Contains("Enter a Google OAuth client ID", SettingsDialog.GetGoogleDriveConnectionGuidance(true, googleDrive));
+        Assert.Contains("Turn on", SettingsDialog.GetCloudProviderConnectionGuidance(false, googleDrive));
+        Assert.Contains("Enter a Google OAuth client ID", SettingsDialog.GetCloudProviderConnectionGuidance(true, googleDrive));
 
         googleDrive.ClientId = "configured-client-id";
 
-        Assert.Equal("Google Drive is ready to test. Add a client secret too if your Google OAuth client requires one.", SettingsDialog.GetGoogleDriveConnectionGuidance(true, googleDrive));
+        Assert.Equal("Google Drive is ready to test. Add a client secret too if your Google OAuth client requires one.", SettingsDialog.GetCloudProviderConnectionGuidance(true, googleDrive));
 
         googleDrive.ClientSecret = "configured-secret";
 
-        Assert.Equal("Google Drive is ready to test.", SettingsDialog.GetGoogleDriveConnectionGuidance(true, googleDrive));
-    }
+        Assert.Equal("Google Drive is ready to test.", SettingsDialog.GetCloudProviderConnectionGuidance(true, googleDrive));
 
-    [Fact]
-    public void GetOneDriveConnectionGuidance_ExplainsWhyTestingIsUnavailable()
-    {
-        var oneDrive = new CloudProviderAppRegistrationViewModel(CloudStorageProvider.OneDrive);
+        Assert.Contains("Enter a Dropbox app key", SettingsDialog.GetCloudProviderConnectionGuidance(true, dropbox));
 
-        Assert.Contains("Turn on", SettingsDialog.GetOneDriveConnectionGuidance(false, oneDrive));
-        Assert.Contains("Enter a Microsoft application client ID", SettingsDialog.GetOneDriveConnectionGuidance(true, oneDrive));
+        dropbox.ClientId = "dropbox-app-key";
+
+        Assert.Equal("Dropbox is ready to test. In your Dropbox app settings, register redirect URI 'http://127.0.0.1:53682/'. Add an app secret too if your Dropbox app requires it.", SettingsDialog.GetCloudProviderConnectionGuidance(true, dropbox));
+
+        dropbox.ClientSecret = "dropbox-app-secret";
+
+        Assert.Equal("Dropbox is ready to test. In your Dropbox app settings, register redirect URI 'http://127.0.0.1:53682/'.", SettingsDialog.GetCloudProviderConnectionGuidance(true, dropbox));
+
+        Assert.Contains("Enter a Microsoft application client ID", SettingsDialog.GetCloudProviderConnectionGuidance(true, oneDrive));
 
         oneDrive.ClientId = "configured-client-id";
 
-        Assert.Equal("OneDrive is ready to test. UsbFileSync uses the fixed 'common' tenant.", SettingsDialog.GetOneDriveConnectionGuidance(true, oneDrive));
+        Assert.Equal("OneDrive is ready to test. UsbFileSync uses the fixed 'common' tenant.", SettingsDialog.GetCloudProviderConnectionGuidance(true, oneDrive));
+    }
+
+    [Fact]
+    public void GetCloudProviderTestFailureMessage_AddsDropboxPermissionGuidance_ForFolderListingFailures()
+    {
+        var message = typeof(SettingsDialog)
+            .GetMethod("GetCloudProviderTestFailureMessage", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+            .Invoke(null, [CloudStorageProvider.Dropbox, "Dropbox folder listing failed (409 Conflict)."]);
+
+        Assert.NotNull(message);
+        Assert.Contains("files.metadata.read", message!.ToString());
+        Assert.Contains("files.content.write", message.ToString());
     }
 }

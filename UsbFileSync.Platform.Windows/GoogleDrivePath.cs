@@ -6,41 +6,23 @@ public static class GoogleDrivePath
 
     public static bool IsGoogleDrivePath(string? path) =>
         !string.IsNullOrWhiteSpace(path) &&
-        path.StartsWith(RootPath, StringComparison.OrdinalIgnoreCase);
+        path.StartsWith("gdrive://", StringComparison.OrdinalIgnoreCase);
+
+    public static bool TryParse(string? path, out string? registrationId, out string relativePath) =>
+        CloudAccountPath.TryParse("gdrive", path, out registrationId, out relativePath);
 
     public static bool TryParse(string? path, out string relativePath)
     {
-        relativePath = string.Empty;
-
-        if (!IsGoogleDrivePath(path))
-        {
-            return false;
-        }
-
-        if (string.Equals(path, RootPath, StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        if (path is null || path.Length <= RootPath.Length || path[RootPath.Length] != '/')
-        {
-            return false;
-        }
-
-        relativePath = NormalizeRelativePath(path[(RootPath.Length + 1)..]);
-        return true;
+        return TryParse(path, out _, out relativePath);
     }
+
+    public static string BuildRootPath(string? registrationId) => CloudAccountPath.BuildRootPath("gdrive", registrationId);
 
     public static string BuildPath(string? relativePath)
     {
-        var normalizedRelativePath = NormalizeRelativePath(relativePath);
-        return string.IsNullOrEmpty(normalizedRelativePath)
-            ? RootPath
-            : $"{RootPath}/{normalizedRelativePath}";
+        return BuildPath(null, relativePath);
     }
 
-    private static string NormalizeRelativePath(string? path) =>
-        string.IsNullOrWhiteSpace(path)
-            ? string.Empty
-            : path.Replace('\\', '/').Trim('/');
+    public static string BuildPath(string? registrationId, string? relativePath) =>
+        CloudAccountPath.BuildPath("gdrive", registrationId, relativePath);
 }

@@ -101,7 +101,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             CreateDefaultSettingsStore(),
             new WindowsFolderPickerService(),
             new WindowsFileLauncherService(),
-            new WindowsDriveDisplayNameService(),
+            null,
             SyncVolumeServiceFactory.CreateSourceVolumeService(),
             SyncVolumeServiceFactory.CreateDestinationVolumeService(),
             new WorkerSyncExecutionClient())
@@ -125,7 +125,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _destinationVolumeService = destinationVolumeService ?? SyncVolumeServiceFactory.CreateDestinationVolumeService();
         _syncExecutionClient = syncExecutionClient ?? new InProcessSyncExecutionClient(syncService);
         _fileLauncherService = fileLauncherService ?? new WindowsFileLauncherService();
-        _driveDisplayNameService = driveDisplayNameService ?? new WindowsDriveDisplayNameService();
+        _driveDisplayNameService = driveDisplayNameService ?? new WindowsDriveDisplayNameService(() => _cloudProviderAppRegistrations);
         _dispatcher = Dispatcher.CurrentDispatcher;
         _hasWpfApplication = System.Windows.Application.Current is not null;
         AvailableModes = Enum.GetValues<SyncMode>();

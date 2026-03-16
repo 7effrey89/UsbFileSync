@@ -291,6 +291,42 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public void SourceAndDestinationDisplayText_UsesCloudAliases_ForAccountScopedPaths()
+    {
+        var driveDisplayNameService = new WindowsDriveDisplayNameService(() =>
+        [
+            new CloudProviderAppRegistration
+            {
+                RegistrationId = "onedrive-account",
+                Provider = CloudStorageProvider.OneDrive,
+                Alias = "Personal OneDrive",
+                ClientId = "onedrive-client-id",
+                TenantId = "common"
+            },
+            new CloudProviderAppRegistration
+            {
+                RegistrationId = "dropbox-account",
+                Provider = CloudStorageProvider.Dropbox,
+                Alias = "Team Dropbox",
+                ClientId = "dropbox-app-key"
+            }
+        ]);
+
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            driveDisplayNameService: driveDisplayNameService)
+        {
+            SourcePath = OneDrivePath.BuildPath("onedrive-account", "USBTest"),
+            DestinationPath = DropboxPath.BuildPath("dropbox-account", "Archive"),
+        };
+
+        Assert.Equal("OneDrive - Personal OneDrive / USBTest", viewModel.SourcePathDisplayText);
+        Assert.Equal("Dropbox - Team Dropbox / Archive", viewModel.DestinationPathDisplayText);
+    }
+
+    [Fact]
     public void DirectionIndicator_UsesDoubleArrowForOneWay()
     {
         using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null));

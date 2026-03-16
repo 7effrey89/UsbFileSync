@@ -106,13 +106,17 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
             [
                 new CloudProviderAppRegistration
                 {
+                    RegistrationId = "google-account",
                     Provider = CloudStorageProvider.GoogleDrive,
+                    Alias = "Personal Drive",
                     ClientId = "google-client-id",
                     ClientSecret = "google-secret"
                 },
                 new CloudProviderAppRegistration
                 {
+                    RegistrationId = "onedrive-account",
                     Provider = CloudStorageProvider.OneDrive,
+                    Alias = "Personal OneDrive",
                     ClientId = "onedrive-client-id",
                     TenantId = "common"
                 }
@@ -128,14 +132,18 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
             restored.CloudProviderAppRegistrations,
             google =>
             {
+                Assert.Equal("google-account", google.RegistrationId);
                 Assert.Equal(CloudStorageProvider.GoogleDrive, google.Provider);
+                Assert.Equal("Personal Drive", google.Alias);
                 Assert.Equal("google-client-id", google.ClientId);
                 Assert.Equal("google-secret", google.ClientSecret);
                 Assert.Equal(string.Empty, google.TenantId);
             },
             oneDrive =>
             {
+                Assert.Equal("onedrive-account", oneDrive.RegistrationId);
                 Assert.Equal(CloudStorageProvider.OneDrive, oneDrive.Provider);
+                Assert.Equal("Personal OneDrive", oneDrive.Alias);
                 Assert.Equal("onedrive-client-id", oneDrive.ClientId);
                 Assert.Equal("common", oneDrive.TenantId);
             });
@@ -157,7 +165,9 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
             [
                 new CloudProviderAppRegistration
                 {
+                    RegistrationId = "dropbox-account",
                     Provider = CloudStorageProvider.Dropbox,
+                    Alias = "Team Dropbox",
                     ClientId = "dropbox-client-id"
                 }
             ]
@@ -169,7 +179,9 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
         Assert.NotNull(restored);
         Assert.False(restored.UseCustomCloudProviderCredentials);
         var registration = Assert.Single(restored.CloudProviderAppRegistrations);
+        Assert.Equal("dropbox-account", registration.RegistrationId);
         Assert.Equal(CloudStorageProvider.Dropbox, registration.Provider);
+        Assert.Equal("Team Dropbox", registration.Alias);
         Assert.Equal("dropbox-client-id", registration.ClientId);
     }
 
