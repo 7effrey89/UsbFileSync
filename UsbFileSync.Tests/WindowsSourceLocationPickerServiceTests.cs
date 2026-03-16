@@ -52,7 +52,7 @@ public sealed class WindowsSourceLocationPickerServiceTests
 
         Assert.True(success);
         Assert.NotNull(volume);
-        Assert.True(volume!.IsReadOnly);
+        Assert.False(volume!.IsReadOnly);
         Assert.Equal("Google Drive", volume.FileSystemType);
         Assert.True(string.IsNullOrWhiteSpace(failureReason));
     }
@@ -78,6 +78,54 @@ public sealed class WindowsSourceLocationPickerServiceTests
         Assert.NotNull(volume);
         Assert.False(volume!.IsReadOnly);
         Assert.Equal("Google Drive", volume.FileSystemType);
+        Assert.True(string.IsNullOrWhiteSpace(failureReason));
+    }
+
+    [Fact]
+    public void CreateDestinationBrowseVolumeService_ResolvesOneDriveRoot_WhenCustomCredentialsAreConfigured()
+    {
+        var registrations = new[]
+        {
+            new UsbFileSync.Core.Models.CloudProviderAppRegistration
+            {
+                Provider = UsbFileSync.Core.Models.CloudStorageProvider.OneDrive,
+                ClientId = "onedrive-client-id",
+                TenantId = "common"
+            }
+        };
+
+        var browseService = SyncVolumeServiceFactory.CreateDestinationBrowseVolumeService(true, registrations);
+
+        var success = browseService.TryCreateVolume(OneDrivePath.RootPath, out var volume, out var failureReason);
+
+        Assert.True(success);
+        Assert.NotNull(volume);
+        Assert.False(volume!.IsReadOnly);
+        Assert.Equal("OneDrive", volume.FileSystemType);
+        Assert.True(string.IsNullOrWhiteSpace(failureReason));
+    }
+
+    [Fact]
+    public void CreateDestinationVolumeService_ResolvesWritableOneDriveRoot_WhenCustomCredentialsAreConfigured()
+    {
+        var registrations = new[]
+        {
+            new UsbFileSync.Core.Models.CloudProviderAppRegistration
+            {
+                Provider = UsbFileSync.Core.Models.CloudStorageProvider.OneDrive,
+                ClientId = "onedrive-client-id",
+                TenantId = "common"
+            }
+        };
+
+        var destinationService = SyncVolumeServiceFactory.CreateDestinationVolumeService(true, registrations);
+
+        var success = destinationService.TryCreateVolume(OneDrivePath.RootPath, out var volume, out var failureReason);
+
+        Assert.True(success);
+        Assert.NotNull(volume);
+        Assert.False(volume!.IsReadOnly);
+        Assert.Equal("OneDrive", volume.FileSystemType);
         Assert.True(string.IsNullOrWhiteSpace(failureReason));
     }
 

@@ -89,6 +89,7 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
 
                     <TextBox x:Name="CurrentFolderTextBox"
@@ -96,7 +97,8 @@
                              Margin="0,0,10,0"
                              KeyDown="OnCurrentFolderTextBoxKeyDown" />
                     <Button Grid.Column="1" Width="44" Margin="0,0,10,0" Content="-&gt;" Click="OnNavigateToPathClicked" />
-                    <Button Grid.Column="2" Width="90" Content="Up" Click="OnUpClicked" />
+                    <Button x:Name="NewFolderButton" Grid.Column="2" Width="100" Margin="0,0,10,0" Content="New Folder" Click="OnNewFolderClicked" />
+                    <Button Grid.Column="3" Width="90" Content="Up" Click="OnUpClicked" />
                 </Grid>
 
                 <Border Grid.Row="1" Margin="0,10,0,0" Padding="10,8" BorderBrush="#D0D0D0" BorderThickness="1" Background="White" CornerRadius="8">

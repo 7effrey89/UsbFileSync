@@ -13,9 +13,9 @@ The current settings UI stores:
 - **Google Drive client secret**: optional, only if your Google OAuth client requires it during token exchange
 - **Dropbox**: app key / OAuth client ID
 - **OneDrive**: application (client) ID
-- **OneDrive tenant**: optional tenant ID override
+- **OneDrive tenant**: fixed to `common` in UsbFileSync settings
 
-The current UI can now store an optional **Google Drive client secret** when a Google OAuth client requires it. Dropbox and OneDrive still use only the fields listed above.
+The current UI can now store an optional **Google Drive client secret** when a Google OAuth client requires it. Dropbox still uses only the app key, and OneDrive uses only the client ID while UsbFileSync keeps the tenant fixed to `common`.
 
 ## Before you begin
 
@@ -203,43 +203,68 @@ OneDrive custom credentials are managed through a **Microsoft Entra ID app regis
 ### What you need from Microsoft
 
 - **Application (client) ID**
-- **Directory (tenant) ID** only if you want to override the default tenant behavior
-
-If you leave the tenant field blank in UsbFileSync, the app stores **`common`**.
+- **Microsoft Graph delegated permissions**: `Files.ReadWrite`, `offline_access`, `User.Read`
 
 ### Step-by-step
 
 1. Go to the **Azure portal** at `https://portal.azure.com/`.
 2. Open **Microsoft Entra ID**.
 3. Open **App registrations**.
+
+   The page should look like the screenshot below before you create the app.
+
+   ![Microsoft Entra ID App registrations page before creating the OneDrive app](<./images/OneDrive/Screenshot 2026-03-16 113433.png>)
+
 4. Select **New registration**.
-5. Enter a name such as `UsbFileSync`.
-6. Choose the account type that matches your needs:
-   - If you want the broadest compatibility, choose the option that allows both organizational directories and personal Microsoft accounts
-   - If you only want your own tenant, choose the single-tenant option
-7. Create the app registration.
-8. After the app opens, stay on the **Overview** page.
-9. Copy **Application (client) ID**.
-10. Copy **Directory (tenant) ID** if you plan to use a fixed tenant.
-11. In UsbFileSync:
-    - Paste **Application (client) ID** into the **OneDrive** client ID field
-    - Paste **Directory (tenant) ID** into the tenant field only if you want to force a specific tenant
-12. If you want the default multi-tenant behavior instead, leave the tenant field empty so UsbFileSync stores `common`.
+5. In **Register an application**, enter a name such as `UsbFileSync`.
+6. Under **Supported account types**, choose **Personal accounts only**.
+7. Under **Redirect URI (optional)**:
+   - Select **Public client/native (mobile & desktop)**
+   - Enter `http://localhost`
+8. Click **Register**.
+
+   These values should match the registration screen shown below.
+
+   ![Register an application for OneDrive with Personal accounts only and the localhost public-client redirect](<./images/OneDrive/Screenshot 2026-03-16 130038.png>)
+
+9. After the app opens, copy the **Application (client) ID** from **Overview**.
+10. Open **API permissions**.
+11. Make sure **Microsoft Graph** includes these delegated permissions:
+   - `Files.ReadWrite`
+   - `offline_access`
+   - `User.Read`
+12. Add any missing permission and complete consent if Microsoft asks for it.
+
+   The API permissions page should match the screenshot below.
+
+   ![Microsoft Graph delegated permissions for UsbFileSync OneDrive access](<./images/OneDrive/Screenshot 2026-03-16 130143.png>)
+
+13. Do **not** create a client secret for UsbFileSync. OneDrive uses a public desktop-client flow here.
+14. In UsbFileSync, open **Application Settings** and turn on **Use custom provider credentials**.
+15. In the **OneDrive** row:
+   - Paste the **Application (client) ID** into **OAuth client ID**
+   - Leave the **Client secret** field empty
+   - Leave the **Tenant ID** value as the fixed `common` value shown by UsbFileSync
+16. Click **Test OneDrive** to verify that sign-in works and that UsbFileSync can open your OneDrive.
+17. After the test succeeds, use **Browse** for either the source path or the destination path and choose the **OneDrive** root.
+18. After sign-in finishes, return to UsbFileSync, browse to the folder you want, and choose **Select current folder**.
+19. When OneDrive is the destination, UsbFileSync will create folders, upload files, update files, delete replaced items, and write sync metadata inside the selected OneDrive folder.
 
 ### Where to find it later
 
 1. Return to **Azure portal**.
 2. Open **Microsoft Entra ID** → **App registrations**.
 3. Open your app registration.
-4. On **Overview**, copy:
-   - **Application (client) ID**
-   - **Directory (tenant) ID**
+4. On **Overview**, copy **Application (client) ID**.
 
 ### Notes
 
-- For consumer and multi-tenant scenarios, leaving the tenant blank in UsbFileSync is usually the simplest option because the app stores `common`.
-- If you use a single-tenant app registration, copy that tenant's **Directory (tenant) ID** into the OneDrive tenant field.
-- Microsoft may also ask you to configure API permissions and redirect URIs for your own app registration. Those are part of the provider setup, but the current UsbFileSync settings page only stores the client ID and optional tenant override.
+- The screenshots in this section show a **Personal accounts only** app registration. That is the recommended setup for a personal OneDrive account like the one you tested.
+- UsbFileSync keeps the OneDrive tenant fixed to `common` in the settings dialog and automatically retries with `consumers` if Microsoft rejects `/common` for a personal-account-only registration.
+- For a desktop sign-in flow, the **Public client/native (mobile & desktop)** redirect with `http://localhost` is the expected setup.
+- The delegated Microsoft Graph permissions that best match UsbFileSync's current OneDrive flow are `Files.ReadWrite`, `offline_access`, and `User.Read`.
+- UsbFileSync currently uses a public desktop-client flow for OneDrive, so a client secret is not used or stored in the settings dialog.
+- Microsoft may also ask you to grant user consent for the delegated permissions depending on the account and tenant policy. Those consent decisions happen in Entra ID, but the current UsbFileSync settings page only stores the client ID for OneDrive.
 
 ---
 

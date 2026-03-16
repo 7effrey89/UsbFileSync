@@ -14,7 +14,7 @@ public static class WindowsSourceLocationPickerService
             fallbackTitle: "Select the source drive or folder",
             dialogTextOptions: new UniversalSourceLocationPickerDialog.DialogTextOptions(
                 WindowTitle: "Select Source Folder",
-                Heading: "Browse source folders across Windows, Linux ext, HFS+, and Google Drive",
+                Heading: "Browse source folders across Windows, Linux ext, HFS+, Google Drive, and OneDrive",
                 Description: "Select a root on the left, browse folders on the right, and choose the current folder as the source location.",
                 NoRootsMessage: "No source volumes are currently available.",
                 InvalidPathMessage: "Enter a valid source folder path under one of the available roots.",
@@ -30,7 +30,7 @@ public static class WindowsSourceLocationPickerService
             fallbackTitle: "Select the destination drive or folder",
             dialogTextOptions: new UniversalSourceLocationPickerDialog.DialogTextOptions(
                 WindowTitle: "Select Destination Folder",
-                Heading: "Browse destination folders across Windows, Linux ext, and Google Drive",
+                Heading: "Browse destination folders across Windows, Linux ext, Google Drive, and OneDrive",
                 Description: "Select a root on the left, browse folders on the right, and choose the current folder as the destination location.",
                 NoRootsMessage: "No destination volumes are currently available.",
                 InvalidPathMessage: "Enter a valid destination folder path under one of the available roots.",
@@ -91,6 +91,15 @@ public static class WindowsSourceLocationPickerService
                 GoogleDrivePath.RootPath,
                 BuildSpecialVolumeDisplayText(GoogleDrivePath.RootPath, googleDriveVolume),
                 googleDriveVolume));
+        }
+
+        if (volumeService.TryCreateVolume(OneDrivePath.RootPath, out var oneDriveVolume, out _) &&
+            oneDriveVolume is not null)
+        {
+            roots.Add(new UniversalSourceLocationPickerDialog.RootOption(
+                OneDrivePath.RootPath,
+                BuildSpecialVolumeDisplayText(OneDrivePath.RootPath, oneDriveVolume),
+                oneDriveVolume));
         }
 
         foreach (var drive in DriveInfo.GetDrives().OrderBy(drive => drive.Name, StringComparer.OrdinalIgnoreCase))
@@ -170,6 +179,7 @@ public static class WindowsSourceLocationPickerService
             "HFS+" => $"HFS+ ({rootText})",
             "ext4" => $"ext4 ({rootText})",
             "Google Drive" => "Google Drive",
+            "OneDrive" => "OneDrive",
             _ => string.IsNullOrWhiteSpace(volume.DisplayName) ? rootText : volume.DisplayName,
         };
     }

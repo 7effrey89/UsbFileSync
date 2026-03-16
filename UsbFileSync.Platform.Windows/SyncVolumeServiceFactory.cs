@@ -12,6 +12,7 @@ public static class SyncVolumeServiceFactory
         bool useCustomCloudProviderCredentials,
         IReadOnlyList<CloudProviderAppRegistration>? cloudProviderAppRegistrations) =>
         new CompositeSourceVolumeService(
+            new OneDriveVolumeService(useCustomCloudProviderCredentials, cloudProviderAppRegistrations),
             new GoogleDriveVolumeService(useCustomCloudProviderCredentials, cloudProviderAppRegistrations),
             new HfsPlusVolumeService(),
             new ExtVolumeService());
@@ -23,6 +24,7 @@ public static class SyncVolumeServiceFactory
         bool useCustomCloudProviderCredentials,
         IReadOnlyList<CloudProviderAppRegistration>? cloudProviderAppRegistrations) =>
         new CompositeSourceVolumeService(
+            new OneDriveVolumeService(useCustomCloudProviderCredentials, cloudProviderAppRegistrations, allowWriteAccess: true),
             new GoogleDriveVolumeService(useCustomCloudProviderCredentials, cloudProviderAppRegistrations, allowWriteAccess: true),
             new ExtVolumeService(allowWriteAccess: true));
 
@@ -30,7 +32,8 @@ public static class SyncVolumeServiceFactory
         bool useCustomCloudProviderCredentials,
         IReadOnlyList<CloudProviderAppRegistration>? cloudProviderAppRegistrations) =>
         new CompositeSourceVolumeService(
-            new GoogleDriveVolumeService(useCustomCloudProviderCredentials, cloudProviderAppRegistrations),
+            new OneDriveVolumeService(useCustomCloudProviderCredentials, cloudProviderAppRegistrations, allowWriteAccess: true),
+            new GoogleDriveVolumeService(useCustomCloudProviderCredentials, cloudProviderAppRegistrations, allowWriteAccess: true),
             new ExtVolumeService());
 
     public static SyncConfiguration ResolveConfiguration(

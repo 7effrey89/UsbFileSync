@@ -112,19 +112,19 @@ public sealed class SettingsDialogTests
             {
                 Assert.Equal(CloudStorageProvider.OneDrive, oneDrive.Provider);
                 Assert.Equal("onedrive-client-id", oneDrive.ClientId);
-                Assert.Equal("contoso-tenant", oneDrive.TenantId);
+                Assert.Equal("common", oneDrive.TenantId);
             });
     }
 
     [Fact]
-    public void TryCreateCloudProviderAppRegistrations_DefaultsOneDriveTenantToCommon()
+    public void TryCreateCloudProviderAppRegistrations_ForcesOneDriveTenantToCommon()
     {
         var registrations = new[]
         {
             new CloudProviderAppRegistrationViewModel(CloudStorageProvider.OneDrive)
             {
                 ClientId = "onedrive-client-id",
-                TenantId = " "
+                TenantId = "contoso-tenant"
             },
         };
 
@@ -208,6 +208,21 @@ public sealed class SettingsDialogTests
     }
 
     [Fact]
+    public void CanTestOneDriveConnection_RequiresCustomModeAndClientId()
+    {
+        var registrations = new[]
+        {
+            new CloudProviderAppRegistrationViewModel(CloudStorageProvider.OneDrive)
+            {
+                ClientId = "onedrive-client-id"
+            },
+        };
+
+        Assert.False(SettingsDialog.CanTestOneDriveConnection(false, registrations));
+        Assert.True(SettingsDialog.CanTestOneDriveConnection(true, registrations));
+    }
+
+    [Fact]
     public void GetGoogleDriveConnectionGuidance_ExplainsWhyTestingIsUnavailable()
     {
         var googleDrive = new CloudProviderAppRegistrationViewModel(CloudStorageProvider.GoogleDrive);
@@ -222,5 +237,18 @@ public sealed class SettingsDialogTests
         googleDrive.ClientSecret = "configured-secret";
 
         Assert.Equal("Google Drive is ready to test.", SettingsDialog.GetGoogleDriveConnectionGuidance(true, googleDrive));
+    }
+
+    [Fact]
+    public void GetOneDriveConnectionGuidance_ExplainsWhyTestingIsUnavailable()
+    {
+        var oneDrive = new CloudProviderAppRegistrationViewModel(CloudStorageProvider.OneDrive);
+
+        Assert.Contains("Turn on", SettingsDialog.GetOneDriveConnectionGuidance(false, oneDrive));
+        Assert.Contains("Enter a Microsoft application client ID", SettingsDialog.GetOneDriveConnectionGuidance(true, oneDrive));
+
+        oneDrive.ClientId = "configured-client-id";
+
+        Assert.Equal("OneDrive is ready to test. UsbFileSync uses the fixed 'common' tenant.", SettingsDialog.GetOneDriveConnectionGuidance(true, oneDrive));
     }
 }

@@ -254,6 +254,43 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public void SourceAndDestinationDisplayText_FormatOneDriveLikeGoogleDrive_WhenNotFocused()
+    {
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            driveDisplayNameService: new WindowsDriveDisplayNameService())
+        {
+            SourcePath = "onedrive://root",
+            DestinationPath = "onedrive://root/USBTest",
+        };
+
+        Assert.Equal("OneDrive", viewModel.SourcePathDisplayText);
+        Assert.Equal("OneDrive / USBTest", viewModel.DestinationPathDisplayText);
+    }
+
+    [Fact]
+    public void SourceAndDestinationDisplayText_ShowRawOneDrivePath_WhenFocused()
+    {
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null),
+            driveDisplayNameService: new WindowsDriveDisplayNameService())
+        {
+            SourcePath = "onedrive://root",
+            DestinationPath = "onedrive://root/USBTest",
+        };
+
+        viewModel.SetSourcePathFocused(true);
+        viewModel.SetDestinationPathFocused(true);
+
+        Assert.Equal("onedrive://root", viewModel.SourcePathDisplayText);
+        Assert.Equal("onedrive://root/USBTest", viewModel.DestinationPathDisplayText);
+    }
+
+    [Fact]
     public void DirectionIndicator_UsesDoubleArrowForOneWay()
     {
         using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null));

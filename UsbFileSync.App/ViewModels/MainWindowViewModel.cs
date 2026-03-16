@@ -782,9 +782,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private ISourceVolumeService GetCurrentSourceVolumeService() =>
         UseCustomCloudProviderCredentials
-            ? new CompositeSourceVolumeService(
-                new GoogleDriveVolumeService(UseCustomCloudProviderCredentials, _cloudProviderAppRegistrations),
-                _sourceVolumeService)
+            ? SyncVolumeServiceFactory.CreateSourceVolumeService(UseCustomCloudProviderCredentials, _cloudProviderAppRegistrations)
             : _sourceVolumeService;
 
     private ISourceVolumeService GetCurrentDestinationVolumeService() =>

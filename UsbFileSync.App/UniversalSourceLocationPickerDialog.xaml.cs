@@ -148,6 +148,64 @@ public partial class UniversalSourceLocationPickerDialog : Window
 
     private void OnNavigateToPathClicked(object sender, RoutedEventArgs e) => NavigateToTypedPath();
 
+    private void OnNewFolderClicked(object sender, RoutedEventArgs e)
+    {
+        if (_currentRoot is null)
+        {
+            return;
+        }
+
+        var scopedVolume = CreateScopedVolume(_currentRoot.Volume, _currentRelativePath);
+        if (scopedVolume.IsReadOnly)
+        {
+            System.Windows.MessageBox.Show(
+                this,
+                "The current location is read-only, so a folder cannot be created here.",
+                "Folder creation unavailable",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        var dialog = new NewFolderDialog
+        {
+            Owner = this,
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        if (!TryNormalizeNewFolderName(dialog.FolderName, out var normalizedFolderName, out var errorMessage))
+        {
+            System.Windows.MessageBox.Show(
+                this,
+                errorMessage,
+                "Invalid folder name",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        var childRelativePath = CombineRelativePath(_currentRelativePath, normalizedFolderName);
+        try
+        {
+            _currentRoot.Volume.CreateDirectory(childRelativePath);
+            NavigateTo(_currentRoot, _currentRelativePath);
+            SelectFolder(normalizedFolderName);
+        }
+        catch (Exception exception)
+        {
+            System.Windows.MessageBox.Show(
+                this,
+                $"Could not create the folder.\n\n{exception.Message}",
+                "Folder creation failed",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+    }
+
     private void OnCurrentFolderTextBoxKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
         if (e.Key == Key.Enter)
@@ -199,7 +257,41 @@ public partial class UniversalSourceLocationPickerDialog : Window
 
         FoldersListBox.ItemsSource = folders;
         FilesListBox.ItemsSource = files;
+        UpdateNewFolderButtonState(scopedVolume);
         FolderStatusTextBlock.Text = $"{folders.Count} folder{(folders.Count == 1 ? string.Empty : "s")}, {files.Count} file{(files.Count == 1 ? string.Empty : "s")}. Double-click a folder to open it.";
+    }
+
+    internal static bool TryNormalizeNewFolderName(string? folderName, out string normalizedFolderName, out string errorMessage)
+    {
+        normalizedFolderName = string.Empty;
+        errorMessage = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(folderName))
+        {
+            errorMessage = "Enter a folder name.";
+            return false;
+        }
+
+        normalizedFolderName = folderName.Trim();
+        if (normalizedFolderName is "." or "..")
+        {
+            errorMessage = "The folder name cannot be '.' or '..'.";
+            return false;
+        }
+
+        if (normalizedFolderName.Contains('/') || normalizedFolderName.Contains('\\'))
+        {
+            errorMessage = "The folder name cannot contain path separators.";
+            return false;
+        }
+
+        if (normalizedFolderName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        {
+            errorMessage = "The folder name contains invalid characters.";
+            return false;
+        }
+
+        return true;
     }
 
     private void NavigateToTypedPath()
@@ -402,6 +494,11 @@ public partial class UniversalSourceLocationPickerDialog : Window
             return "Google Drive";
         }
 
+        if (OneDrivePath.IsOneDrivePath(rootPath))
+        {
+            return "OneDrive";
+        }
+
         return rootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
 
@@ -463,6 +560,31 @@ public partial class UniversalSourceLocationPickerDialog : Window
         return relativePath
             .Replace('\\', '/')
             .Trim('/');
+    }
+
+    private void UpdateNewFolderButtonState(IVolumeSource scopedVolume)
+    {
+        NewFolderButton.IsEnabled = !scopedVolume.IsReadOnly;
+        NewFolderButton.ToolTip = scopedVolume.IsReadOnly
+            ? "This location is read-only."
+            : "Create a folder in the current location.";
+    }
+
+    private void SelectFolder(string folderName)
+    {
+        if (FoldersListBox.ItemsSource is not IEnumerable<BrowserEntry> entries)
+        {
+            return;
+        }
+
+        var entry = entries.FirstOrDefault(candidate => string.Equals(candidate.DisplayText, folderName, StringComparison.OrdinalIgnoreCase));
+        if (entry is null)
+        {
+            return;
+        }
+
+        FoldersListBox.SelectedItem = entry;
+        FoldersListBox.ScrollIntoView(entry);
     }
 
     public sealed record RootOption(string RootPath, string DisplayText, IVolumeSource Volume);

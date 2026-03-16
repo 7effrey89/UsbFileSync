@@ -19,6 +19,13 @@ public sealed class WindowsDriveDisplayNameService : IDriveDisplayNameService
                 : $"Google Drive / {relativePath}";
         }
 
+        if (OneDrivePath.TryParse(path, out relativePath))
+        {
+            return string.IsNullOrEmpty(relativePath)
+                ? "OneDrive"
+                : $"OneDrive / {relativePath}";
+        }
+
         try
         {
             var fullPath = Path.GetFullPath(path);

@@ -33,6 +33,7 @@ The HFS+ backend intentionally enforces read-only behavior so the application do
 - Configurable parallel file copy count, including `0` for adaptive auto parallelism.
 - Settings persistence between runs.
 - Browse buttons for selecting the source folder/drive and one or more destination folders. The custom browser now covers both flows from one UI: sources can navigate normal Windows folders, HFS+ source folders, and mounted ext source folders, while destinations can navigate normal Windows folders and mounted ext destination folders. Destination browsing uses lightweight ext-volume discovery so the picker opens quickly, while writable ext4 validation remains part of sync-time validation.
+- The custom source and destination browser also includes a `New Folder` action for writable locations, including supported cloud destinations such as Google Drive and OneDrive.
 - Read-only source and destination path fields that show Explorer-style drive names such as `XTIVIA (F:)` when unfocused, and the raw path when focused for easy copy/select behavior.
 - Custom application and window icon tailored to the sync workflow.
 - Windows shell file icons in the preview so items match Explorer more closely.
@@ -189,9 +190,9 @@ The settings dialog currently supports:
 - `Parallel copies`: number of file copy operations allowed to run at the same time.
 - `0` enables auto mode, which estimates a starting parallelism and adjusts it during the copy batch.
 - `Hide macOS system files in HFS+ preview and sync planning`: filters common filesystem metadata such as `.Spotlight-V100`, `.fseventsd`, `.journal`, and `HFS+ Private Data` out of the HFS+ sync view.
-- `Cloud provider credentials`: built-in provider credentials are the default mode planned for API-backed cloud integration, while an advanced `Use custom provider credentials` setting lets you keep your own Google Drive, Dropbox, and OneDrive client IDs as an override. Google Drive can now also store an optional client secret when Google requires it during token exchange. Dropbox still stores the app key, and OneDrive can also store an optional tenant override and defaults to `common` when left blank.
+- `Cloud provider credentials`: built-in provider credentials are the default mode planned for API-backed cloud integration, while an advanced `Use custom provider credentials` setting lets you keep your own Google Drive, Dropbox, and OneDrive client IDs as an override. Google Drive can now also store an optional client secret when Google requires it during token exchange. Dropbox still stores the app key. OneDrive stores a public-client application ID, always uses the fixed `common` tenant in the settings dialog, and can be tested directly from the settings dialog.
 
-Google Drive now supports both source and destination flows on this branch: when custom provider credentials are enabled and a Google OAuth client ID is configured, the settings dialog can test the configured Google connection, and the source or destination picker can authenticate against Google Drive, browse folders under `My Drive`, and use the selected Drive folder as either a readable source volume or a writable destination volume for synchronization.
+Google Drive and OneDrive now support both source and destination flows on this branch when custom provider credentials are enabled. The settings dialog can test the configured cloud connection, and the source or destination picker can authenticate against the selected provider, browse folders, and use the selected cloud folder as either a readable source volume or a writable destination volume for synchronization.
 
 If you want to prepare custom provider values for the advanced override, see [`docs/custom-cloud-provider-credentials.md`](docs/custom-cloud-provider-credentials.md) for step-by-step setup instructions for Google Drive, Dropbox, and OneDrive.
 
