@@ -159,15 +159,90 @@ public sealed class MainWindowViewModelTests
 
         viewModel.AnalyzeCommand.Execute(null);
 
-        await WaitForAsync(() => viewModel.IsBusy && viewModel.BusyOverlayProgressValue >= 50).ConfigureAwait(true);
+        await WaitForAsync(() =>
+            viewModel.IsBusy &&
+            viewModel.BusyOverlayProgressValue >= 50 &&
+            viewModel.BusyOverlayCountersText.Contains("files scanned", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(viewModel.BusyOverlayPathText) &&
+            viewModel.BusyOverlayEtaText.Contains("Estimated time", StringComparison.OrdinalIgnoreCase)).ConfigureAwait(true);
 
         Assert.Contains("2/4 steps", viewModel.BusyOverlayDescription);
         Assert.True(viewModel.BusyOverlayProgressValue >= 50 && viewModel.BusyOverlayProgressValue < 100);
+        Assert.Contains("files scanned", viewModel.BusyOverlayCountersText);
+        Assert.False(string.IsNullOrWhiteSpace(viewModel.BusyOverlayPathText));
+        Assert.Contains("Estimated time", viewModel.BusyOverlayEtaText);
 
         completionSource.SetResult();
         await WaitForAsync(() => !viewModel.IsBusy).ConfigureAwait(true);
 
         Assert.Equal(0, viewModel.BusyOverlayProgressValue);
+        Assert.Equal(string.Empty, viewModel.BusyOverlayCountersText);
+        Assert.Equal(string.Empty, viewModel.BusyOverlayPathText);
+        Assert.Equal(string.Empty, viewModel.BusyOverlayEtaText);
+    }
+
+    [Fact]
+    public async Task AnalyzeCommand_UsesHistoricalEtaDuringAnalyzeChanges()
+    {
+        using var workspace = new SyncTestWorkspace();
+        var secondRunCompletionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var strategy = new HistoricalEtaSyncStrategy(secondRunCompletionSource);
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(strategy, strategy),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+        };
+
+        viewModel.AnalyzeCommand.Execute(null);
+        await WaitForAsync(() => !viewModel.IsBusy).ConfigureAwait(true);
+
+        viewModel.AnalyzeCommand.Execute(null);
+
+        await WaitForAsync(() =>
+            viewModel.IsBusy &&
+            viewModel.BusyOverlayEtaText.Contains("Estimated time", StringComparison.OrdinalIgnoreCase) &&
+            !viewModel.BusyOverlayEtaText.Contains("estimating", StringComparison.OrdinalIgnoreCase)).ConfigureAwait(true);
+
+        secondRunCompletionSource.SetResult();
+        await WaitForAsync(() => !viewModel.IsBusy).ConfigureAwait(true);
+    }
+
+    [Fact]
+    public async Task AnalyzeCommand_UseCompletedResults_StopsAfterCurrentDestinationAndBuildsPartialPreview()
+    {
+        using var workspace = new SyncTestWorkspace();
+        var secondDestinationPath = workspace.CreateAdditionalDestination("destination-two");
+        var firstDestinationCompletionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var strategy = new UseCompletedResultsSyncStrategy(firstDestinationCompletionSource);
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(strategy, strategy),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+        };
+
+        viewModel.AddDestinationPathCommand.Execute(null);
+        var additionalDestination = Assert.Single(viewModel.AdditionalDestinationPaths);
+        additionalDestination.Path = secondDestinationPath;
+
+        viewModel.AnalyzeCommand.Execute(null);
+
+        await WaitForAsync(() => viewModel.IsBusy && viewModel.UseCompletedAnalyzeResultsCommand.CanExecute(null)).ConfigureAwait(true);
+        viewModel.UseCompletedAnalyzeResultsCommand.Execute(null);
+        Assert.False(viewModel.UseCompletedAnalyzeResultsCommand.CanExecute(null));
+
+        firstDestinationCompletionSource.SetResult();
+        await WaitForAsync(() => !viewModel.IsBusy).ConfigureAwait(true);
+
+        Assert.Equal(1, strategy.CallCount);
+        Assert.Equal("Preview generated from 1 of 2 destination(s) using completed results with 1 planned action(s). Analyze again for a full refresh.", viewModel.StatusMessage);
+        Assert.Single(viewModel.PlannedActions);
+        Assert.Single(viewModel.AllFiles);
     }
 
     [Fact]
@@ -2306,7 +2381,10 @@ public sealed class MainWindowViewModelTests
 
     private sealed class BlockingSyncStrategy(TaskCompletionSource completionSource) : ISyncStrategy
     {
-        public async Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(SyncConfiguration configuration, CancellationToken cancellationToken = default)
+        public async Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(
+            SyncConfiguration configuration,
+            CancellationToken cancellationToken = default,
+            IProgress<AnalyzeProgress>? progress = null)
         {
             await completionSource.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             return [];
@@ -2315,7 +2393,10 @@ public sealed class MainWindowViewModelTests
 
     private sealed class IgnoreCancellationBlockingSyncStrategy(TaskCompletionSource completionSource) : ISyncStrategy
     {
-        public async Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(SyncConfiguration configuration, CancellationToken cancellationToken = default)
+        public async Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(
+            SyncConfiguration configuration,
+            CancellationToken cancellationToken = default,
+            IProgress<AnalyzeProgress>? progress = null)
         {
             await completionSource.Task.ConfigureAwait(false);
             return [];
@@ -2326,9 +2407,13 @@ public sealed class MainWindowViewModelTests
     {
         private int _callCount;
 
-        public async Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(SyncConfiguration configuration, CancellationToken cancellationToken = default)
+        public async Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(
+            SyncConfiguration configuration,
+            CancellationToken cancellationToken = default,
+            IProgress<AnalyzeProgress>? progress = null)
         {
             var currentCall = Interlocked.Increment(ref _callCount);
+            progress?.Report(new AnalyzeProgress(configuration.DestinationPath, Path.Combine(configuration.DestinationPath, $"scanned-{currentCall}.txt"), currentCall * 1000, currentCall * 25));
             if (currentCall > 1)
             {
                 await completionSource.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -2342,6 +2427,76 @@ public sealed class MainWindowViewModelTests
                     "progress.txt",
                     Path.Combine(configuration.SourcePath, "progress.txt"),
                     Path.Combine(destinationPath, "progress.txt"))
+            ];
+        }
+    }
+
+    private sealed class HistoricalEtaSyncStrategy(TaskCompletionSource secondRunCompletionSource) : ISyncStrategy
+    {
+        private int _callCount;
+
+        public async Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(
+            SyncConfiguration configuration,
+            CancellationToken cancellationToken = default,
+            IProgress<AnalyzeProgress>? progress = null)
+        {
+            var currentCall = Interlocked.Increment(ref _callCount);
+            progress?.Report(new AnalyzeProgress(
+                configuration.DestinationPath,
+                Path.Combine(configuration.DestinationPath, $"history-{currentCall}.txt"),
+                5_000,
+                100));
+
+            if (currentCall == 1)
+            {
+                await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await secondRunCompletionSource.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            return
+            [
+                new SyncAction(
+                    SyncActionType.CopyToDestination,
+                    "history.txt",
+                    Path.Combine(configuration.SourcePath, "history.txt"),
+                    Path.Combine(configuration.DestinationPath, "history.txt"))
+            ];
+        }
+    }
+
+    private sealed class UseCompletedResultsSyncStrategy(TaskCompletionSource firstDestinationCompletionSource) : ISyncStrategy
+    {
+        private int _callCount;
+
+        public int CallCount => _callCount;
+
+        public async Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(
+            SyncConfiguration configuration,
+            CancellationToken cancellationToken = default,
+            IProgress<AnalyzeProgress>? progress = null)
+        {
+            var currentCall = Interlocked.Increment(ref _callCount);
+            progress?.Report(new AnalyzeProgress(
+                configuration.DestinationPath,
+                Path.Combine(configuration.DestinationPath, $"partial-{currentCall}.txt"),
+                1_500,
+                30));
+
+            if (currentCall == 1)
+            {
+                await firstDestinationCompletionSource.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            return
+            [
+                new SyncAction(
+                    SyncActionType.CopyToDestination,
+                    $"partial-{currentCall}.txt",
+                    Path.Combine(configuration.SourcePath, $"partial-{currentCall}.txt"),
+                    Path.Combine(configuration.DestinationPath, $"partial-{currentCall}.txt"))
             ];
         }
     }

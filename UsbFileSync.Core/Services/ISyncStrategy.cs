@@ -4,5 +4,8 @@ namespace UsbFileSync.Core.Services;
 
 public interface ISyncStrategy
 {
-    Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(SyncConfiguration configuration, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(
+        SyncConfiguration configuration,
+    CancellationToken cancellationToken = default,
+    IProgress<AnalyzeProgress>? progress = null);
 }

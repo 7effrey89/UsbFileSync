@@ -33,6 +33,7 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
             VerifyChecksums = true,
             MoveMode = true,
             HideMacOsSystemFiles = false,
+            ExcludedPathPatterns = ["node_modules", ".venv", "bin", "obj"],
             ParallelCopyCount = 4,
         };
 
@@ -48,6 +49,7 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
         Assert.Equal(configuration.VerifyChecksums, restored.VerifyChecksums);
         Assert.Equal(configuration.MoveMode, restored.MoveMode);
         Assert.Equal(configuration.HideMacOsSystemFiles, restored.HideMacOsSystemFiles);
+        Assert.Equal(configuration.ExcludedPathPatterns, restored.ExcludedPathPatterns);
         Assert.Equal(configuration.ParallelCopyCount, restored.ParallelCopyCount);
     }
 

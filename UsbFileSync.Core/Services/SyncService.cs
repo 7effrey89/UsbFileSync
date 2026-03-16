@@ -41,7 +41,10 @@ public sealed class SyncService
         _metadataStore = metadataStore;
     }
 
-    public async Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(SyncConfiguration configuration, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(
+        SyncConfiguration configuration,
+        CancellationToken cancellationToken = default,
+        IProgress<AnalyzeProgress>? progress = null)
     {
         DirectorySnapshotBuilder.EnsureConfigurationIsValid(configuration);
         cancellationToken.ThrowIfCancellationRequested();
@@ -51,7 +54,7 @@ public sealed class SyncService
         {
             cancellationToken.ThrowIfCancellationRequested();
             var destinationActions = await SelectStrategy(destinationConfiguration)
-                .AnalyzeChangesAsync(destinationConfiguration, cancellationToken)
+                .AnalyzeChangesAsync(destinationConfiguration, cancellationToken, progress)
                 .ConfigureAwait(false);
             actions.AddRange(destinationActions);
         }
@@ -66,7 +69,7 @@ public sealed class SyncService
         DirectorySnapshotBuilder.EnsureConfigurationIsValid(configuration);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var actions = await AnalyzeChangesAsync(configuration, cancellationToken).ConfigureAwait(false);
+        var actions = await AnalyzeChangesAsync(configuration, cancellationToken, progress: null).ConfigureAwait(false);
         return BuildPreview(configuration, actions, cancellationToken);
     }
 
@@ -100,7 +103,7 @@ public sealed class SyncService
         IProgress<int>? autoParallelism = null,
         CancellationToken cancellationToken = default)
     {
-        var actions = await AnalyzeChangesAsync(configuration, cancellationToken).ConfigureAwait(false);
+        var actions = await AnalyzeChangesAsync(configuration, cancellationToken, progress: null).ConfigureAwait(false);
         return await ExecutePlannedAsync(configuration, actions, progress, autoParallelism, cancellationToken).ConfigureAwait(false);
     }
 
@@ -158,10 +161,10 @@ public sealed class SyncService
     {
         var sourceVolume = configuration.ResolveSourceVolume();
         var destinationVolume = configuration.ResolveDestinationVolumes().Single();
-        var sourceFiles = DirectorySnapshotBuilder.Build(sourceVolume, configuration.HideMacOsSystemFiles);
-        var destinationFiles = DirectorySnapshotBuilder.Build(destinationVolume, configuration.HideMacOsSystemFiles);
-        var sourceDirectories = DirectorySnapshotBuilder.BuildDirectories(sourceVolume, configuration.HideMacOsSystemFiles);
-        var destinationDirectories = DirectorySnapshotBuilder.BuildDirectories(destinationVolume, configuration.HideMacOsSystemFiles);
+        var sourceFiles = DirectorySnapshotBuilder.Build(sourceVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns);
+        var destinationFiles = DirectorySnapshotBuilder.Build(destinationVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns);
+        var sourceDirectories = DirectorySnapshotBuilder.BuildDirectories(sourceVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns);
+        var destinationDirectories = DirectorySnapshotBuilder.BuildDirectories(destinationVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns);
         var actionsByRelativePath = actions
             .GroupBy(action => action.RelativePath, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
@@ -274,6 +277,7 @@ public sealed class SyncService
         VerifyChecksums = configuration.VerifyChecksums,
         MoveMode = configuration.MoveMode,
         HideMacOsSystemFiles = configuration.HideMacOsSystemFiles,
+        ExcludedPathPatterns = configuration.ExcludedPathPatterns.ToList(),
         ParallelCopyCount = configuration.ParallelCopyCount,
         PreviewProviderMappings = new Dictionary<string, string>(configuration.PreviewProviderMappings, StringComparer.OrdinalIgnoreCase),
         UseCustomCloudProviderCredentials = configuration.UseCustomCloudProviderCredentials,
@@ -761,8 +765,8 @@ public sealed class SyncService
     {
         var sourceVolume = configuration.ResolveSourceVolume();
         var destinationVolume = configuration.ResolveDestinationVolumes().Single();
-        var currentSourceFiles = DirectorySnapshotBuilder.Build(sourceVolume, configuration.HideMacOsSystemFiles);
-        var currentDestinationFiles = DirectorySnapshotBuilder.Build(destinationVolume, configuration.HideMacOsSystemFiles);
+        var currentSourceFiles = DirectorySnapshotBuilder.Build(sourceVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns);
+        var currentDestinationFiles = DirectorySnapshotBuilder.Build(destinationVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns);
         var entries = existingPeerState?.Entries.ToDictionary(
             pair => pair.Key,
             pair => Clone(pair.Value),

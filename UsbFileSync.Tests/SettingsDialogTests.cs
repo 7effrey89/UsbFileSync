@@ -78,6 +78,27 @@ public sealed class SettingsDialogTests
     }
 
     [Fact]
+    public void TryCreateExcludedPathPatterns_NormalizesAndDeduplicatesPatterns()
+    {
+        const string text = " node_modules \r\n.venv\nobj\nnode_modules\ncache/*/tmp ";
+
+        var success = SettingsDialog.TryCreateExcludedPathPatterns(text, out var patterns, out var errorMessage);
+
+        Assert.True(success);
+        Assert.Equal(string.Empty, errorMessage);
+        Assert.Equal(["node_modules", ".venv", "obj", "cache/*/tmp"], patterns);
+    }
+
+    [Fact]
+    public void TryCreateExcludedPathPatterns_RejectsAbsolutePaths()
+    {
+        var success = SettingsDialog.TryCreateExcludedPathPatterns("C:/temp", out _, out var errorMessage);
+
+        Assert.False(success);
+        Assert.Contains("absolute path", errorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void TryCreateCloudProviderAppRegistrations_StoresConfiguredProvidersOnly()
     {
         var registrations = new[]
@@ -120,12 +141,12 @@ public sealed class SettingsDialogTests
                 Assert.Equal(CloudStorageProvider.OneDrive, oneDrive.Provider);
                 Assert.Equal("Personal OneDrive", oneDrive.Alias);
                 Assert.Equal("onedrive-client-id", oneDrive.ClientId);
-                Assert.Equal("common", oneDrive.TenantId);
+                Assert.Equal("consumers", oneDrive.TenantId);
             });
     }
 
     [Fact]
-    public void TryCreateCloudProviderAppRegistrations_ForcesOneDriveTenantToCommon()
+    public void TryCreateCloudProviderAppRegistrations_ForcesOneDriveTenantToConsumers()
     {
         var registrations = new[]
         {
@@ -142,7 +163,7 @@ public sealed class SettingsDialogTests
         Assert.True(success);
         var registration = Assert.Single(serializedRegistrations);
         Assert.Equal(CloudStorageProvider.OneDrive, registration.Provider);
-        Assert.Equal("common", registration.TenantId);
+        Assert.Equal("consumers", registration.TenantId);
     }
 
     [Fact]
@@ -287,7 +308,7 @@ public sealed class SettingsDialogTests
 
         oneDrive.ClientId = "configured-client-id";
 
-        Assert.Equal("OneDrive is ready to test. UsbFileSync uses the fixed 'common' tenant.", SettingsDialog.GetCloudProviderConnectionGuidance(true, oneDrive));
+        Assert.Equal("OneDrive is ready to test. UsbFileSync uses the fixed 'consumers' tenant.", SettingsDialog.GetCloudProviderConnectionGuidance(true, oneDrive));
     }
 
     [Fact]

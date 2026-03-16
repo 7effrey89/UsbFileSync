@@ -1315,11 +1315,39 @@
                                    TextWrapping="Wrap"
                                    Text="{Binding BusyOverlayDescription}"
                                    Foreground="{StaticResource SubtleTextBrush}" />
-                        <Button Margin="0,18,0,0"
-                                Width="110"
-                                HorizontalAlignment="Center"
+                        <TextBlock Margin="0,8,0,0"
+                               HorizontalAlignment="Center"
+                               MaxWidth="520"
+                               TextAlignment="Center"
+                               TextWrapping="Wrap"
+                               Text="{Binding BusyOverlayCountersText}"
+                               Foreground="{StaticResource SubtleTextBrush}" />
+                           <TextBlock Margin="0,6,0,0"
+                               HorizontalAlignment="Center"
+                               MaxWidth="520"
+                               TextAlignment="Center"
+                               TextWrapping="Wrap"
+                               Text="{Binding BusyOverlayPathText}"
+                               Foreground="{StaticResource SubtleTextBrush}" />
+                        <TextBlock Margin="0,8,0,0"
+                               HorizontalAlignment="Center"
+                               MaxWidth="520"
+                               TextAlignment="Center"
+                               TextWrapping="Wrap"
+                               Text="{Binding BusyOverlayEtaText}"
+                               Foreground="{StaticResource SubtleTextBrush}" />
+                        <StackPanel Margin="0,18,0,0"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Center">
+                            <Button Width="170"
+                                Margin="0,0,10,0"
+                                Visibility="{Binding IsUseCompletedAnalyzeResultsVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                Command="{Binding UseCompletedAnalyzeResultsCommand}"
+                                Content="Use completed results" />
+                            <Button Width="110"
                                 Command="{Binding CancelBusyOperationCommand}"
                                 Content="Cancel" />
+                        </StackPanel>
                     </StackPanel>
                 </Border>
             </Border>

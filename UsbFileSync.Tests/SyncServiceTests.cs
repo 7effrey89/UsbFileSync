@@ -303,6 +303,30 @@ public sealed class SyncServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task AnalyzeChangesAsync_ExcludedPathPatterns_SkipMatchingHeavyFolders()
+    {
+        var source = CreateDirectory("source-excluded-patterns");
+        var destination = CreateDirectory("destination-excluded-patterns");
+        WriteFile(source, Path.Combine("src", "app.txt"), "payload", new DateTime(2024, 4, 2, 0, 0, 0, DateTimeKind.Utc));
+        WriteFile(source, Path.Combine("node_modules", "package", "index.js"), "ignore", new DateTime(2024, 4, 2, 0, 0, 0, DateTimeKind.Utc));
+        WriteFile(source, Path.Combine("project", ".venv", "Lib", "site.py"), "ignore", new DateTime(2024, 4, 2, 0, 0, 0, DateTimeKind.Utc));
+
+        var service = new SyncService();
+        var actions = await service.AnalyzeChangesAsync(new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.OneWay,
+            ExcludedPathPatterns = ["node_modules", ".venv"],
+        });
+
+        Assert.Contains(actions, action => action.RelativePath == "src");
+        Assert.Contains(actions, action => action.RelativePath == "src/app.txt");
+        Assert.DoesNotContain(actions, action => action.RelativePath.Contains("node_modules", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(actions, action => action.RelativePath.Contains(".venv", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task ExecuteAsync_TwoWayPersistsMetadataAndPropagatesTrackedDeletion()
     {
         var source = CreateDirectory("source");

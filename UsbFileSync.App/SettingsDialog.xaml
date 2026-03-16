@@ -42,6 +42,24 @@
                 </StackPanel>
 
                 <StackPanel Margin="0,18,0,0">
+                    <TextBlock Text="Path exclusion patterns" FontSize="15" FontWeight="SemiBold" />
+                    <TextBlock Margin="0,8,0,0"
+                               Text="Exclude heavy folders from preview analysis and sync planning by entering one pattern per line. Single-segment patterns such as node_modules, .venv, bin, and obj match anywhere in the tree. You can also enter relative multi-segment patterns such as src/generated or cache/*/tmp."
+                               TextWrapping="Wrap"
+                               Foreground="#616161" />
+                    <TextBox x:Name="ExcludedPathPatternsTextBox"
+                             Margin="0,12,0,0"
+                             Height="120"
+                             AcceptsReturn="True"
+                             VerticalScrollBarVisibility="Auto"
+                             TextWrapping="Wrap" />
+                    <TextBlock Margin="0,8,0,0"
+                               Text="Leave this blank to include every path. These exclusions apply to both preview analysis and synchronization planning."
+                               TextWrapping="Wrap"
+                               Foreground="#616161" />
+                </StackPanel>
+
+                <StackPanel Margin="0,18,0,0">
                     <TextBlock Text="Cloud provider credentials" FontSize="15" FontWeight="SemiBold" />
                     <TextBlock Margin="0,8,0,0"
                                Text="UsbFileSync uses built-in provider credentials by default. Turn on the advanced setting below if you want to override those defaults with your own provider app registrations."

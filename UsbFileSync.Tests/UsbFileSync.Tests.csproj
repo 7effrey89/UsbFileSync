@@ -36,6 +36,7 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
+    <Compile Remove="BulkObservableCollectionTests.cs" />
     <Compile Remove="DropboxApiClientTests.cs" />
     <Compile Remove="DropboxAuthenticationServiceTests.cs" />
     <Compile Remove="DropboxTokenStoreTests.cs" />

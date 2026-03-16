@@ -24,7 +24,12 @@ The HFS+ backend intentionally enforces read-only behavior so the application do
 - Preview-first workflow with filtered tabs for new, changed, deleted, unchanged, and all items.
 - Per-row checkboxes in the preview so only selected planned items are synchronized.
 - The busy overlay now includes a `Cancel` action while preview analysis is running, so long preview builds can be stopped without waiting for completion.
+- The busy overlay also includes a `Use completed results` action for multi-destination analyzes. It finishes the destination currently being analyzed, skips scheduling the remaining destinations, and builds a partial preview from the destinations that completed safely.
 - Preview analysis now reports staged progress in the loading overlay as each destination is analyzed and its preview rows are built.
+- Preview analysis also shows throttled scan details, including cumulative file and folder counts plus the current path being analyzed, without turning the overlay into a per-file live log.
+- Preview analysis also shows an approximate, smoothed `Estimated time` value derived from elapsed analyze time versus staged progress. When you analyze the same source and destination again, UsbFileSync also reuses the last observed timing for that pair so the overlay can show a numeric estimate earlier during the `Analyzing changes` phase instead of waiting for the first stage boundary.
+- Application Settings also support configurable path exclusion patterns so folders like `node_modules`, `.venv`, `bin`, `obj`, and other matched trees can be excluded from preview analysis and synchronization planning.
+- Preview row projection and list replacement now run in background or batched phases so the main window stays responsive while large previews are prepared.
 - Completed preview rows remain visible after synchronization and are marked done until the next analyze refresh, while already-applied rows are retired from future queue selection.
 - Synchronization now runs in a separate background worker process, which allows ext4 write elevation without restarting the WPF UI.
 - Per-file progress, transfer speed, queue visibility, and activity logging during synchronization.
@@ -192,6 +197,7 @@ The settings dialog currently supports:
 - `Parallel copies`: number of file copy operations allowed to run at the same time.
 - `0` enables auto mode, which estimates a starting parallelism and adjusts it during the copy batch.
 - `Hide macOS system files in HFS+ preview and sync planning`: filters common filesystem metadata such as `.Spotlight-V100`, `.fseventsd`, `.journal`, and `HFS+ Private Data` out of the HFS+ sync view.
+- `Path exclusion patterns`: one pattern per line for excluding heavy folders or subtrees from preview analysis and synchronization planning. Single-segment patterns such as `node_modules` or `.venv` match anywhere in the tree; multi-segment relative patterns such as `src/generated` are also supported.
 - `Cloud provider credentials`: built-in provider credentials are the default mode planned for API-backed cloud integration, while an advanced `Use custom provider credentials` setting lets you keep your own Google Drive, Dropbox, and OneDrive client IDs as an override. Google Drive can now also store an optional client secret when Google requires it during token exchange. Dropbox still stores the app key. OneDrive stores a public-client application ID, always uses the fixed `common` tenant in the settings dialog, and can be tested directly from the settings dialog.
 
 Google Drive and OneDrive now support both source and destination flows on this branch when custom provider credentials are enabled. The settings dialog can test the configured cloud connection, and the source or destination picker can authenticate against the selected provider, browse folders, and use the selected cloud folder as either a readable source volume or a writable destination volume for synchronization.

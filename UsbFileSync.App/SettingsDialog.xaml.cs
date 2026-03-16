@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.IO;
 using System.Text.Json;
 using System.Windows;
 using UsbFileSync.App.Services;
@@ -17,6 +18,7 @@ public partial class SettingsDialog : Window
     public SettingsDialog(
         int parallelCopyCount,
         bool hideMacOsSystemFiles,
+        IReadOnlyList<string>? excludedPathPatterns = null,
         IReadOnlyDictionary<string, string>? previewProviderMappings = null,
         bool useCustomCloudProviderCredentials = false,
         IReadOnlyList<CloudProviderAppRegistration>? cloudProviderAppRegistrations = null)
@@ -27,6 +29,7 @@ public partial class SettingsDialog : Window
         UseCustomCloudProviderCredentials = useCustomCloudProviderCredentials;
         ParallelCopyCountTextBox.Text = ParallelCopyCount.ToString(CultureInfo.InvariantCulture);
         HideMacOsSystemFilesCheckBox.IsChecked = HideMacOsSystemFiles;
+        ExcludedPathPatternsTextBox.Text = string.Join(Environment.NewLine, excludedPathPatterns ?? Array.Empty<string>());
         UseCustomProviderCredentialsCheckBox.IsChecked = UseCustomCloudProviderCredentials;
         ProviderOptions = Enum.GetValues<PreviewProviderKind>();
         CloudStorageProviderOptions = Enum.GetValues<CloudStorageProvider>();
@@ -60,6 +63,8 @@ public partial class SettingsDialog : Window
 
     public bool HideMacOsSystemFiles { get; private set; }
 
+    public IReadOnlyList<string> ExcludedPathPatterns => _excludedPathPatterns;
+
     public bool UseCustomCloudProviderCredentials { get; private set; }
 
     public ObservableCollection<PreviewProviderMappingViewModel> PreviewProviderMappingItems { get; }
@@ -86,6 +91,13 @@ public partial class SettingsDialog : Window
         ParallelCopyCount = value;
         HideMacOsSystemFiles = HideMacOsSystemFilesCheckBox.IsChecked != false;
         UseCustomCloudProviderCredentials = UseCustomProviderCredentialsCheckBox.IsChecked == true;
+        if (!TryCreateExcludedPathPatterns(ExcludedPathPatternsTextBox.Text, out var excludedPathPatterns, out var excludedPathErrorMessage))
+        {
+            System.Windows.MessageBox.Show(this, excludedPathErrorMessage, "Invalid exclusion patterns", MessageBoxButton.OK, MessageBoxImage.Warning);
+            ExcludedPathPatternsTextBox.Focus();
+            return;
+        }
+
         if (!TryCreateSerializableMappings(PreviewProviderMappingItems, out var mappings, out var errorMessage))
         {
             System.Windows.MessageBox.Show(this, errorMessage, "Invalid preview mapping", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -98,6 +110,7 @@ public partial class SettingsDialog : Window
             return;
         }
 
+        _excludedPathPatterns = excludedPathPatterns;
         _previewProviderMappings = mappings;
         _cloudProviderAppRegistrations = registrations;
         DialogResult = true;
@@ -108,6 +121,8 @@ public partial class SettingsDialog : Window
     public IReadOnlyList<CloudProviderAppRegistration> CloudProviderAppRegistrations => _cloudProviderAppRegistrations;
 
     private Dictionary<string, string> _previewProviderMappings = PreviewProviderDefaults.CreateSerializableMapping();
+
+    private List<string> _excludedPathPatterns = [];
 
     private List<CloudProviderAppRegistration> _cloudProviderAppRegistrations = [];
 
@@ -199,6 +214,46 @@ public partial class SettingsDialog : Window
             }
 
             serializedMappings[normalizedExtension] = mapping.ProviderKind.ToString();
+        }
+
+        errorMessage = string.Empty;
+        return true;
+    }
+
+    public static bool TryCreateExcludedPathPatterns(
+        string? text,
+        out List<string> excludedPathPatterns,
+        out string errorMessage)
+    {
+        excludedPathPatterns = [];
+
+        foreach (var rawPattern in (text ?? string.Empty)
+            .Replace("\r", string.Empty, StringComparison.Ordinal)
+            .Split(['\n', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var normalizedPattern = rawPattern.Replace('\\', '/').Trim().Trim('/');
+            if (string.IsNullOrWhiteSpace(normalizedPattern))
+            {
+                continue;
+            }
+
+            if (Path.IsPathRooted(normalizedPattern) || normalizedPattern.Contains(':', StringComparison.Ordinal))
+            {
+                errorMessage = $"The exclusion pattern '{rawPattern}' must be a relative path or folder-name pattern, not an absolute path.";
+                return false;
+            }
+
+            if (normalizedPattern.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Any(segment => segment == ".."))
+            {
+                errorMessage = $"The exclusion pattern '{rawPattern}' cannot include '..' segments.";
+                return false;
+            }
+
+            if (!excludedPathPatterns.Contains(normalizedPattern, StringComparer.OrdinalIgnoreCase))
+            {
+                excludedPathPatterns.Add(normalizedPattern);
+            }
         }
 
         errorMessage = string.Empty;

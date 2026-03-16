@@ -34,6 +34,8 @@ public sealed class SyncConfiguration
 
     public bool HideMacOsSystemFiles { get; init; } = true;
 
+    public IReadOnlyList<string> ExcludedPathPatterns { get; init; } = Array.Empty<string>();
+
     public int ParallelCopyCount { get; init; } = 1;
 
     public Dictionary<string, string> PreviewProviderMappings { get; init; } = new(StringComparer.OrdinalIgnoreCase);
