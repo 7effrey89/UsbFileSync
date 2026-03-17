@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using UsbFileSync.Core.Models;
 
@@ -8,6 +9,7 @@ internal sealed class AnalyzeProgressTracker
     private readonly IProgress<AnalyzeProgress> _progress;
     private readonly TimeSpan _minimumInterval;
     private readonly Stopwatch _stopwatch = Stopwatch.StartNew();
+    private readonly ConcurrentDictionary<string, long> _pendingByRoot = new(StringComparer.OrdinalIgnoreCase);
     private long _filesScanned;
     private long _directoriesScanned;
     private string _rootPath = string.Empty;
@@ -19,12 +21,15 @@ internal sealed class AnalyzeProgressTracker
         _minimumInterval = minimumInterval;
     }
 
-    public Action<string, bool> CreateObserver(string rootPath)
+    public Action<string, bool, int> CreateObserver(string rootPath)
     {
-        return (currentPath, isDirectory) =>
+        _pendingByRoot[rootPath] = 0;
+
+        return (currentPath, isDirectory, pendingDirectories) =>
         {
             _rootPath = rootPath;
             _currentPath = currentPath;
+            _pendingByRoot[rootPath] = pendingDirectories;
 
             if (isDirectory)
             {
@@ -51,7 +56,13 @@ internal sealed class AnalyzeProgressTracker
             return;
         }
 
-        _progress.Report(new AnalyzeProgress(_rootPath, _currentPath, _filesScanned, _directoriesScanned));
+        long totalPending = 0;
+        foreach (var pending in _pendingByRoot.Values)
+        {
+            totalPending += pending;
+        }
+
+        _progress.Report(new AnalyzeProgress(_rootPath, _currentPath, _filesScanned, _directoriesScanned, totalPending));
         _stopwatch.Restart();
     }
 }

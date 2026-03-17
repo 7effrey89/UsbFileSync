@@ -211,6 +211,36 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public async Task AnalyzeCommand_InterpolatesProgressBarFromPendingDirectoryCount()
+    {
+        using var workspace = new SyncTestWorkspace();
+        var completionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var strategy = new PendingDirectoriesSyncStrategy(completionSource);
+        using var viewModel = new MainWindowViewModel(
+            new SyncService(strategy, strategy),
+            settingsStore: null,
+            folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+            DestinationPath = workspace.DestinationPath,
+        };
+
+        // Progress bar should interpolate on the very first run using
+        // the live pending directory count from the scanner.
+        viewModel.AnalyzeCommand.Execute(null);
+
+        await WaitForAsync(() =>
+            viewModel.IsBusy &&
+            viewModel.BusyOverlayProgressValue > 0).ConfigureAwait(true);
+
+        Assert.True(viewModel.BusyOverlayProgressValue > 0 && viewModel.BusyOverlayProgressValue < 100);
+        Assert.False(viewModel.IsBusyOverlayProgressIndeterminate);
+
+        completionSource.SetResult();
+        await WaitForAsync(() => !viewModel.IsBusy).ConfigureAwait(true);
+    }
+
+    [Fact]
     public async Task AnalyzeCommand_UseCompletedResults_StopsAfterCurrentDestinationAndBuildsPartialPreview()
     {
         using var workspace = new SyncTestWorkspace();
@@ -2463,6 +2493,34 @@ public sealed class MainWindowViewModelTests
                     "history.txt",
                     Path.Combine(configuration.SourcePath, "history.txt"),
                     Path.Combine(configuration.DestinationPath, "history.txt"))
+            ];
+        }
+    }
+
+    private sealed class PendingDirectoriesSyncStrategy(TaskCompletionSource completionSource) : ISyncStrategy
+    {
+        public async Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(
+            SyncConfiguration configuration,
+            CancellationToken cancellationToken = default,
+            IProgress<AnalyzeProgress>? progress = null)
+        {
+            // Report progress with pending directories > 0, simulating an in-progress scan.
+            progress?.Report(new AnalyzeProgress(
+                configuration.DestinationPath,
+                Path.Combine(configuration.DestinationPath, "pending.txt"),
+                5_000,
+                100,
+                PendingDirectories: 50));
+
+            await completionSource.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+            return
+            [
+                new SyncAction(
+                    SyncActionType.CopyToDestination,
+                    "pending.txt",
+                    Path.Combine(configuration.SourcePath, "pending.txt"),
+                    Path.Combine(configuration.DestinationPath, "pending.txt"))
             ];
         }
     }

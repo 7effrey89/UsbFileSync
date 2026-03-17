@@ -41,7 +41,7 @@ internal static class DirectorySnapshotBuilder
         IVolumeSource volume,
         bool hideMacOsSystemFiles,
         IReadOnlyList<string>? excludedPathPatterns,
-        Action<string, bool>? scanObserver = null)
+        Action<string, bool, int>? scanObserver = null)
     {
         ArgumentNullException.ThrowIfNull(volume);
 
@@ -78,7 +78,7 @@ internal static class DirectorySnapshotBuilder
         IVolumeSource volume,
         bool hideMacOsSystemFiles,
         IReadOnlyList<string>? excludedPathPatterns,
-        Action<string, bool>? scanObserver = null)
+        Action<string, bool, int>? scanObserver = null)
     {
         ArgumentNullException.ThrowIfNull(volume);
 
@@ -109,7 +109,7 @@ internal static class DirectorySnapshotBuilder
         IVolumeSource volume,
         bool hideMacOsSystemFiles,
         IReadOnlyList<string>? excludedPathPatterns,
-        Action<string, bool>? scanObserver = null)
+        Action<string, bool, int>? scanObserver = null)
     {
         ArgumentNullException.ThrowIfNull(volume);
 
@@ -157,14 +157,14 @@ internal static class DirectorySnapshotBuilder
 
                                 if (entry.IsDirectory)
                                 {
-                                    scanObserver?.Invoke(entry.FullPath, true);
+                                    scanObserver?.Invoke(entry.FullPath, true, Volatile.Read(ref outstandingWork));
                                     directories.Add(relativePath);
                                     Interlocked.Increment(ref outstandingWork);
                                     pendingWork.Enqueue(relativePath);
                                 }
                                 else if (entry.Size is not null && entry.LastWriteTimeUtc is not null)
                                 {
-                                    scanObserver?.Invoke(entry.FullPath, false);
+                                    scanObserver?.Invoke(entry.FullPath, false, Volatile.Read(ref outstandingWork));
                                     fileSnapshots.Add(new FileSnapshot(
                                         relativePath, entry.FullPath, entry.Size.Value, entry.LastWriteTimeUtc.Value));
                                 }
@@ -212,7 +212,7 @@ internal static class DirectorySnapshotBuilder
         IVolumeSource volume,
         bool hideMacOsSystemFiles,
         IReadOnlyList<string>? excludedPathPatterns,
-        Action<string, bool>? scanObserver)
+        Action<string, bool, int>? scanObserver)
     {
         var pendingDirectories = new Stack<string>();
         pendingDirectories.Push(string.Empty);
@@ -230,7 +230,7 @@ internal static class DirectorySnapshotBuilder
                     continue;
                 }
 
-                scanObserver?.Invoke(entry.FullPath, false);
+                scanObserver?.Invoke(entry.FullPath, false, pendingDirectories.Count);
                 yield return new FileSnapshot(relativePath, entry.FullPath, entry.Size.Value, entry.LastWriteTimeUtc.Value);
             }
 
@@ -249,7 +249,7 @@ internal static class DirectorySnapshotBuilder
         IVolumeSource volume,
         bool hideMacOsSystemFiles,
         IReadOnlyList<string>? excludedPathPatterns,
-        Action<string, bool>? scanObserver)
+        Action<string, bool, int>? scanObserver)
     {
         var pendingDirectories = new Stack<string>();
         pendingDirectories.Push(string.Empty);
@@ -265,7 +265,7 @@ internal static class DirectorySnapshotBuilder
                     continue;
                 }
 
-                scanObserver?.Invoke(entry.FullPath, true);
+                scanObserver?.Invoke(entry.FullPath, true, pendingDirectories.Count);
                 yield return relativePath;
                 pendingDirectories.Push(relativePath);
             }
