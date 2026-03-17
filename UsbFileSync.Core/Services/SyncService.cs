@@ -281,6 +281,7 @@ public sealed class SyncService
         DryRun = configuration.DryRun,
         VerifyChecksums = configuration.VerifyChecksums,
         MoveMode = configuration.MoveMode,
+        IncludeSubfolders = configuration.IncludeSubfolders,
         HideMacOsSystemFiles = configuration.HideMacOsSystemFiles,
         ExcludedPathPatterns = configuration.ExcludedPathPatterns.ToList(),
         ParallelCopyCount = configuration.ParallelCopyCount,

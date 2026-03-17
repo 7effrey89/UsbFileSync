@@ -327,6 +327,31 @@ public sealed class SyncServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task AnalyzeChangesAsync_IncludeSubfoldersFalse_IgnoresNestedContents()
+    {
+        var source = CreateDirectory("source-top-level-only");
+        var destination = CreateDirectory("destination-top-level-only");
+        var timestamp = new DateTime(2024, 4, 3, 0, 0, 0, DateTimeKind.Utc);
+        WriteFile(source, "root.txt", "payload", timestamp);
+        WriteFile(source, Path.Combine("nested", "child.txt"), "ignored", timestamp);
+        WriteFile(destination, "obsolete.txt", "old", timestamp.AddDays(-1));
+        WriteFile(destination, Path.Combine("nested", "obsolete-child.txt"), "ignored", timestamp.AddDays(-1));
+
+        var service = new SyncService();
+        var actions = await service.AnalyzeChangesAsync(new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.OneWay,
+            IncludeSubfolders = false,
+        });
+
+        Assert.Contains(actions, action => action.Type == SyncActionType.CopyToDestination && action.RelativePath == "root.txt");
+        Assert.Contains(actions, action => action.Type == SyncActionType.DeleteFromDestination && action.RelativePath == "obsolete.txt");
+        Assert.DoesNotContain(actions, action => action.RelativePath.StartsWith("nested/", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task ExecuteAsync_TwoWayPersistsMetadataAndPropagatesTrackedDeletion()
     {
         var source = CreateDirectory("source");
@@ -1026,6 +1051,27 @@ public sealed class SyncServiceTests : IDisposable
         Assert.Equal(dirsFromBuild.OrderBy(d => d, StringComparer.OrdinalIgnoreCase), dirsFromSnapshot.OrderBy(d => d, StringComparer.OrdinalIgnoreCase));
         Assert.DoesNotContain("excluded/skip.txt", filesFromSnapshot.Keys, StringComparer.OrdinalIgnoreCase);
         Assert.DoesNotContain("excluded", dirsFromSnapshot, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildSnapshot_WithoutSubfolders_ReturnsTopLevelEntriesOnly()
+    {
+        var root = CreateDirectory("snapshot-top-level-only");
+        var timestamp = new DateTime(2024, 6, 3, 0, 0, 0, DateTimeKind.Utc);
+        Directory.CreateDirectory(Path.Combine(root, "nested"));
+        WriteFile(root, "root.txt", "root", timestamp);
+        WriteFile(root, Path.Combine("nested", "child.txt"), "child", timestamp);
+
+        var volume = new WindowsMountedVolume(root);
+        var (files, directories) = DirectorySnapshotBuilder.BuildSnapshot(
+            volume,
+            hideMacOsSystemFiles: false,
+            excludedPathPatterns: null,
+            scanObserver: null,
+            includeSubfolders: false);
+
+        Assert.Equal(["root.txt"], files.Keys.OrderBy(path => path, StringComparer.OrdinalIgnoreCase));
+        Assert.Equal(["nested"], directories.OrderBy(path => path, StringComparer.OrdinalIgnoreCase));
     }
 
     [Fact]

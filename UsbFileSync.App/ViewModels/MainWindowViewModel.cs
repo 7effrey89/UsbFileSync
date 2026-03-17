@@ -82,6 +82,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _dryRun = true;
     private bool _verifyChecksums;
     private bool _moveMode;
+    private bool _includeSubfolders = true;
     private bool _hideMacOsSystemFiles = true;
     private IReadOnlyList<string> _excludedPathPatterns = Array.Empty<string>();
     private bool _useCustomCloudProviderCredentials;
@@ -430,6 +431,18 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         set
         {
             if (SetProperty(ref _moveMode, value))
+            {
+                HandleConfigurationChanged();
+            }
+        }
+    }
+
+    public bool IncludeSubfolders
+    {
+        get => _includeSubfolders;
+        set
+        {
+            if (SetProperty(ref _includeSubfolders, value))
             {
                 HandleConfigurationChanged();
             }
@@ -854,6 +867,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 DryRun = DryRun,
                 VerifyChecksums = VerifyChecksums,
                 MoveMode = MoveMode,
+                IncludeSubfolders = IncludeSubfolders,
                 HideMacOsSystemFiles = HideMacOsSystemFiles,
                 ExcludedPathPatterns = _excludedPathPatterns.ToList(),
                 ParallelCopyCount = ParallelCopyCount,
@@ -1684,6 +1698,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             DryRun = savedConfiguration.DryRun;
             VerifyChecksums = savedConfiguration.VerifyChecksums;
             MoveMode = savedConfiguration.MoveMode;
+            IncludeSubfolders = savedConfiguration.IncludeSubfolders;
             HideMacOsSystemFiles = savedConfiguration.HideMacOsSystemFiles;
             _excludedPathPatterns = (savedConfiguration.ExcludedPathPatterns ?? Array.Empty<string>())
                 .Where(pattern => !string.IsNullOrWhiteSpace(pattern))
@@ -2116,6 +2131,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             NormalizeAnalyzeTimingPath(configuration.DestinationPath),
             configuration.Mode,
             configuration.HideMacOsSystemFiles,
+            configuration.IncludeSubfolders,
             configuration.DetectMoves);
     }
 

@@ -709,6 +709,16 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public void IncludeSubfolders_CanBeDisabled()
+    {
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null));
+
+        viewModel.IncludeSubfolders = false;
+
+        Assert.False(viewModel.IncludeSubfolders);
+    }
+
+    [Fact]
     public void DetectMoves_IsOnlyAvailableInOneWayMode()
     {
         using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null));
