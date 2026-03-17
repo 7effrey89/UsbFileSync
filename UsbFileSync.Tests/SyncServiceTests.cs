@@ -1081,6 +1081,68 @@ public sealed class SyncServiceTests : IDisposable
         Assert.Contains(actions, a => a.Type == SyncActionType.CopyToSource && a.RelativePath == "local.txt");
     }
 
+    [Fact]
+    public async Task AnalyzeChangesAsync_OneWayHandlesManyDirectoriesInParallel()
+    {
+        var source = CreateDirectory("source");
+        var destination = CreateDirectory("destination");
+        var timestamp = new DateTime(2024, 3, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        // Create a wide + deep directory structure to exercise parallel workers.
+        for (var i = 0; i < 20; i++)
+        {
+            WriteFile(source, $"dir{i}/file.txt", $"data-{i}", timestamp);
+            WriteFile(source, $"dir{i}/sub/nested.txt", $"nested-{i}", timestamp);
+        }
+
+        WriteFile(destination, "stale.txt", "old", timestamp);
+
+        var service = new SyncService();
+        var actions = await service.AnalyzeChangesAsync(new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.OneWay,
+        });
+
+        // 20 top dirs + 20 sub dirs created + 40 files copied + 1 deleted = 81
+        var directoryCreates = actions.Count(a => a.Type == SyncActionType.CreateDirectoryOnDestination);
+        var fileCopies = actions.Count(a => a.Type == SyncActionType.CopyToDestination);
+        var deletes = actions.Count(a => a.Type == SyncActionType.DeleteFromDestination);
+        Assert.Equal(40, directoryCreates);
+        Assert.Equal(40, fileCopies);
+        Assert.Equal(1, deletes);
+    }
+
+    [Fact]
+    public async Task AnalyzeChangesAsync_ParallelScanReportsProgress()
+    {
+        var source = CreateDirectory("source");
+        var destination = CreateDirectory("destination");
+        var timestamp = new DateTime(2024, 3, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        for (var i = 0; i < 5; i++)
+        {
+            WriteFile(source, $"folder{i}/item.txt", $"content-{i}", timestamp);
+        }
+
+        var progressReports = new List<AnalyzeProgress>();
+        var progress = new CallbackProgress<AnalyzeProgress>(report => progressReports.Add(report));
+
+        var service = new SyncService();
+        await service.AnalyzeChangesAsync(new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.OneWay,
+        }, progress: progress);
+
+        // Progress should have been reported at least once (the flush at the end).
+        Assert.NotEmpty(progressReports);
+        var lastReport = progressReports[^1];
+        Assert.True(lastReport.FilesScanned > 0);
+    }
+
     private string CreateDirectory(string name)
     {
         var path = Path.Combine(_rootPath, name);

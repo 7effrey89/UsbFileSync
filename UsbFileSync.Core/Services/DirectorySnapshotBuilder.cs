@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Volumes;
 
@@ -100,8 +101,9 @@ internal static class DirectorySnapshotBuilder
         => BuildDirectories(volume, hideMacOsSystemFiles, excludedPathPatterns, scanObserver: null);
 
     /// <summary>
-    /// Scans a volume in a single pass and returns both file snapshots and directory paths.
-    /// This is more efficient than calling <see cref="Build"/> and <see cref="BuildDirectories"/> separately.
+    /// Scans a volume using parallel directory workers and returns both file snapshots
+    /// and directory paths.  Multiple threads enumerate different directories concurrently
+    /// so the OS I/O scheduler and SSD parallelism can be fully utilised.
     /// </summary>
     public static (IReadOnlyDictionary<string, FileSnapshot> Files, IReadOnlySet<string> Directories) BuildSnapshot(
         IVolumeSource volume,
@@ -119,43 +121,91 @@ internal static class DirectorySnapshotBuilder
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase));
         }
 
-        var fileSnapshots = new List<FileSnapshot>();
-        var directories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var pendingDirectories = new Stack<string>();
-        pendingDirectories.Push(string.Empty);
+        var fileSnapshots = new ConcurrentBag<FileSnapshot>();
+        var directories = new ConcurrentBag<string>();
+        var pendingWork = new ConcurrentQueue<string>();
+        var outstandingWork = 1; // root directory counts as 1 item
+        using var allDone = new ManualResetEventSlim(false);
 
-        while (pendingDirectories.Count > 0)
+        pendingWork.Enqueue(string.Empty);
+
+        // Use several workers so concurrent I/O requests keep the storage device busy.
+        // Capped at 4 to avoid overwhelming slow media or starving the thread-pool
+        // (source + destination snapshots already run in parallel).
+        var workerCount = Math.Clamp(Environment.ProcessorCount, 2, 4);
+        var workers = new Thread[workerCount];
+
+        for (var i = 0; i < workerCount; i++)
         {
-            var currentDirectory = pendingDirectories.Pop();
-            var entries = volume.Enumerate(currentDirectory).ToArray();
-
-            foreach (var entry in entries)
+            workers[i] = new Thread(() =>
             {
-                var relativePath = GetRelativePath(volume, entry);
-                if (IsExcludedRelativePath(volume, relativePath, hideMacOsSystemFiles, excludedPathPatterns))
+                var spinWait = new SpinWait();
+                while (!allDone.IsSet)
                 {
-                    continue;
-                }
+                    if (pendingWork.TryDequeue(out var currentDirectory))
+                    {
+                        spinWait.Reset();
+                        try
+                        {
+                            foreach (var entry in volume.Enumerate(currentDirectory))
+                            {
+                                var relativePath = GetRelativePath(volume, entry);
+                                if (IsExcludedRelativePath(volume, relativePath, hideMacOsSystemFiles, excludedPathPatterns))
+                                {
+                                    continue;
+                                }
 
-                if (entry.IsDirectory)
-                {
-                    scanObserver?.Invoke(entry.FullPath, true);
-                    directories.Add(relativePath);
-                    pendingDirectories.Push(relativePath);
+                                if (entry.IsDirectory)
+                                {
+                                    scanObserver?.Invoke(entry.FullPath, true);
+                                    directories.Add(relativePath);
+                                    Interlocked.Increment(ref outstandingWork);
+                                    pendingWork.Enqueue(relativePath);
+                                }
+                                else if (entry.Size is not null && entry.LastWriteTimeUtc is not null)
+                                {
+                                    scanObserver?.Invoke(entry.FullPath, false);
+                                    fileSnapshots.Add(new FileSnapshot(
+                                        relativePath, entry.FullPath, entry.Size.Value, entry.LastWriteTimeUtc.Value));
+                                }
+                            }
+                        }
+                        catch (Exception)
+                        {
+                            // Directory enumeration failed (permissions, I/O error); skip and continue.
+                        }
+                        finally
+                        {
+                            if (Interlocked.Decrement(ref outstandingWork) == 0)
+                            {
+                                allDone.Set();
+                            }
+                        }
+                    }
+                    else
+                    {
+                        spinWait.SpinOnce();
+                    }
                 }
-                else if (entry.Size is not null && entry.LastWriteTimeUtc is not null)
-                {
-                    scanObserver?.Invoke(entry.FullPath, false);
-                    fileSnapshots.Add(new FileSnapshot(relativePath, entry.FullPath, entry.Size.Value, entry.LastWriteTimeUtc.Value));
-                }
-            }
+            })
+            {
+                IsBackground = true,
+                Name = $"SnapshotWorker-{i}",
+            };
+
+            workers[i].Start();
+        }
+
+        foreach (var worker in workers)
+        {
+            worker.Join();
         }
 
         var files = fileSnapshots
             .OrderBy(snapshot => snapshot.RelativePath, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(snapshot => snapshot.RelativePath, snapshot => snapshot, StringComparer.OrdinalIgnoreCase);
 
-        return (files, directories);
+        return (files, new HashSet<string>(directories, StringComparer.OrdinalIgnoreCase));
     }
 
     private static IEnumerable<FileSnapshot> EnumerateFileSnapshots(
