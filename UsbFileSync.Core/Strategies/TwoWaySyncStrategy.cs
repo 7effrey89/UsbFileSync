@@ -8,7 +8,7 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
 {
     private readonly SyncMetadataStore _metadataStore = new();
 
-    public Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(
+    public async Task<IReadOnlyList<SyncAction>> AnalyzeChangesAsync(
         SyncConfiguration configuration,
         CancellationToken cancellationToken = default,
         IProgress<AnalyzeProgress>? progress = null)
@@ -26,10 +26,18 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
         var progressTracker = progress is null ? null : new AnalyzeProgressTracker(progress, TimeSpan.FromSeconds(1));
         var sourceObserver = progressTracker?.CreateObserver(sourceVolume.Root);
         var destinationObserver = progressTracker?.CreateObserver(destinationVolume.Root);
-        var sourceFiles = DirectorySnapshotBuilder.Build(sourceVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns, sourceObserver);
-        var destinationFiles = DirectorySnapshotBuilder.Build(destinationVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns, destinationObserver);
-        var sourceDirectories = DirectorySnapshotBuilder.BuildDirectories(sourceVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns, sourceObserver);
-        var destinationDirectories = DirectorySnapshotBuilder.BuildDirectories(destinationVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns, destinationObserver);
+
+        var sourceSnapshotTask = Task.Run(
+            () => DirectorySnapshotBuilder.BuildSnapshot(sourceVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns, sourceObserver),
+            cancellationToken);
+        var destinationSnapshotTask = Task.Run(
+            () => DirectorySnapshotBuilder.BuildSnapshot(destinationVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns, destinationObserver),
+            cancellationToken);
+
+        await Task.WhenAll(sourceSnapshotTask, destinationSnapshotTask).ConfigureAwait(false);
+
+        var (sourceFiles, sourceDirectories) = sourceSnapshotTask.Result;
+        var (destinationFiles, destinationDirectories) = destinationSnapshotTask.Result;
         var actions = new List<SyncAction>();
 
         foreach (var directory in sourceDirectories
@@ -146,10 +154,10 @@ public sealed class TwoWaySyncStrategy : ISyncStrategy
 
         progressTracker?.Flush();
 
-        return Task.FromResult<IReadOnlyList<SyncAction>>(actions
+        return actions
             .OrderBy(action => GetActionSortRank(action.Type))
             .ThenBy(action => action.RelativePath, StringComparer.OrdinalIgnoreCase)
-            .ToList());
+            .ToList();
     }
 
     private static SyncAction CreateSingleSidedAction(

@@ -161,10 +161,15 @@ public sealed class SyncService
     {
         var sourceVolume = configuration.ResolveSourceVolume();
         var destinationVolume = configuration.ResolveDestinationVolumes().Single();
-        var sourceFiles = DirectorySnapshotBuilder.Build(sourceVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns);
-        var destinationFiles = DirectorySnapshotBuilder.Build(destinationVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns);
-        var sourceDirectories = DirectorySnapshotBuilder.BuildDirectories(sourceVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns);
-        var destinationDirectories = DirectorySnapshotBuilder.BuildDirectories(destinationVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns);
+
+        IReadOnlyDictionary<string, FileSnapshot> sourceFiles = null!;
+        IReadOnlySet<string> sourceDirectories = null!;
+        IReadOnlyDictionary<string, FileSnapshot> destinationFiles = null!;
+        IReadOnlySet<string> destinationDirectories = null!;
+
+        Parallel.Invoke(
+            () => (sourceFiles, sourceDirectories) = DirectorySnapshotBuilder.BuildSnapshot(sourceVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns),
+            () => (destinationFiles, destinationDirectories) = DirectorySnapshotBuilder.BuildSnapshot(destinationVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns));
         var actionsByRelativePath = actions
             .GroupBy(action => action.RelativePath, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);

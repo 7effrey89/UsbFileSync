@@ -973,6 +973,176 @@ public sealed class SyncServiceTests : IDisposable
         Assert.Empty(Directory.GetFiles(destination, "*.usfcopy.tmp", SearchOption.TopDirectoryOnly));
     }
 
+    [Fact]
+    public void BuildSnapshot_ReturnsFilesAndDirectories_InSinglePass()
+    {
+        var root = CreateDirectory("snapshot-root");
+        var timestamp = new DateTime(2024, 6, 1, 0, 0, 0, DateTimeKind.Utc);
+        Directory.CreateDirectory(Path.Combine(root, "subdir"));
+        WriteFile(root, "root.txt", "root", timestamp);
+        WriteFile(root, "subdir/nested.txt", "nested", timestamp);
+
+        var volume = new WindowsMountedVolume(root);
+        var (files, directories) = DirectorySnapshotBuilder.BuildSnapshot(volume, hideMacOsSystemFiles: false, excludedPathPatterns: null);
+
+        Assert.Equal(2, files.Count);
+        Assert.True(files.ContainsKey("root.txt"));
+        Assert.True(files.ContainsKey("subdir/nested.txt"));
+        Assert.Single(directories);
+        Assert.Contains("subdir", directories);
+    }
+
+    [Fact]
+    public void BuildSnapshot_EmptyDirectory_ReturnsEmptyCollections()
+    {
+        var root = CreateDirectory("snapshot-empty");
+
+        var volume = new WindowsMountedVolume(root);
+        var (files, directories) = DirectorySnapshotBuilder.BuildSnapshot(volume, hideMacOsSystemFiles: false, excludedPathPatterns: null);
+
+        Assert.Empty(files);
+        Assert.Empty(directories);
+    }
+
+    [Fact]
+    public void BuildSnapshot_ExcludesPatterns_SameAsBuildAndBuildDirectories()
+    {
+        var root = CreateDirectory("snapshot-exclusions");
+        var timestamp = new DateTime(2024, 6, 2, 0, 0, 0, DateTimeKind.Utc);
+        Directory.CreateDirectory(Path.Combine(root, "included"));
+        Directory.CreateDirectory(Path.Combine(root, "excluded"));
+        WriteFile(root, "included/keep.txt", "keep", timestamp);
+        WriteFile(root, "excluded/skip.txt", "skip", timestamp);
+        WriteFile(root, "root.txt", "root", timestamp);
+
+        var volume = new WindowsMountedVolume(root);
+        IReadOnlyList<string> patterns = ["excluded"];
+
+        var filesFromBuild = DirectorySnapshotBuilder.Build(volume, hideMacOsSystemFiles: false, patterns);
+        var dirsFromBuild = DirectorySnapshotBuilder.BuildDirectories(volume, hideMacOsSystemFiles: false, patterns);
+        var (filesFromSnapshot, dirsFromSnapshot) = DirectorySnapshotBuilder.BuildSnapshot(volume, hideMacOsSystemFiles: false, patterns);
+
+        Assert.Equal(filesFromBuild.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase), filesFromSnapshot.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase));
+        Assert.Equal(dirsFromBuild.OrderBy(d => d, StringComparer.OrdinalIgnoreCase), dirsFromSnapshot.OrderBy(d => d, StringComparer.OrdinalIgnoreCase));
+        Assert.DoesNotContain("excluded/skip.txt", filesFromSnapshot.Keys, StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain("excluded", dirsFromSnapshot, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task AnalyzeChangesAsync_OneWay_ParallelScanProducesCorrectResults_WithManyFiles()
+    {
+        var source = CreateDirectory("parallel-source");
+        var destination = CreateDirectory("parallel-destination");
+        var timestamp = new DateTime(2024, 7, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        for (var i = 0; i < 20; i++)
+        {
+            WriteFile(source, $"file{i:D2}.txt", $"content{i}", timestamp);
+        }
+
+        WriteFile(destination, "obsolete.txt", "old", timestamp.AddDays(-1));
+
+        var service = new SyncService();
+        var actions = await service.AnalyzeChangesAsync(new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.OneWay,
+        });
+
+        var copyActions = actions.Where(a => a.Type == SyncActionType.CopyToDestination).ToList();
+        var deleteActions = actions.Where(a => a.Type == SyncActionType.DeleteFromDestination).ToList();
+
+        Assert.Equal(20, copyActions.Count);
+        Assert.Single(deleteActions);
+        Assert.Equal("obsolete.txt", deleteActions[0].RelativePath);
+    }
+
+    [Fact]
+    public async Task AnalyzeChangesAsync_TwoWay_ParallelScanProducesCorrectResults_WithSubdirectories()
+    {
+        var source = CreateDirectory("parallel-two-way-source");
+        var destination = CreateDirectory("parallel-two-way-destination");
+        var timestamp = new DateTime(2024, 7, 2, 0, 0, 0, DateTimeKind.Utc);
+
+        Directory.CreateDirectory(Path.Combine(source, "docs"));
+        WriteFile(source, "docs/readme.txt", "hello", timestamp);
+        WriteFile(destination, "local.txt", "local only", timestamp);
+
+        var service = new SyncService();
+        var actions = await service.AnalyzeChangesAsync(new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.TwoWay,
+        });
+
+        Assert.Contains(actions, a => a.Type == SyncActionType.CopyToDestination && a.RelativePath == "docs/readme.txt");
+        Assert.Contains(actions, a => a.Type == SyncActionType.CopyToSource && a.RelativePath == "local.txt");
+    }
+
+    [Fact]
+    public async Task AnalyzeChangesAsync_OneWayHandlesManyDirectoriesInParallel()
+    {
+        var source = CreateDirectory("source");
+        var destination = CreateDirectory("destination");
+        var timestamp = new DateTime(2024, 3, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        // Create a wide + deep directory structure to exercise parallel workers.
+        for (var i = 0; i < 20; i++)
+        {
+            WriteFile(source, $"dir{i}/file.txt", $"data-{i}", timestamp);
+            WriteFile(source, $"dir{i}/sub/nested.txt", $"nested-{i}", timestamp);
+        }
+
+        WriteFile(destination, "stale.txt", "old", timestamp);
+
+        var service = new SyncService();
+        var actions = await service.AnalyzeChangesAsync(new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.OneWay,
+        });
+
+        // 20 top dirs + 20 sub dirs created + 40 files copied + 1 deleted = 81
+        var directoryCreates = actions.Count(a => a.Type == SyncActionType.CreateDirectoryOnDestination);
+        var fileCopies = actions.Count(a => a.Type == SyncActionType.CopyToDestination);
+        var deletes = actions.Count(a => a.Type == SyncActionType.DeleteFromDestination);
+        Assert.Equal(40, directoryCreates);
+        Assert.Equal(40, fileCopies);
+        Assert.Equal(1, deletes);
+    }
+
+    [Fact]
+    public async Task AnalyzeChangesAsync_ParallelScanReportsProgress()
+    {
+        var source = CreateDirectory("source");
+        var destination = CreateDirectory("destination");
+        var timestamp = new DateTime(2024, 3, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        for (var i = 0; i < 5; i++)
+        {
+            WriteFile(source, $"folder{i}/item.txt", $"content-{i}", timestamp);
+        }
+
+        var progressReports = new List<AnalyzeProgress>();
+        var progress = new CallbackProgress<AnalyzeProgress>(report => progressReports.Add(report));
+
+        var service = new SyncService();
+        await service.AnalyzeChangesAsync(new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.OneWay,
+        }, progress: progress);
+
+        // Progress should have been reported at least once (the flush at the end).
+        Assert.NotEmpty(progressReports);
+        var lastReport = progressReports[^1];
+        Assert.True(lastReport.FilesScanned > 0);
+    }
+
     private string CreateDirectory(string name)
     {
         var path = Path.Combine(_rootPath, name);

@@ -73,13 +73,26 @@ public abstract class DirectoryBackedVolumeSource : IVolumeSource
 
         try
         {
-            return Directory.EnumerateFileSystemEntries(directoryPath)
-                .Select(entryPath =>
+            // Use DirectoryInfo.EnumerateFileSystemInfos to retrieve metadata (size,
+            // timestamps) from the single FindFirstFile/FindNextFile OS call, avoiding a
+            // separate stat per entry that the previous GetEntry path required.
+            var options = new EnumerationOptions
+            {
+                IgnoreInaccessible = true,
+                AttributesToSkip = (FileAttributes)0,
+            };
+            return new DirectoryInfo(directoryPath)
+                .EnumerateFileSystemInfos("*", options)
+                .Select(info =>
                 {
-                    var childRelativePath = Path.GetRelativePath(_backingRoot, entryPath)
+                    var childRelativePath = Path.GetRelativePath(_backingRoot, info.FullName)
                         .Replace(Path.DirectorySeparatorChar, '/')
                         .Replace(Path.AltDirectorySeparatorChar, '/');
-                    return GetEntry(childRelativePath);
+                    var displayPath = ToDisplayPath(childRelativePath);
+                    var isDirectory = (info.Attributes & FileAttributes.Directory) != 0;
+                    long? size = isDirectory ? null : ((FileInfo)info).Length;
+                    return (IFileEntry)new VolumeFileEntry(
+                        displayPath, info.Name, isDirectory, size, info.LastWriteTimeUtc, true);
                 })
                 .ToArray();
         }

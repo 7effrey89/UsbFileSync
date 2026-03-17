@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Volumes;
 
@@ -40,7 +41,7 @@ internal static class DirectorySnapshotBuilder
         IVolumeSource volume,
         bool hideMacOsSystemFiles,
         IReadOnlyList<string>? excludedPathPatterns,
-        Action<string, bool>? scanObserver = null)
+        Action<string, bool, int>? scanObserver = null)
     {
         ArgumentNullException.ThrowIfNull(volume);
 
@@ -77,7 +78,7 @@ internal static class DirectorySnapshotBuilder
         IVolumeSource volume,
         bool hideMacOsSystemFiles,
         IReadOnlyList<string>? excludedPathPatterns,
-        Action<string, bool>? scanObserver = null)
+        Action<string, bool, int>? scanObserver = null)
     {
         ArgumentNullException.ThrowIfNull(volume);
 
@@ -99,11 +100,119 @@ internal static class DirectorySnapshotBuilder
         IReadOnlyList<string>? excludedPathPatterns)
         => BuildDirectories(volume, hideMacOsSystemFiles, excludedPathPatterns, scanObserver: null);
 
+    /// <summary>
+    /// Scans a volume using parallel directory workers and returns both file snapshots
+    /// and directory paths.  Multiple threads enumerate different directories concurrently
+    /// so the OS I/O scheduler and SSD parallelism can be fully utilised.
+    /// </summary>
+    public static (IReadOnlyDictionary<string, FileSnapshot> Files, IReadOnlySet<string> Directories) BuildSnapshot(
+        IVolumeSource volume,
+        bool hideMacOsSystemFiles,
+        IReadOnlyList<string>? excludedPathPatterns,
+        Action<string, bool, int>? scanObserver = null)
+    {
+        ArgumentNullException.ThrowIfNull(volume);
+
+        var rootEntry = volume.GetEntry(string.Empty);
+        if (!rootEntry.Exists || !rootEntry.IsDirectory)
+        {
+            return (
+                new Dictionary<string, FileSnapshot>(StringComparer.OrdinalIgnoreCase),
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+        }
+
+        var fileSnapshots = new ConcurrentBag<FileSnapshot>();
+        var directories = new ConcurrentBag<string>();
+        var pendingWork = new ConcurrentQueue<string>();
+        var outstandingWork = 1; // root directory counts as 1 item
+        using var allDone = new ManualResetEventSlim(false);
+
+        pendingWork.Enqueue(string.Empty);
+
+        // Use several workers so concurrent I/O requests keep the storage device busy.
+        // Capped at 4 to avoid overwhelming slow media or starving the thread-pool
+        // (source + destination snapshots already run in parallel).
+        var workerCount = Math.Clamp(Environment.ProcessorCount, 2, 4);
+        var workers = new Thread[workerCount];
+
+        for (var i = 0; i < workerCount; i++)
+        {
+            workers[i] = new Thread(() =>
+            {
+                var spinWait = new SpinWait();
+                while (!allDone.IsSet)
+                {
+                    if (pendingWork.TryDequeue(out var currentDirectory))
+                    {
+                        spinWait.Reset();
+                        try
+                        {
+                            foreach (var entry in volume.Enumerate(currentDirectory))
+                            {
+                                var relativePath = GetRelativePath(volume, entry);
+                                if (IsExcludedRelativePath(volume, relativePath, hideMacOsSystemFiles, excludedPathPatterns))
+                                {
+                                    continue;
+                                }
+
+                                if (entry.IsDirectory)
+                                {
+                                    scanObserver?.Invoke(entry.FullPath, true, Volatile.Read(ref outstandingWork));
+                                    directories.Add(relativePath);
+                                    Interlocked.Increment(ref outstandingWork);
+                                    pendingWork.Enqueue(relativePath);
+                                }
+                                else if (entry.Size is not null && entry.LastWriteTimeUtc is not null)
+                                {
+                                    scanObserver?.Invoke(entry.FullPath, false, Volatile.Read(ref outstandingWork));
+                                    fileSnapshots.Add(new FileSnapshot(
+                                        relativePath, entry.FullPath, entry.Size.Value, entry.LastWriteTimeUtc.Value));
+                                }
+                            }
+                        }
+                        catch (Exception)
+                        {
+                            // Directory enumeration failed (permissions, I/O error); skip and continue.
+                        }
+                        finally
+                        {
+                            if (Interlocked.Decrement(ref outstandingWork) == 0)
+                            {
+                                allDone.Set();
+                            }
+                        }
+                    }
+                    else
+                    {
+                        spinWait.SpinOnce();
+                    }
+                }
+            })
+            {
+                IsBackground = true,
+                Name = $"SnapshotWorker-{i}",
+            };
+
+            workers[i].Start();
+        }
+
+        foreach (var worker in workers)
+        {
+            worker.Join();
+        }
+
+        var files = fileSnapshots
+            .OrderBy(snapshot => snapshot.RelativePath, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(snapshot => snapshot.RelativePath, snapshot => snapshot, StringComparer.OrdinalIgnoreCase);
+
+        return (files, new HashSet<string>(directories, StringComparer.OrdinalIgnoreCase));
+    }
+
     private static IEnumerable<FileSnapshot> EnumerateFileSnapshots(
         IVolumeSource volume,
         bool hideMacOsSystemFiles,
         IReadOnlyList<string>? excludedPathPatterns,
-        Action<string, bool>? scanObserver)
+        Action<string, bool, int>? scanObserver)
     {
         var pendingDirectories = new Stack<string>();
         pendingDirectories.Push(string.Empty);
@@ -121,7 +230,7 @@ internal static class DirectorySnapshotBuilder
                     continue;
                 }
 
-                scanObserver?.Invoke(entry.FullPath, false);
+                scanObserver?.Invoke(entry.FullPath, false, pendingDirectories.Count);
                 yield return new FileSnapshot(relativePath, entry.FullPath, entry.Size.Value, entry.LastWriteTimeUtc.Value);
             }
 
@@ -140,7 +249,7 @@ internal static class DirectorySnapshotBuilder
         IVolumeSource volume,
         bool hideMacOsSystemFiles,
         IReadOnlyList<string>? excludedPathPatterns,
-        Action<string, bool>? scanObserver)
+        Action<string, bool, int>? scanObserver)
     {
         var pendingDirectories = new Stack<string>();
         pendingDirectories.Push(string.Empty);
@@ -156,7 +265,7 @@ internal static class DirectorySnapshotBuilder
                     continue;
                 }
 
-                scanObserver?.Invoke(entry.FullPath, true);
+                scanObserver?.Invoke(entry.FullPath, true, pendingDirectories.Count);
                 yield return relativePath;
                 pendingDirectories.Push(relativePath);
             }

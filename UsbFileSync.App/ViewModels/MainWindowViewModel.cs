@@ -101,6 +101,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private string _busyOverlayCountersText = string.Empty;
     private string _busyOverlayPathText = string.Empty;
     private string _busyOverlayEtaText = string.Empty;
+    private bool _isBusyOverlayProgressIndeterminate;
     private bool _isBusyOverlayDismissed;
     private volatile bool _useCompletedAnalyzeResultsRequested;
     private int _currentAnalyzeCompletedDestinationCount;
@@ -482,7 +483,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _busyOperationKind == BusyOperationKind.Analyze &&
         !_isBusyOverlayDismissed;
 
-    public bool IsBusyOverlayProgressIndeterminate => _busyOperationKind != BusyOperationKind.Analyze;
+    public bool IsBusyOverlayProgressIndeterminate
+    {
+        get => _isBusyOverlayProgressIndeterminate;
+        private set => SetProperty(ref _isBusyOverlayProgressIndeterminate, value);
+    }
 
     public double BusyOverlayProgressValue
     {
@@ -1930,6 +1935,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         RunOnDispatcher(() =>
         {
+            if (completedSteps > 0 && IsBusyOverlayProgressIndeterminate)
+            {
+                IsBusyOverlayProgressIndeterminate = false;
+            }
+
             BusyOverlayProgressValue = progressValue;
             var description = totalSteps <= 2
                 ? $"{phase} for {destinationPath}."
@@ -1958,10 +1968,39 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         var formattedCurrentPath = FormatPathForProgress(progress.CurrentPath);
         var abbreviatedPath = AbbreviateAnalyzePath(formattedCurrentPath, formattedRootPath);
 
-        BusyOverlayCountersText = progress.DirectoriesScanned > 0
+        var countersText = progress.DirectoriesScanned > 0
             ? $"{progress.FilesScanned:N0} files scanned | {progress.DirectoriesScanned:N0} folders scanned"
             : $"{progress.FilesScanned:N0} files scanned";
+
+        if (analyzeElapsed.TotalSeconds >= 1 && progress.FilesScanned > 0)
+        {
+            var rate = (long)(progress.FilesScanned / analyzeElapsed.TotalSeconds);
+            countersText += $" | ~{rate:N0} files/s";
+        }
+
+        BusyOverlayCountersText = countersText;
         BusyOverlayPathText = abbreviatedPath;
+
+        // Estimate progress within the analyze step from the ratio of processed
+        // to total directories.  totalDiscovered = root + all discovered subdirs.
+        // processed = totalDiscovered − pendingDirectories.  This rises
+        // monotonically from 0 → 1 and works on the very first scan without any
+        // historical data, because the scanner reports its live queue depth.
+        var totalDiscovered = 1 + progress.DirectoriesScanned;
+        var processed = totalDiscovered - progress.PendingDirectories;
+        if (totalDiscovered > 1 && processed > 0)
+        {
+            if (IsBusyOverlayProgressIndeterminate)
+            {
+                IsBusyOverlayProgressIndeterminate = false;
+            }
+
+            var normalizedTotalSteps = Math.Max(1, totalSteps);
+            var stepWeight = 100d / normalizedTotalSteps;
+            var withinStepFraction = Math.Clamp((double)processed / totalDiscovered, 0, 0.95);
+            var interpolatedProgress = (completedSteps * stepWeight) + (stepWeight * withinStepFraction);
+            BusyOverlayProgressValue = Math.Clamp(interpolatedProgress, 0, 99);
+        }
 
         if (!TryUpdateAnalyzeEtaFromHistory(analyzeElapsed, analyzeTimingHistory, historicalDurationAfterCurrentDestination))
         {
@@ -2677,6 +2716,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _currentAnalyzeTotalDestinationCount = 0;
         _busyOperationStopwatch.Restart();
         _busyOverlaySmoothedEtaSeconds = null;
+        IsBusyOverlayProgressIndeterminate = busyOperationKind == BusyOperationKind.Analyze;
         RaisePropertyChanged(nameof(IsBusyOverlayVisible));
         RaisePropertyChanged(nameof(IsUseCompletedAnalyzeResultsVisible));
         (BusyOverlayTitle, BusyOverlayDescription) = busyOperationKind switch
@@ -2707,6 +2747,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _currentAnalyzeTotalDestinationCount = 0;
         _busyOperationStopwatch.Reset();
         _busyOverlaySmoothedEtaSeconds = null;
+        IsBusyOverlayProgressIndeterminate = false;
         BusyOverlayProgressValue = 0;
         RaisePropertyChanged(nameof(IsBusyOverlayVisible));
         RaisePropertyChanged(nameof(IsUseCompletedAnalyzeResultsVisible));
