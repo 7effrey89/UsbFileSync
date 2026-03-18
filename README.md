@@ -38,6 +38,7 @@ The HFS+ backend intentionally enforces read-only behavior so the application do
 - Safe cancellation for file copy operations.
 - Optional SHA-256 checksum validation for each copied file.
 - Optional `Move Mode` that deletes the original file only after the copy in the planned sync direction has been verified.
+- A dedicated **Find duplicates** workflow for the selected source location. It first narrows candidates by file size, then confirms byte-for-byte matches with SHA-256 before listing duplicate candidates side-by-side with the file that would be kept.
 - Configurable parallel file copy count, including `0` for adaptive auto parallelism.
 - Source and destination volumes are scanned concurrently during the analyze phase, so the time to index a source and destination on separate drives overlaps rather than being sequential. Each volume is also scanned in a single pass that collects both files and directories together, halving the number of directory traversals. Within each volume, multiple worker threads enumerate different directories in parallel so the OS I/O scheduler and SSD parallelism are fully utilised. File metadata (size, timestamps) is retrieved from the underlying `FindFirstFile`/`FindNextFile` OS call in a single pass, eliminating redundant per-file stat lookups.
 - Settings persistence between runs.
@@ -177,8 +178,9 @@ The main window includes:
 - Sync mode selection.
 - `Detect moves`, `Dry run`, `Subfolders`, `Checksums`, and `Move Mode` options with hover tooltips that explain their behavior.
 - `Analyze` and `Synchronize` actions.
+- A `Find duplicates` action for single-location duplicate analysis plus a `Delete selected duplicates` action after review.
 - A large synchronization preview table.
-- Filter tabs for `New Files`, `Changed`, `Deleted`, `Unchanged`, and `All`.
+- Filter tabs for `New Files`, `Changed`, `Deleted`, `Unchanged`, `Duplicates`, and `All`.
 - Shared selection checkboxes across filtered tabs, including select-all checkboxes in each preview header.
 - Edit menu actions for `Select All In Tab`, `Select By Pattern`, and `Invert Selection` against the active preview tab.
 - Action, status, sync action, transfer speed, source metadata, and destination metadata columns, with the same column set available across all preview tabs.
@@ -203,6 +205,21 @@ The settings dialog currently supports:
 - `Cloud provider credentials`: built-in provider credentials are the default mode planned for API-backed cloud integration, while an advanced `Use custom provider credentials` setting lets you keep your own Google Drive, Dropbox, and OneDrive client IDs as an override. Google Drive can now also store an optional client secret when Google requires it during token exchange. Dropbox still stores the app key. OneDrive stores a public-client application ID, always uses the fixed `common` tenant in the settings dialog, and can be tested directly from the settings dialog.
 
 Google Drive and OneDrive now support both source and destination flows on this branch when custom provider credentials are enabled. The settings dialog can test the configured cloud connection, and the source or destination picker can authenticate against the selected provider, browse folders, and use the selected cloud folder as either a readable source volume or a writable destination volume for synchronization.
+
+## Duplicate Finder
+
+Duplicate finding is intentionally kept as a separate workflow from the normal source-versus-destination synchronize analysis. Duplicate cleanup is a single-location file-management task, so combining it with pairwise sync planning would make every analyze run slower and would blur the meaning of the existing `New`, `Changed`, and `Deleted` tabs.
+
+UsbFileSync therefore uses a two-phase duplicate scan:
+
+1. **Rough grouping by file size** to avoid hashing files that cannot possibly match.
+2. **SHA-256 verification** only inside those same-size groups so every listed duplicate candidate is byte-for-byte identical.
+
+The `Duplicates` tab shows the redundant file on the left and the file chosen as the deterministic keep-reference on the right. Review the list, check the rows you want to remove, and then use `Delete selected duplicates`.
+
+## Photo Rename Guidance
+
+For the planned picture-renaming workflow, a sensible default naming convention is `yyyyMMdd_HHmmss[_City].ext`. That format is widely readable, sorts naturally, and maps well to common EXIF fields such as `DateTimeOriginal`, with an optional city suffix derived from GPS metadata when it is available. The city suffix should stay optional because many photos do not contain reliable location metadata.
 
 If you want to prepare custom provider values for the advanced override, see [`docs/custom-cloud-provider-credentials.md`](docs/custom-cloud-provider-credentials.md) for step-by-step setup instructions for Google Drive, Dropbox, and OneDrive.
 

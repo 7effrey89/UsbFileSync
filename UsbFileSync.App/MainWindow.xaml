@@ -33,9 +33,11 @@
         <Geometry x:Key="SyncModeChevronGeometry">M0,0 L196,0 L220,22 L196,44 L0,44 L24,22 Z</Geometry>
         <Geometry x:Key="SyncModeBidirectionalGeometry">M24,0 L196,0 L220,22 L196,44 L24,44 L0,22 Z</Geometry>
         <viewModels:PreviewColumnHeader x:Key="PreviewSourceFileHeader" Title="Source File" ColumnKey="SourceFile" />
+        <viewModels:PreviewColumnHeader x:Key="PreviewDuplicateFileHeader" Title="Duplicate File" ColumnKey="SourceFile" />
         <viewModels:PreviewColumnHeader x:Key="PreviewSyncActionHeader" Title="Sync action" ColumnKey="SyncAction" />
         <viewModels:PreviewColumnHeader x:Key="PreviewTransferSpeedHeader" Title="Transfer speed" ColumnKey="TransferSpeed" />
         <viewModels:PreviewColumnHeader x:Key="PreviewDestinationFileHeader" Title="Destination File" ColumnKey="DestinationFile" />
+        <viewModels:PreviewColumnHeader x:Key="PreviewKeepFileHeader" Title="Keep File" ColumnKey="DestinationFile" />
         <viewModels:PreviewColumnHeader x:Key="PreviewFileTypeHeader" Title="File type" ColumnKey="FileType" />
         <viewModels:PreviewColumnHeader x:Key="PreviewSourceSizeHeader" Title="Source size" ColumnKey="SourceSize" />
         <viewModels:PreviewColumnHeader x:Key="PreviewDestinationSizeHeader" Title="Destination size" ColumnKey="DestinationSize" />
@@ -844,15 +846,22 @@
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="90" />
                                 <ColumnDefinition Width="10" />
+                                <ColumnDefinition Width="120" />
+                                <ColumnDefinition Width="10" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
 
                             <Button Grid.Column="0" HorizontalAlignment="Stretch" Command="{Binding AnalyzeCommand}" Content="Analyze" />
-                            <ToggleButton Grid.Column="2"
-                                          HorizontalAlignment="Stretch"
-                                          IsChecked="{Binding IsSyncRunning, Mode=OneWay}"
-                                          Command="{Binding ToggleSyncCommand}"
-                                          Content="{Binding SyncButtonText}" />
+                            <Button Grid.Column="2"
+                                    HorizontalAlignment="Stretch"
+                                    Command="{Binding FindDuplicatesCommand}"
+                                    Content="Find duplicates"
+                                    ToolTip="Scan the selected source location for same-size files and confirm duplicate candidates with SHA-256." />
+                            <ToggleButton Grid.Column="4"
+                                           HorizontalAlignment="Stretch"
+                                           IsChecked="{Binding IsSyncRunning, Mode=OneWay}"
+                                           Command="{Binding ToggleSyncCommand}"
+                                           Content="{Binding SyncButtonText}" />
                         </Grid>
                     </StackPanel>
                 </Border>
@@ -949,10 +958,22 @@
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
 
-                        <StackPanel Grid.Row="0" Margin="0,0,0,12">
-                            <TextBlock Text="Synchronization preview" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}" />
-                            <TextBlock Margin="0,6,0,0" Text="Use the tabs to filter the preview table by new, changed, deleted, unchanged, or all items." Foreground="{StaticResource SubtleTextBrush}" />
-                        </StackPanel>
+                        <Grid Grid.Row="0" Margin="0,0,0,12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Synchronization preview" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}" />
+                                <TextBlock Margin="0,6,0,0" Text="Use the tabs to filter the preview table by new, changed, deleted, unchanged, duplicate candidates, or all items." Foreground="{StaticResource SubtleTextBrush}" />
+                            </StackPanel>
+                            <Button Grid.Column="1"
+                                    Margin="12,0,0,0"
+                                    VerticalAlignment="Center"
+                                    Command="{Binding DeleteSelectedDuplicatesCommand}"
+                                    Content="Delete selected duplicates"
+                                    ToolTip="Delete the checked duplicate files from the currently selected source location." />
+                        </Grid>
 
                         <Grid Grid.Row="1">
                             <TabControl x:Name="PreviewTabControl">
@@ -1110,6 +1131,47 @@
                                         <DataGridTemplateColumn Header="{StaticResource PreviewSyncActionHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" CellTemplate="{StaticResource PreviewProgressCellTemplate}" Width="140" />
                                         <DataGridTemplateColumn Header="{StaticResource PreviewTransferSpeedHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" CellTemplate="{StaticResource PreviewTransferSpeedCellTemplate}" Width="110" />
                                         <DataGridTemplateColumn Header="{StaticResource PreviewDestinationFileHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
+                                        <DataGridTextColumn Header="{StaticResource PreviewFileTypeHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" Binding="{Binding FileType}" Width="90" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
+                                        <DataGridTextColumn Header="{StaticResource PreviewSourceSizeHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" Binding="{Binding SourceSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
+                                        <DataGridTextColumn Header="{StaticResource PreviewDestinationSizeHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" Binding="{Binding DestinationSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
+                                        <DataGridTextColumn Header="{StaticResource PreviewSourceModifiedHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" Binding="{Binding SourceModified}" Width="150" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
+                                        <DataGridTextColumn Header="{StaticResource PreviewDestinationModifiedHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" Binding="{Binding DestinationModified}" Width="150" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
+                                        <DataGridTemplateColumn Header="{StaticResource PreviewStatusHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" CellTemplate="{StaticResource PreviewStatusCellTemplate}" Width="140" />
+                                        <DataGridTemplateColumn Header="{StaticResource PreviewActionHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" CellTemplate="{StaticResource PreviewActionCellTemplate}" Width="210" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </TabItem>
+                            <TabItem>
+                                <TabItem.Header>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="⧉"
+                                                   Margin="0,0,6,0"
+                                                   FontWeight="Bold"
+                                                   Foreground="#0F6CBD" />
+                                        <TextBlock Text="{Binding DuplicateFilesCount, StringFormat=Duplicates ({0})}" />
+                                    </StackPanel>
+                                </TabItem.Header>
+                                <DataGrid ItemsSource="{Binding DuplicateFiles}"
+                                          AutoGenerateColumns="False"
+                                          CanUserAddRows="False"
+                                          IsReadOnly="True"
+                                          ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                          ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                    <DataGrid.Columns>
+                                        <DataGridTemplateColumn Width="36" CellTemplate="{StaticResource PreviewSelectionCellTemplate}" HeaderStyle="{StaticResource PreviewSelectionColumnHeaderStyle}">
+                                            <DataGridTemplateColumn.HeaderTemplate>
+                                                <DataTemplate>
+                                                    <CheckBox IsThreeState="True"
+                                                              HorizontalAlignment="Center"
+                                                              VerticalAlignment="Center"
+                                                              IsChecked="{Binding DataContext.AreAllDuplicateFilesSelected, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.HeaderTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="{StaticResource PreviewDuplicateFileHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" CellTemplate="{StaticResource PreviewNameCellTemplate}" Width="400" />
+                                        <DataGridTemplateColumn Header="{StaticResource PreviewSyncActionHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" CellTemplate="{StaticResource PreviewProgressCellTemplate}" Width="140" />
+                                        <DataGridTemplateColumn Header="{StaticResource PreviewTransferSpeedHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" CellTemplate="{StaticResource PreviewTransferSpeedCellTemplate}" Width="110" />
+                                        <DataGridTemplateColumn Header="{StaticResource PreviewKeepFileHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
                                         <DataGridTextColumn Header="{StaticResource PreviewFileTypeHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" Binding="{Binding FileType}" Width="90" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="{StaticResource PreviewSourceSizeHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" Binding="{Binding SourceSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                         <DataGridTextColumn Header="{StaticResource PreviewDestinationSizeHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" Binding="{Binding DestinationSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />

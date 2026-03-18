@@ -6,4 +6,5 @@ public enum SyncPreviewCategory
     ChangedFiles,
     DeletedFiles,
     UnchangedFiles,
+    Duplicates,
 }

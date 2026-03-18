@@ -228,6 +228,7 @@ public partial class MainWindow : Window
         1 => PreviewTabKind.ChangedFiles,
         2 => PreviewTabKind.DeletedFiles,
         3 => PreviewTabKind.UnchangedFiles,
+        4 => PreviewTabKind.Duplicates,
         _ => PreviewTabKind.AllFiles,
     };
 

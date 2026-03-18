@@ -20,6 +20,7 @@ public enum PreviewTabKind
     ChangedFiles,
     DeletedFiles,
     UnchangedFiles,
+    Duplicates,
     AllFiles,
 }
 
@@ -34,6 +35,7 @@ internal enum BusyOperationKind
 {
     None,
     Analyze,
+    FindDuplicates,
     Sync,
 }
 
@@ -49,6 +51,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     }
 
     private readonly SyncService _syncService;
+    private readonly DuplicateFileAnalysisService _duplicateFileAnalysisService;
     private readonly ISyncSettingsStore? _settingsStore;
     private readonly IFolderPickerService _folderPickerService;
     private readonly ISourceVolumeService _sourceVolumeService;
@@ -62,6 +65,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private readonly Stopwatch _busyOperationStopwatch = new();
     private readonly Dictionary<string, AnalyzeTimingHistory> _analyzeTimingHistory = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, SyncPreviewRowViewModel> _previewRowsByItemKey = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DuplicateFileCandidate> _duplicateCandidatesByItemKey = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<PreviewTabKind, ICollectionView> _previewViews = new();
     private readonly Dictionary<PreviewColumnKey, HashSet<string>> _activePreviewFilters = new();
     private CancellationTokenSource? _persistConfigurationCancellationTokenSource;
@@ -118,18 +122,18 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public MainWindowViewModel()
         : this(
             new SyncService(),
-            CreateDefaultSettingsStore(),
-            new WindowsFolderPickerService(),
-            new WindowsFileLauncherService(),
-            null,
-            SyncVolumeServiceFactory.CreateSourceVolumeService(),
-            SyncVolumeServiceFactory.CreateDestinationVolumeService(),
-            new WorkerSyncExecutionClient())
+            settingsStore: CreateDefaultSettingsStore(),
+            folderPickerService: new WindowsFolderPickerService(),
+            fileLauncherService: new WindowsFileLauncherService(),
+            sourceVolumeService: SyncVolumeServiceFactory.CreateSourceVolumeService(),
+            destinationVolumeService: SyncVolumeServiceFactory.CreateDestinationVolumeService(),
+            syncExecutionClient: new WorkerSyncExecutionClient())
     {
     }
 
     public MainWindowViewModel(
         SyncService syncService,
+        DuplicateFileAnalysisService? duplicateFileAnalysisService = null,
         ISyncSettingsStore? settingsStore = null,
         IFolderPickerService? folderPickerService = null,
         IFileLauncherService? fileLauncherService = null,
@@ -139,6 +143,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ISyncExecutionClient? syncExecutionClient = null)
     {
         _syncService = syncService;
+        _duplicateFileAnalysisService = duplicateFileAnalysisService ?? new DuplicateFileAnalysisService();
         _settingsStore = settingsStore;
         _folderPickerService = folderPickerService ?? new WindowsFolderPickerService();
         _sourceVolumeService = sourceVolumeService ?? SyncVolumeServiceFactory.CreateSourceVolumeService();
@@ -155,6 +160,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ChangedFiles = new BulkObservableCollection<SyncPreviewRowViewModel>();
         DeletedFiles = new BulkObservableCollection<SyncPreviewRowViewModel>();
         UnchangedFiles = new BulkObservableCollection<SyncPreviewRowViewModel>();
+        DuplicateFiles = new BulkObservableCollection<SyncPreviewRowViewModel>();
         AllFiles = new BulkObservableCollection<SyncPreviewRowViewModel>();
         if (_hasWpfApplication)
         {
@@ -162,6 +168,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             _previewViews[PreviewTabKind.ChangedFiles] = CreatePreviewView(ChangedFiles);
             _previewViews[PreviewTabKind.DeletedFiles] = CreatePreviewView(DeletedFiles);
             _previewViews[PreviewTabKind.UnchangedFiles] = CreatePreviewView(UnchangedFiles);
+            _previewViews[PreviewTabKind.Duplicates] = CreatePreviewView(DuplicateFiles);
             _previewViews[PreviewTabKind.AllFiles] = CreatePreviewView(AllFiles);
         }
         PreviewFilterOptions = new ObservableCollection<PreviewFilterOptionViewModel>();
@@ -176,6 +183,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ActivityLogView.Filter = ShouldIncludeActivityLogEntry;
         RemainingQueue = new BulkObservableCollection<QueueActionViewModel>();
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, CanExecuteSyncCommands);
+        FindDuplicatesCommand = new AsyncRelayCommand(FindDuplicatesAsync, CanExecuteDuplicateAnalyzeCommand);
+        DeleteSelectedDuplicatesCommand = new AsyncRelayCommand(DeleteSelectedDuplicatesAsync, CanDeleteSelectedDuplicates);
         ToggleSyncCommand = new RelayCommand(ToggleSync, CanExecuteToggleSyncCommand);
         CancelBusyOperationCommand = new RelayCommand(CancelBusyOperation, CanCancelBusyOperation);
         UseCompletedAnalyzeResultsCommand = new RelayCommand(UseCompletedAnalyzeResults, CanUseCompletedAnalyzeResults);
@@ -206,6 +215,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public ObservableCollection<SyncPreviewRowViewModel> DeletedFiles { get; }
 
     public ObservableCollection<SyncPreviewRowViewModel> UnchangedFiles { get; }
+
+    public ObservableCollection<SyncPreviewRowViewModel> DuplicateFiles { get; }
 
     public ObservableCollection<SyncPreviewRowViewModel> AllFiles { get; }
 
@@ -276,6 +287,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     }
 
     public AsyncRelayCommand AnalyzeCommand { get; }
+
+    public AsyncRelayCommand FindDuplicatesCommand { get; }
+
+    public AsyncRelayCommand DeleteSelectedDuplicatesCommand { get; }
 
     public RelayCommand ToggleSyncCommand { get; }
 
@@ -484,6 +499,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             {
                 RaisePropertyChanged(nameof(IsBusyOverlayVisible));
                 AnalyzeCommand.RaiseCanExecuteChanged();
+                FindDuplicatesCommand.RaiseCanExecuteChanged();
+                DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
                 ToggleSyncCommand.RaiseCanExecuteChanged();
                 CancelBusyOperationCommand.RaiseCanExecuteChanged();
                 UseCompletedAnalyzeResultsCommand.RaiseCanExecuteChanged();
@@ -493,7 +510,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public bool IsBusyOverlayVisible =>
         IsBusy &&
-        _busyOperationKind == BusyOperationKind.Analyze &&
+        (_busyOperationKind == BusyOperationKind.Analyze || _busyOperationKind == BusyOperationKind.FindDuplicates) &&
         !_isBusyOverlayDismissed;
 
     public bool IsBusyOverlayProgressIndeterminate
@@ -553,6 +570,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             {
                 RaisePropertyChanged(nameof(SyncButtonText));
                 AnalyzeCommand.RaiseCanExecuteChanged();
+                FindDuplicatesCommand.RaiseCanExecuteChanged();
+                DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
                 ToggleSyncCommand.RaiseCanExecuteChanged();
             }
         }
@@ -612,6 +631,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public int UnchangedFilesCount => UnchangedFiles.Count;
 
+    public int DuplicateFilesCount => DuplicateFiles.Count;
+
     public int AllFilesCount => AllFiles.Count;
 
     public bool? AreAllNewFilesSelected
@@ -636,6 +657,12 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         get => GetSelectionState(PreviewTabKind.UnchangedFiles);
         set => SetSelection(PreviewTabKind.UnchangedFiles, value);
+    }
+
+    public bool? AreAllDuplicateFilesSelected
+    {
+        get => GetSelectionState(PreviewTabKind.Duplicates);
+        set => SetSelection(PreviewTabKind.Duplicates, value);
     }
 
     public bool? AreAllFilesSelected
@@ -786,9 +813,16 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private bool CanExecuteSyncCommands() => !IsBusy && !IsSyncRunning && IsConfigurationComplete();
 
+    private bool CanExecuteDuplicateAnalyzeCommand() => !IsBusy && !IsSyncRunning && !string.IsNullOrWhiteSpace(SourcePath);
+
     private bool CanExecuteToggleSyncCommand() => IsSyncRunning || (!IsBusy && IsConfigurationComplete());
 
     private bool CanCancelBusyOperation() => _busyOperationCancellationTokenSource is { IsCancellationRequested: false };
+
+    private bool CanDeleteSelectedDuplicates() =>
+        !IsBusy &&
+        !IsSyncRunning &&
+        DuplicateFiles.Any(row => row.CanSelect && row.IsSelected);
 
     private bool CanUseCompletedAnalyzeResults() =>
         IsBusy &&
@@ -827,6 +861,12 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 RaisePropertyChanged(nameof(IsBusyOverlayVisible));
                 StatusMessage = "Cancelling preview generation...";
                 AddLog("Analyze", "Cancel requested while building the preview.", SyncLogSeverity.Warning);
+                break;
+            case BusyOperationKind.FindDuplicates:
+                _isBusyOverlayDismissed = true;
+                RaisePropertyChanged(nameof(IsBusyOverlayVisible));
+                StatusMessage = "Cancelling duplicate analysis...";
+                AddLog("Duplicate Finder", "Cancel requested while hashing duplicate candidates.", SyncLogSeverity.Warning);
                 break;
             case BusyOperationKind.Sync:
                 StatusMessage = "Stopping synchronization...";
@@ -1122,6 +1162,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private async Task AnalyzeAsync()
     {
+        ReplaceDuplicateCandidates([]);
+
         if (!TryValidateConfiguration(requireAccessibleDestinationPath: false, out var destinationPathsToAnalyze, out var skippedDestinationPaths))
         {
             AddLog("Error", StatusMessage, SyncLogSeverity.Error);
@@ -1233,6 +1275,118 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             var analysisResult = await analysisTask.ConfigureAwait(true);
             cancellationTokenSource.Token.ThrowIfCancellationRequested();
             await ApplyAnalyzePreviewResultAsync(analysisResult, cancellationTokenSource.Token).ConfigureAwait(true);
+        }, cancellationTokenSource.Token).ConfigureAwait(true);
+
+        ClearBusyOperation(cancellationTokenSource);
+        cancellationTokenSource.Dispose();
+    }
+
+    private async Task FindDuplicatesAsync()
+    {
+        if (!TryResolveSourceVolume(out var sourceVolume, out var validationMessage))
+        {
+            StatusMessage = validationMessage;
+            AddLog("Error", StatusMessage, SyncLogSeverity.Error);
+            return;
+        }
+
+        var cancellationTokenSource = new CancellationTokenSource();
+        SetBusyOperation(cancellationTokenSource, BusyOperationKind.FindDuplicates);
+        BusyOverlayProgressValue = 0;
+
+        await RunBusyOperationAsync(async () =>
+        {
+            await EnsureBusyOverlayCanRenderAsync().ConfigureAwait(true);
+
+            var analysisResult = await Task.Run(async () =>
+                await _duplicateFileAnalysisService.AnalyzeAsync(
+                    sourceVolume!,
+                    HideMacOsSystemFiles,
+                    _excludedPathPatterns,
+                    IncludeSubfolders,
+                    cancellationTokenSource.Token,
+                    progress: new Progress<DuplicateAnalyzeProgress>(progress =>
+                    {
+                        RunOnDispatcher(() =>
+                        {
+                            IsBusyOverlayProgressIndeterminate = false;
+                            BusyOverlayProgressValue = progress.TotalFilesToHash == 0
+                                ? 100
+                                : Math.Clamp((progress.HashedFiles * 100d) / progress.TotalFilesToHash, 0d, 100d);
+                            BusyOverlayDescription = progress.TotalFilesToHash == 0
+                                ? "No checksum candidates required hashing."
+                                : $"Hashing {progress.HashedFiles:N0} of {progress.TotalFilesToHash:N0} duplicate candidates...";
+                            BusyOverlayCountersText = progress.DuplicateGroupsFound == 0
+                                ? "No identical checksum groups confirmed yet."
+                                : $"{progress.DuplicateGroupsFound:N0} duplicate group(s) confirmed.";
+                            BusyOverlayPathText = FormatPathForProgress(progress.CurrentPath);
+                            BusyOverlayEtaText = string.Empty;
+                        });
+                    })).ConfigureAwait(false),
+                CancellationToken.None).ConfigureAwait(true);
+
+            cancellationTokenSource.Token.ThrowIfCancellationRequested();
+            ApplyDuplicateAnalysisResult(analysisResult);
+        }, cancellationTokenSource.Token).ConfigureAwait(true);
+
+        ClearBusyOperation(cancellationTokenSource);
+        cancellationTokenSource.Dispose();
+    }
+
+    private async Task DeleteSelectedDuplicatesAsync()
+    {
+        var selectedCandidates = DuplicateFiles
+            .Where(row => row.CanSelect && row.IsSelected)
+            .Select(row => _duplicateCandidatesByItemKey.TryGetValue(row.ItemKey, out var candidate) ? candidate : null)
+            .OfType<DuplicateFileCandidate>()
+            .ToList();
+
+        if (selectedCandidates.Count == 0)
+        {
+            StatusMessage = "Select at least one duplicate file to delete.";
+            return;
+        }
+
+        if (!TryResolveSourceVolume(out var sourceVolume, out var validationMessage))
+        {
+            StatusMessage = validationMessage;
+            AddLog("Error", StatusMessage, SyncLogSeverity.Error);
+            return;
+        }
+
+        if (sourceVolume!.IsReadOnly)
+        {
+            StatusMessage = "The selected source location is read-only, so duplicate files cannot be deleted.";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
+            return;
+        }
+
+        var cancellationTokenSource = new CancellationTokenSource();
+        SetBusyOperation(cancellationTokenSource, BusyOperationKind.Sync);
+
+        await RunBusyOperationAsync(async () =>
+        {
+            var deletedCount = await Task.Run(() =>
+                _duplicateFileAnalysisService.DeleteDuplicates(sourceVolume, selectedCandidates, cancellationTokenSource.Token),
+                cancellationTokenSource.Token).ConfigureAwait(true);
+
+            var deletedKeys = selectedCandidates
+                .Select(candidate => candidate.ItemKey)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            ReplaceDuplicateCandidates(_duplicateCandidatesByItemKey.Values.Where(candidate => !deletedKeys.Contains(candidate.ItemKey)));
+            ReplacePreviewRows(DuplicateFiles.Where(row => !deletedKeys.Contains(row.ItemKey)).ToList());
+            SetStatusMessage(
+                deletedCount == 1
+                    ? "Deleted 1 duplicate file."
+                    : $"Deleted {deletedCount} duplicate files.",
+                isSuccess: true);
+            CurrentTransferItem = deletedCount == 1 ? "1 duplicate removed." : $"{deletedCount} duplicates removed.";
+            CurrentTransferDetails = DuplicateFilesCount == 0
+                ? "No duplicate candidates remain."
+                : $"{DuplicateFilesCount} duplicate candidate(s) remain.";
+            CurrentTransferProgressValue = 0;
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Verbose);
         }, cancellationTokenSource.Token).ConfigureAwait(true);
 
         ClearBusyOperation(cancellationTokenSource);
@@ -1407,6 +1561,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private void HandleConfigurationChanged()
     {
         AnalyzeCommand.RaiseCanExecuteChanged();
+        FindDuplicatesCommand.RaiseCanExecuteChanged();
+        DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
         ToggleSyncCommand.RaiseCanExecuteChanged();
 
         if (_isLoadingSavedConfiguration)
@@ -1847,12 +2003,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             StatusMessage = _busyOperationKind switch
             {
                 BusyOperationKind.Analyze => "Preview loading cancelled.",
+                BusyOperationKind.FindDuplicates => "Duplicate analysis cancelled.",
                 BusyOperationKind.Sync => "Synchronization stopped.",
                 _ => "Operation cancelled.",
             };
             CurrentTransferItem = _busyOperationKind switch
             {
                 BusyOperationKind.Analyze => "Preview generation cancelled.",
+                BusyOperationKind.FindDuplicates => "Duplicate analysis cancelled.",
                 BusyOperationKind.Sync => "No active transfer.",
                 _ => CurrentTransferItem,
             };
@@ -1865,9 +2023,12 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
             AddLog(
                 "Warning",
-                _busyOperationKind == BusyOperationKind.Analyze
-                    ? "Preview generation cancelled."
-                    : "Synchronization cancelled.",
+                _busyOperationKind switch
+                {
+                    BusyOperationKind.Analyze => "Preview generation cancelled.",
+                    BusyOperationKind.FindDuplicates => "Duplicate analysis cancelled.",
+                    _ => "Synchronization cancelled.",
+                },
                 SyncLogSeverity.Warning);
         }
         catch (Exception exception)
@@ -1916,6 +2077,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         var actions = analysisResult.Actions;
         var preview = analysisResult.Preview;
 
+        ReplaceDuplicateCandidates([]);
         ReplaceActions(actions);
         await ReplacePreviewAsync(preview, cancellationToken).ConfigureAwait(true);
         ReplaceQueue(GetSelectedActions());
@@ -1927,6 +2089,94 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         CurrentTransferItem = actions.Count == 0 ? "No file operations required." : isPartial ? "Partial preview ready." : "Preview ready.";
         CurrentTransferDetails = QueueSummary;
         AddLog("Analyze", StatusMessage, isPartial ? SyncLogSeverity.Warning : SyncLogSeverity.Verbose);
+    }
+
+    private void ApplyDuplicateAnalysisResult(DuplicateAnalysisResult analysisResult)
+    {
+        var duplicatePreview = CreateDuplicatePreview(analysisResult.Candidates);
+        ReplaceDuplicateCandidates(analysisResult.Candidates);
+        ReplaceActions([]);
+        ReplacePreviewRows(duplicatePreview);
+        ReplaceQueue([]);
+
+        var duplicateCount = analysisResult.Candidates.Count;
+        var message = duplicateCount == 0
+            ? "No duplicated files were found in the selected source location."
+            : duplicateCount == 1
+                ? "Found 1 duplicate file candidate. Select it if you want UsbFileSync to delete it."
+                : $"Found {duplicateCount} duplicate file candidates across {analysisResult.DuplicateGroupCount} checksum-matched group(s). Select the files you want UsbFileSync to delete.";
+        SetStatusMessage(message, isSuccess: duplicateCount == 0);
+        CurrentTransferItem = duplicateCount == 0 ? "Duplicate analysis complete." : "Duplicate results ready.";
+        CurrentTransferDetails = duplicateCount == 0
+            ? "No redundant files found."
+            : $"{analysisResult.DuplicateGroupCount} duplicate group(s) confirmed with SHA-256.";
+        CurrentTransferProgressValue = 0;
+        AddLog("Duplicate Finder", StatusMessage, duplicateCount == 0 ? SyncLogSeverity.Verbose : SyncLogSeverity.Warning);
+    }
+
+    private IReadOnlyList<SyncPreviewRowViewModel> CreateDuplicatePreview(IEnumerable<DuplicateFileCandidate> candidates)
+    {
+        var rows = candidates
+            .Select(candidate => new SyncPreviewRowViewModel(new SyncPreviewItem(
+                ItemKey: candidate.ItemKey,
+                RelativePath: candidate.DuplicateRelativePath,
+                IsDirectory: false,
+                SourceFullPath: candidate.DuplicateFullPath,
+                SourceLength: candidate.Length,
+                SourceLastWriteTimeUtc: candidate.LastWriteTimeUtc,
+                DestinationFullPath: candidate.KeepFullPath,
+                DestinationLength: candidate.Length,
+                DestinationLastWriteTimeUtc: candidate.LastWriteTimeUtc,
+                Direction: "<-",
+                Status: "Duplicate",
+                Category: SyncPreviewCategory.Duplicates,
+                PlannedActionType: SyncActionType.DeleteFromSource,
+                DriveLocationPath: SourcePath), driveDisplayNameService: _driveDisplayNameService))
+            .ToList();
+
+        return SortPreviewRows(rows);
+    }
+
+    private void ReplaceDuplicateCandidates(IEnumerable<DuplicateFileCandidate> candidates)
+    {
+        _duplicateCandidatesByItemKey.Clear();
+        foreach (var candidate in candidates)
+        {
+            _duplicateCandidatesByItemKey[candidate.ItemKey] = candidate;
+        }
+
+        DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
+    }
+
+    private bool TryResolveSourceVolume(out IVolumeSource? sourceVolume, out string validationMessage)
+    {
+        sourceVolume = null;
+        if (!TryValidateSyncPath(SourcePath, "Source", requireExistingDirectory: true, out validationMessage))
+        {
+            return false;
+        }
+
+        var sourceVolumeService = GetCurrentSourceVolumeService();
+        if (sourceVolumeService.TryCreateVolume(SourcePath, out sourceVolume, out var failureReason) &&
+            sourceVolume is not null)
+        {
+            validationMessage = string.Empty;
+            return true;
+        }
+
+        try
+        {
+            sourceVolume = new WindowsMountedVolume(SourcePath);
+            validationMessage = string.Empty;
+            return true;
+        }
+        catch (Exception)
+        {
+            validationMessage = string.IsNullOrWhiteSpace(failureReason)
+                ? "Source path could not be opened."
+                : $"Source volume could not be opened. {failureReason}";
+            return false;
+        }
     }
 
     private static string BuildAnalyzeCompletionMessage(int actionCount, bool isPartial, int completedDestinations, int totalDestinations)
@@ -2282,11 +2532,13 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             ReplaceRows(ChangedFiles, rows.Where(row => row.Category == SyncPreviewCategory.ChangedFiles));
             ReplaceRows(DeletedFiles, rows.Where(row => row.Category == SyncPreviewCategory.DeletedFiles));
             ReplaceRows(UnchangedFiles, rows.Where(row => row.Status == "Unchanged"));
+            ReplaceRows(DuplicateFiles, rows.Where(row => row.Category == SyncPreviewCategory.Duplicates));
             ReplaceRows(AllFiles, rows);
             RaisePropertyChanged(nameof(NewFilesCount));
             RaisePropertyChanged(nameof(ChangedFilesCount));
             RaisePropertyChanged(nameof(DeletedFilesCount));
             RaisePropertyChanged(nameof(UnchangedFilesCount));
+            RaisePropertyChanged(nameof(DuplicateFilesCount));
             RaisePropertyChanged(nameof(AllFilesCount));
             RaiseSelectionStateChanged();
         });
@@ -2406,6 +2658,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         PreviewTabKind.ChangedFiles => ChangedFiles,
         PreviewTabKind.DeletedFiles => DeletedFiles,
         PreviewTabKind.UnchangedFiles => UnchangedFiles,
+        PreviewTabKind.Duplicates => DuplicateFiles,
         _ => AllFiles,
     };
 
@@ -2503,7 +2756,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         RaisePropertyChanged(nameof(AreAllChangedFilesSelected));
         RaisePropertyChanged(nameof(AreAllDeletedFilesSelected));
         RaisePropertyChanged(nameof(AreAllUnchangedFilesSelected));
+        RaisePropertyChanged(nameof(AreAllDuplicateFilesSelected));
         RaisePropertyChanged(nameof(AreAllFilesSelected));
+        DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
     }
 
     private ICollectionView CreatePreviewView(ObservableCollection<SyncPreviewRowViewModel> rows)
@@ -2540,6 +2795,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ReplaceRows(ChangedFiles, SortPreviewRows(ChangedFiles));
         ReplaceRows(DeletedFiles, SortPreviewRows(DeletedFiles));
         ReplaceRows(UnchangedFiles, SortPreviewRows(UnchangedFiles));
+        ReplaceRows(DuplicateFiles, SortPreviewRows(DuplicateFiles));
         ReplaceRows(AllFiles, SortPreviewRows(AllFiles));
         RefreshPreviewViews();
     }
@@ -2732,12 +2988,13 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _currentAnalyzeTotalDestinationCount = 0;
         _busyOperationStopwatch.Restart();
         _busyOverlaySmoothedEtaSeconds = null;
-        IsBusyOverlayProgressIndeterminate = busyOperationKind == BusyOperationKind.Analyze;
+        IsBusyOverlayProgressIndeterminate = busyOperationKind is BusyOperationKind.Analyze or BusyOperationKind.FindDuplicates;
         RaisePropertyChanged(nameof(IsBusyOverlayVisible));
         RaisePropertyChanged(nameof(IsUseCompletedAnalyzeResultsVisible));
         (BusyOverlayTitle, BusyOverlayDescription) = busyOperationKind switch
         {
             BusyOperationKind.Analyze => ("Loading preview...", "Building the synchronization preview."),
+            BusyOperationKind.FindDuplicates => ("Finding duplicates...", "Hashing same-size files to confirm identical copies."),
             BusyOperationKind.Sync => ("Synchronizing...", "Applying the selected file operations."),
             _ => ("Working...", "Please wait."),
         };

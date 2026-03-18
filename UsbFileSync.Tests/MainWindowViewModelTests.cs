@@ -1447,6 +1447,66 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public async Task FindDuplicatesCommand_LoadsChecksumConfirmedDuplicateCandidates()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("photos\\keep.jpg", "duplicate-bytes");
+        workspace.WriteSourceFile("photos\\copy.jpg", "duplicate-bytes");
+        workspace.WriteSourceFile("photos\\same-size-different.jpg", "different-bytes");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+        };
+
+        viewModel.FindDuplicatesCommand.Execute(null);
+
+        await WaitForAsync(() => viewModel.DuplicateFilesCount == 1).ConfigureAwait(true);
+
+        var duplicateRow = Assert.Single(viewModel.DuplicateFiles);
+        var pairedPaths = new[]
+        {
+            duplicateRow.SourcePath,
+            duplicateRow.DestinationPath,
+        };
+        Assert.Equal("Duplicate", duplicateRow.Status);
+        Assert.Contains(pairedPaths, path => path.Contains("keep.jpg", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(pairedPaths, path => path.Contains("copy.jpg", StringComparison.OrdinalIgnoreCase));
+        Assert.Empty(viewModel.RemainingQueue);
+        Assert.Contains("duplicate file candidate", viewModel.StatusMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DeleteSelectedDuplicatesCommand_RemovesCheckedDuplicateFiles()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("keep.txt", "duplicate-bytes");
+        workspace.WriteSourceFile("copy.txt", "duplicate-bytes");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            SourcePath = workspace.SourcePath,
+        };
+
+        viewModel.FindDuplicatesCommand.Execute(null);
+        await WaitForAsync(() => viewModel.DuplicateFilesCount == 1).ConfigureAwait(true);
+        viewModel.SelectAllInTab(PreviewTabKind.Duplicates);
+
+        Assert.True(viewModel.DeleteSelectedDuplicatesCommand.CanExecute(null));
+
+        viewModel.DeleteSelectedDuplicatesCommand.Execute(null);
+
+        await WaitForAsync(() => viewModel.DuplicateFilesCount == 0).ConfigureAwait(true);
+
+        var remainingFiles = new[]
+        {
+            Path.Combine(workspace.SourcePath, "keep.txt"),
+            Path.Combine(workspace.SourcePath, "copy.txt"),
+        }.Where(File.Exists).ToList();
+
+        Assert.Single(remainingFiles);
+        Assert.Equal("Deleted 1 duplicate file.", viewModel.StatusMessage);
+    }
+
+    [Fact]
     public void FileComparisonPaneViewModel_Create_UsesEmptyPreviewWhenPathMissing()
     {
         var pane = FileComparisonPaneViewModel.Create("Destination", string.Empty, string.Empty, string.Empty, new FilePreviewService());
