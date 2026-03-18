@@ -573,6 +573,27 @@
                        VerticalAlignment="Center"
                        TextTrimming="CharacterEllipsis" />
         </DataTemplate>
+        <ContextMenu x:Key="DriveToolDuplicateContextMenu" x:Shared="False">
+            <MenuItem Header="Open file"
+                      Command="{Binding PlacementTarget.Tag.OpenPreviewFileCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+            <MenuItem Header="Open file folder"
+                      Command="{Binding PlacementTarget.Tag.OpenPreviewContainingFolderCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+            <Separator />
+            <MenuItem Header="Show preview"
+                      IsEnabled="{Binding PlacementTarget.DataContext.HasOpenPath, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      Tag="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      Click="OnShowComparisonClicked" />
+            <MenuItem Header="Rename"
+                      IsEnabled="{Binding PlacementTarget.DataContext.HasOpenPath, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      Tag="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      Click="OnRenameDriveToolDuplicateClicked" />
+            <MenuItem Header="Move"
+                      IsEnabled="{Binding PlacementTarget.DataContext.HasOpenPath, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      Tag="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      Click="OnMoveDriveToolDuplicateClicked" />
+        </ContextMenu>
         <Style x:Key="ModeToggleButtonStyle" TargetType="ToggleButton">
             <Setter Property="Background" Value="#FFFFFF" />
             <Setter Property="Foreground" Value="{StaticResource HeaderTextBrush}" />
@@ -607,11 +628,16 @@
             </Style.Triggers>
         </Style>
         <Style x:Key="DriveToolDuplicateRowStyle" TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+            <Setter Property="Tag" Value="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}" />
+            <Setter Property="ContextMenu" Value="{StaticResource DriveToolDuplicateContextMenu}" />
             <Style.Triggers>
                 <DataTrigger Binding="{Binding IsGroupHeader}" Value="True">
                     <Setter Property="Background" Value="{StaticResource SectionBackgroundBrush}" />
                 </DataTrigger>
             </Style.Triggers>
+        </Style>
+        <Style x:Key="DriveToolDuplicateCellStyle" TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
+            <Setter Property="Padding" Value="14,2,18,2" />
         </Style>
         <DataTemplate x:Key="DriveToolDuplicateNameCellTemplate">
             <StackPanel Orientation="Horizontal" Margin="{Binding NameMargin}">
@@ -627,10 +653,77 @@
             </StackPanel>
         </DataTemplate>
         <DataTemplate x:Key="DriveToolDuplicatePathCellTemplate">
-            <TextBlock Text="{Binding DisplayPath}"
-                       TextTrimming="CharacterEllipsis"
-                       Foreground="{StaticResource SubtleTextBrush}"
-                       VerticalAlignment="Center" />
+            <Grid>
+                <Button Background="Transparent"
+                        BorderThickness="0"
+                        Padding="0"
+                        HorizontalAlignment="Left"
+                        Cursor="Hand"
+                        IsEnabled="{Binding HasOpenPath}"
+                        Command="{Binding DataContext.OpenPreviewContainingFolderCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                        CommandParameter="{Binding}">
+                    <Button.ContextMenu>
+                        <StaticResource ResourceKey="DriveToolDuplicateContextMenu" />
+                    </Button.ContextMenu>
+                    <Button.Tag>
+                        <Binding Path="DataContext" RelativeSource="{RelativeSource AncestorType=Window}" />
+                    </Button.Tag>
+                    <StackPanel Orientation="Horizontal">
+                        <Grid Margin="0,0,8,0" Width="16" Height="16" VerticalAlignment="Center">
+                            <Image Source="{Binding IconSource}" Stretch="Uniform" Width="16" Height="16" />
+                            <TextBlock FontFamily="Segoe MDL2 Assets"
+                                       Text="{Binding IconGlyph}"
+                                       VerticalAlignment="Center"
+                                       HorizontalAlignment="Center"
+                                       Foreground="#5A5A5A">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IconSource}" Value="{x:Null}">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding HasOpenPath}" Value="False">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <Grid.Style>
+                                <Style TargetType="Grid">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasOpenPath}" Value="False">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Grid.Style>
+                        </Grid>
+                        <TextBlock Text="{Binding DisplayPath}"
+                                   TextTrimming="CharacterEllipsis"
+                                   TextDecorations="Underline"
+                                   Foreground="{Binding PathBrush}"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <TextBlock Text="{Binding DisplayPath}"
+                           TextTrimming="CharacterEllipsis"
+                           Foreground="{StaticResource SubtleTextBrush}"
+                           VerticalAlignment="Center">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding HasOpenPath}" Value="False">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </Grid>
         </DataTemplate>
         <DataTemplate x:Key="DriveToolDuplicateSelectionCellTemplate">
             <CheckBox HorizontalAlignment="Center"
@@ -642,7 +735,7 @@
             <TextBlock Text="{Binding ActionText}"
                        FontWeight="{Binding NameFontWeight}"
                        VerticalAlignment="Center"
-                       Foreground="{StaticResource HeaderTextBrush}" />
+                       Foreground="{Binding ActionBrush}" />
         </DataTemplate>
     </Window.Resources>
 
@@ -1474,6 +1567,7 @@
                         <DataGrid Grid.Row="1"
                                   ItemsSource="{Binding DriveToolDuplicateRows}"
                                   RowStyle="{StaticResource DriveToolDuplicateRowStyle}"
+                                  CellStyle="{StaticResource DriveToolDuplicateCellStyle}"
                                   AutoGenerateColumns="False"
                                   CanUserAddRows="False"
                                   IsReadOnly="True"
@@ -1490,9 +1584,9 @@
                                         </DataTemplate>
                                     </DataGridTemplateColumn.HeaderTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTemplateColumn Header="Item" CellTemplate="{StaticResource DriveToolDuplicateNameCellTemplate}" Width="260" />
-                                <DataGridTemplateColumn Header="Location / notes" CellTemplate="{StaticResource DriveToolDuplicatePathCellTemplate}" Width="*" />
-                                <DataGridTextColumn Header="Checksum" Binding="{Binding ChecksumText}" Width="240" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
+                                <DataGridTemplateColumn Header="Item" CellTemplate="{StaticResource DriveToolDuplicateNameCellTemplate}" Width="280" />
+                                <DataGridTemplateColumn Header="Location / notes" CellTemplate="{StaticResource DriveToolDuplicatePathCellTemplate}" Width="360" />
+                                <DataGridTextColumn Header="Checksum" Binding="{Binding ChecksumText}" Width="260" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                 <DataGridTextColumn Header="File type" Binding="{Binding FileType}" Width="90" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                 <DataGridTextColumn Header="Size" Binding="{Binding SizeText}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
                                 <DataGridTemplateColumn Header="Action" CellTemplate="{StaticResource DriveToolDuplicateActionCellTemplate}" Width="110" />

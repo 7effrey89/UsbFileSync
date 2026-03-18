@@ -1536,6 +1536,100 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public async Task DriveToolDuplicateRow_ActionText_TracksSelectionState()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("keep.txt", "duplicate-bytes");
+        workspace.WriteSourceFile("copy.txt", "duplicate-bytes");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            DriveToolsPath = workspace.SourcePath,
+        };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
+
+        viewModel.FindDuplicatesCommand.Execute(null);
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 3).ConfigureAwait(true);
+
+        var duplicateRow = viewModel.DriveToolDuplicateRows.Single(row => !row.IsGroupHeader && row.DisplayPath.Contains("copy.txt", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("Keep", duplicateRow.ActionText);
+
+        duplicateRow.IsSelected = true;
+
+        Assert.Equal("Delete", duplicateRow.ActionText);
+    }
+
+    [Fact]
+    public async Task OpenPreviewContainingFolderCommand_UsesFileLauncherService_ForDriveToolDuplicateRows()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("keep.txt", "duplicate-bytes");
+        workspace.WriteSourceFile("copy.txt", "duplicate-bytes");
+        var launcher = new StubFileLauncherService();
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null), fileLauncherService: launcher)
+        {
+            DriveToolsPath = workspace.SourcePath,
+        };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
+
+        viewModel.FindDuplicatesCommand.Execute(null);
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 3).ConfigureAwait(true);
+
+        var duplicateRow = viewModel.DriveToolDuplicateRows.Single(row => !row.IsGroupHeader && row.DisplayPath.Contains("copy.txt", StringComparison.OrdinalIgnoreCase));
+        viewModel.OpenPreviewContainingFolderCommand.Execute(duplicateRow);
+
+        Assert.Equal("open-folder", launcher.LastOperation);
+        Assert.EndsWith(Path.Combine("copy.txt"), launcher.LastPath, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RenameDriveToolDuplicateAsync_RenamesFileAndRefreshesResults()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("keep.txt", "duplicate-bytes");
+        workspace.WriteSourceFile("copy.txt", "duplicate-bytes");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            DriveToolsPath = workspace.SourcePath,
+        };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
+
+        viewModel.FindDuplicatesCommand.Execute(null);
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 3).ConfigureAwait(true);
+
+        var duplicateRow = viewModel.DriveToolDuplicateRows.Single(row => !row.IsGroupHeader && row.DisplayPath.Contains("copy.txt", StringComparison.OrdinalIgnoreCase));
+        var renamed = await viewModel.RenameDriveToolDuplicateAsync(duplicateRow, "renamed.txt").ConfigureAwait(true);
+
+        Assert.True(renamed);
+        Assert.True(File.Exists(Path.Combine(workspace.SourcePath, "renamed.txt")));
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRows.Any(row => row.DisplayPath.Contains("renamed.txt", StringComparison.OrdinalIgnoreCase))).ConfigureAwait(true);
+    }
+
+    [Fact]
+    public async Task MoveDriveToolDuplicateAsync_MovesFileAndRefreshesResults()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("keep.txt", "duplicate-bytes");
+        workspace.WriteSourceFile("copy.txt", "duplicate-bytes");
+        var destinationFolder = Path.Combine(workspace.SourcePath, "Moved");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(destinationFolder))
+        {
+            DriveToolsPath = workspace.SourcePath,
+        };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
+
+        viewModel.FindDuplicatesCommand.Execute(null);
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 3).ConfigureAwait(true);
+
+        var duplicateRow = viewModel.DriveToolDuplicateRows.Single(row => !row.IsGroupHeader && row.DisplayPath.Contains("copy.txt", StringComparison.OrdinalIgnoreCase));
+        var moved = await viewModel.MoveDriveToolDuplicateAsync(duplicateRow, destinationFolder).ConfigureAwait(true);
+
+        Assert.True(moved);
+        Assert.True(File.Exists(Path.Combine(destinationFolder, "copy.txt")));
+        Assert.False(File.Exists(Path.Combine(workspace.SourcePath, "copy.txt")));
+        Assert.Equal("No duplicated files were found in the selected source location.", viewModel.StatusMessage);
+    }
+
+    [Fact]
     public void FileComparisonPaneViewModel_Create_UsesEmptyPreviewWhenPathMissing()
     {
         var pane = FileComparisonPaneViewModel.Create("Destination", string.Empty, string.Empty, string.Empty, new FilePreviewService());

@@ -901,25 +901,25 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void OpenPreviewItem(object? parameter)
     {
-        if (parameter is SyncPreviewRowViewModel row && !string.IsNullOrWhiteSpace(row.OpenPath))
+        if (TryGetOpenPath(parameter, out var path))
         {
-            _fileLauncherService.OpenItem(row.OpenPath);
+            _fileLauncherService.OpenItem(path);
         }
     }
 
     private void OpenPreviewContainingFolder(object? parameter)
     {
-        if (parameter is SyncPreviewRowViewModel row && !string.IsNullOrWhiteSpace(row.OpenPath))
+        if (TryGetOpenPath(parameter, out var path))
         {
-            _fileLauncherService.OpenContainingFolder(row.OpenPath);
+            _fileLauncherService.OpenContainingFolder(path);
         }
     }
 
     private void OpenPreviewFile(object? parameter)
     {
-        if (parameter is SyncPreviewRowViewModel row && File.Exists(row.OpenPath))
+        if (TryGetExistingOpenPath(parameter, out var path))
         {
-            _fileLauncherService.OpenFile(row.OpenPath);
+            _fileLauncherService.OpenFile(path);
         }
     }
 
@@ -947,11 +947,19 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
-    private static bool CanOpenPreviewItem(object? parameter) =>
-        parameter is SyncPreviewRowViewModel row && !string.IsNullOrWhiteSpace(row.OpenPath);
+    private static bool CanOpenPreviewItem(object? parameter) => parameter switch
+    {
+        SyncPreviewRowViewModel row => !string.IsNullOrWhiteSpace(row.OpenPath),
+        DriveToolDuplicateRowViewModel row => row.HasOpenPath,
+        _ => false,
+    };
 
-    private static bool CanOpenPreviewFile(object? parameter) =>
-        parameter is SyncPreviewRowViewModel row && File.Exists(row.OpenPath);
+    private static bool CanOpenPreviewFile(object? parameter) => parameter switch
+    {
+        SyncPreviewRowViewModel row => File.Exists(row.OpenPath),
+        DriveToolDuplicateRowViewModel row => row.HasOpenPath && File.Exists(row.OpenPath),
+        _ => false,
+    };
 
     private static bool CanOpenDestinationPreviewItem(object? parameter) =>
         parameter is SyncPreviewRowViewModel row && !string.IsNullOrWhiteSpace(row.OpenDestinationPath);
@@ -978,6 +986,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         SelectedWorkspaceMode == WorkspaceMode.DriveTools &&
         SelectedDriveTool == DriveToolKind.Duplicates &&
         DriveToolDuplicateRows.Any(row => row.CanSelect && row.IsSelected);
+
+    internal bool CanModifyDriveToolDuplicate(object? parameter) =>
+        !IsBusy &&
+        !IsSyncRunning &&
+        parameter is DriveToolDuplicateRowViewModel { FileEntry: not null, HasOpenPath: true };
 
     private bool CanUseCompletedAnalyzeResults() =>
         IsBusy &&
@@ -1099,6 +1112,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public IReadOnlyDictionary<string, string> GetPreviewProviderMappings() =>
         new Dictionary<string, string>(_previewProviderMappings, StringComparer.OrdinalIgnoreCase);
+
+    internal string? BrowseForDriveToolMoveTarget(string? initialPath) =>
+        _folderPickerService.PickFolder("Choose a destination folder for the duplicate file", initialPath);
 
     public void UpdateExcludedPathPatterns(IReadOnlyList<string> excludedPathPatterns)
     {
@@ -2334,12 +2350,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 itemKey: $"summary|{group.GroupKey}",
                 groupKey: group.GroupKey,
                 isGroupHeader: true,
-                displayName: firstFile.ChecksumSha256,
-                displayPath: $"{group.Files.Count} matching file(s)",
-                checksumText: group.ChecksumSha256,
-                fileType: Path.GetExtension(firstFile.FullPath).TrimStart('.').ToUpperInvariant() is { Length: > 0 } extension ? extension : "File",
-                sizeText: FormatDriveToolSize(group.Length),
-                actionText: "Review"));
+                    displayName: firstFile.ChecksumSha256,
+                    displayPath: $"{group.Files.Count} matching file(s)",
+                    checksumText: group.ChecksumSha256,
+                    fileType: Path.GetExtension(firstFile.FullPath).TrimStart('.').ToUpperInvariant() is { Length: > 0 } extension ? extension : "File",
+                    sizeText: FormatDriveToolSize(group.Length)));
 
             foreach (var file in group.Files)
             {
@@ -2352,7 +2367,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                     checksumText: string.Empty,
                     fileType: string.Empty,
                     sizeText: string.Empty,
-                    actionText: "Delete",
                     fileEntry: file));
             }
         }
@@ -3095,6 +3109,151 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             RaisePropertyChanged(nameof(AreAllDriveToolDuplicatesSelected));
             DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
         }
+    }
+
+    internal SyncPreviewRowViewModel? CreatePreviewDialogRow(object? parameter)
+    {
+        if (parameter is SyncPreviewRowViewModel previewRow)
+        {
+            return previewRow;
+        }
+
+        if (parameter is not DriveToolDuplicateRowViewModel duplicateRow ||
+            duplicateRow.FileEntry is null ||
+            string.IsNullOrWhiteSpace(duplicateRow.OpenPath))
+        {
+            return null;
+        }
+
+        return new SyncPreviewRowViewModel(
+            new SyncPreviewItem(
+                ItemKey: duplicateRow.ItemKey,
+                RelativePath: duplicateRow.FileEntry.RelativePath,
+                IsDirectory: false,
+                SourceFullPath: duplicateRow.FileEntry.FullPath,
+                SourceLength: duplicateRow.FileEntry.Length,
+                SourceLastWriteTimeUtc: duplicateRow.FileEntry.LastWriteTimeUtc,
+                DestinationFullPath: string.Empty,
+                DestinationLength: null,
+                DestinationLastWriteTimeUtc: null,
+                Direction: string.Empty,
+                Status: "Duplicate",
+                Category: SyncPreviewCategory.UnchangedFiles,
+                PlannedActionType: null,
+                DriveLocationPath: DriveToolsPath),
+            driveDisplayNameService: _driveDisplayNameService);
+    }
+
+    private static bool TryGetOpenPath(object? parameter, out string path)
+    {
+        path = parameter switch
+        {
+            SyncPreviewRowViewModel row => row.OpenPath,
+            DriveToolDuplicateRowViewModel row => row.OpenPath,
+            _ => string.Empty,
+        };
+
+        return !string.IsNullOrWhiteSpace(path);
+    }
+
+    private static bool TryGetExistingOpenPath(object? parameter, out string path)
+    {
+        if (TryGetOpenPath(parameter, out path) && File.Exists(path))
+        {
+            return true;
+        }
+
+        path = string.Empty;
+        return false;
+    }
+
+    internal async Task<bool> RenameDriveToolDuplicateAsync(object? parameter, string newFileName)
+    {
+        if (!CanModifyDriveToolDuplicate(parameter) ||
+            parameter is not DriveToolDuplicateRowViewModel duplicateRow ||
+            duplicateRow.FileEntry is null)
+        {
+            return false;
+        }
+
+        var trimmedFileName = newFileName?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(trimmedFileName))
+        {
+            StatusMessage = "Enter a file name before renaming.";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
+            return false;
+        }
+
+        if (trimmedFileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        {
+            StatusMessage = "The new file name contains invalid characters.";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
+            return false;
+        }
+
+        var sourcePath = duplicateRow.OpenPath;
+        var targetPath = Path.Combine(Path.GetDirectoryName(sourcePath) ?? DriveToolsPath, trimmedFileName);
+        if (string.Equals(sourcePath, targetPath, StringComparison.OrdinalIgnoreCase))
+        {
+            StatusMessage = "The file already has that name.";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
+            return false;
+        }
+
+        if (File.Exists(targetPath))
+        {
+            StatusMessage = "A file with that name already exists in the target folder.";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
+            return false;
+        }
+
+        File.Move(sourcePath, targetPath);
+        SetStatusMessage($"Renamed '{duplicateRow.FileName}' to '{trimmedFileName}'.", isSuccess: true);
+        AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Verbose);
+        await FindDuplicatesAsync().ConfigureAwait(true);
+        return true;
+    }
+
+    internal async Task<bool> MoveDriveToolDuplicateAsync(object? parameter, string destinationFolder)
+    {
+        if (!CanModifyDriveToolDuplicate(parameter) ||
+            parameter is not DriveToolDuplicateRowViewModel duplicateRow ||
+            duplicateRow.FileEntry is null)
+        {
+            return false;
+        }
+
+        var trimmedDestinationFolder = destinationFolder?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(trimmedDestinationFolder))
+        {
+            StatusMessage = "Select a destination folder before moving the file.";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
+            return false;
+        }
+
+        Directory.CreateDirectory(trimmedDestinationFolder);
+
+        var sourcePath = duplicateRow.OpenPath;
+        var targetPath = Path.Combine(trimmedDestinationFolder, duplicateRow.FileName);
+        if (string.Equals(sourcePath, targetPath, StringComparison.OrdinalIgnoreCase))
+        {
+            StatusMessage = "The file is already in that folder.";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
+            return false;
+        }
+
+        if (File.Exists(targetPath))
+        {
+            StatusMessage = "A file with the same name already exists in the destination folder.";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
+            return false;
+        }
+
+        File.Move(sourcePath, targetPath);
+        SetStatusMessage($"Moved '{duplicateRow.FileName}' to '{trimmedDestinationFolder}'.", isSuccess: true);
+        AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Verbose);
+        await FindDuplicatesAsync().ConfigureAwait(true);
+        return true;
     }
 
     private void UpdateSelectedQueue()

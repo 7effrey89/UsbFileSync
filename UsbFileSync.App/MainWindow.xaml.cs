@@ -126,13 +126,19 @@ public partial class MainWindow : Window
 
     private void OnShowComparisonClicked(object sender, RoutedEventArgs e)
     {
-        if (sender is not MenuItem { Tag: SyncPreviewRowViewModel row })
+        if (sender is not MenuItem menuItem)
         {
             return;
         }
 
         try
         {
+            var row = _viewModel.CreatePreviewDialogRow(menuItem.Tag);
+            if (row is null)
+            {
+                return;
+            }
+
             var dialog = new FileComparisonDialog(row, _viewModel.GetPreviewProviderMappings())
             {
                 Owner = this,
@@ -144,11 +150,53 @@ public partial class MainWindow : Window
         {
             System.Windows.MessageBox.Show(
                 this,
-                $"Could not open the comparison view.\n\n{exception.Message}",
-                "Comparison unavailable",
+                $"Could not open the preview view.\n\n{exception.Message}",
+                "Preview unavailable",
                 System.Windows.MessageBoxButton.OK,
                 System.Windows.MessageBoxImage.Warning);
         }
+    }
+
+    private async void OnRenameDriveToolDuplicateClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: DriveToolDuplicateRowViewModel row } ||
+            !_viewModel.CanModifyDriveToolDuplicate(row))
+        {
+            return;
+        }
+
+        var dialog = new TextInputDialog(
+            prompt: "Rename file",
+            description: "Enter the new file name.",
+            initialValue: row.FileName)
+        {
+            Owner = this,
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        await _viewModel.RenameDriveToolDuplicateAsync(row, dialog.EnteredText).ConfigureAwait(true);
+    }
+
+    private async void OnMoveDriveToolDuplicateClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: DriveToolDuplicateRowViewModel row } ||
+            !_viewModel.CanModifyDriveToolDuplicate(row))
+        {
+            return;
+        }
+
+        var initialFolder = System.IO.Path.GetDirectoryName(row.OpenPath) ?? _viewModel.DriveToolsPath;
+        var destinationFolder = _viewModel.BrowseForDriveToolMoveTarget(initialFolder);
+        if (string.IsNullOrWhiteSpace(destinationFolder))
+        {
+            return;
+        }
+
+        await _viewModel.MoveDriveToolDuplicateAsync(row, destinationFolder).ConfigureAwait(true);
     }
 
     private void OnSourcePathTextBoxGotKeyboardFocus(object sender, RoutedEventArgs e)
