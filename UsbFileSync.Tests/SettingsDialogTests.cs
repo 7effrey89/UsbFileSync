@@ -99,6 +99,38 @@ public sealed class SettingsDialogTests
     }
 
     [Fact]
+    public void TryCreateImageRenameFileNamePatterns_IncludesDefaultsAndCustomMasks()
+    {
+        var defaults = new[]
+        {
+            new SelectableTextOptionViewModel { Label = "IMG_????", Value = "IMG_????", IsSelected = true },
+            new SelectableTextOptionViewModel { Label = "DSC_????", Value = "DSC_????", IsSelected = false },
+        };
+
+        var success = SettingsDialog.TryCreateImageRenameFileNamePatterns(defaults, "gopr????\nIMG_????", out var patterns, out var errorMessage);
+
+        Assert.True(success);
+        Assert.Equal(string.Empty, errorMessage);
+        Assert.Equal(["IMG_????", "GOPR????"], patterns);
+    }
+
+    [Fact]
+    public void TryCreateImageRenameExtensions_NormalizesAndDeduplicatesExtensions()
+    {
+        var defaults = new[]
+        {
+            new SelectableTextOptionViewModel { Label = ".jpg", Value = ".jpg", IsSelected = true },
+            new SelectableTextOptionViewModel { Label = ".jpeg", Value = ".jpeg", IsSelected = false },
+        };
+
+        var success = SettingsDialog.TryCreateImageRenameExtensions(defaults, "jpeg\n.jpg", out var extensions, out var errorMessage);
+
+        Assert.True(success);
+        Assert.Equal(string.Empty, errorMessage);
+        Assert.Equal([".jpg", ".jpeg"], extensions);
+    }
+
+    [Fact]
     public void TryCreateCloudProviderAppRegistrations_StoresConfiguredProvidersOnly()
     {
         var registrations = new[]

@@ -38,7 +38,7 @@ The HFS+ backend intentionally enforces read-only behavior so the application do
 - Safe cancellation for file copy operations.
 - Optional SHA-256 checksum validation for each copied file.
 - Optional `Move Mode` that deletes the original file only after the copy in the planned sync direction has been verified.
-- A dedicated **Drive Tools** workspace for single-drive file-management tasks, with grouped duplicate analysis now available and image rename analysis reserved for a future metadata-driven pass.
+- A dedicated **Drive Tools** workspace for single-drive file-management tasks, with grouped duplicate analysis plus camera-style image rename analysis and apply actions.
 - Configurable parallel file copy count, including `0` for adaptive auto parallelism.
 - Source and destination volumes are scanned concurrently during the analyze phase, so the time to index a source and destination on separate drives overlaps rather than being sequential. Each volume is also scanned in a single pass that collects both files and directories together, halving the number of directory traversals. Within each volume, multiple worker threads enumerate different directories in parallel so the OS I/O scheduler and SSD parallelism are fully utilised. File metadata (size, timestamps) is retrieved from the underlying `FindFirstFile`/`FindNextFile` OS call in a single pass, eliminating redundant per-file stat lookups.
 - Settings persistence between runs.
@@ -208,7 +208,7 @@ Google Drive and OneDrive now support both source and destination flows on this 
 
 ## Drive Tools
 
-Drive Tools is intentionally kept separate from the normal source-versus-destination synchronize analysis. Duplicate cleanup and future image renaming are single-location file-management tasks, so combining them with pairwise sync planning would make every analyze run slower and would blur the meaning of the existing sync preview tabs.
+Drive Tools is intentionally kept separate from the normal source-versus-destination synchronize analysis. Duplicate cleanup and camera filename renaming are single-location file-management tasks, so combining them with pairwise sync planning would make every analyze run slower and would blur the meaning of the existing sync preview tabs.
 
 UsbFileSync therefore uses a two-phase duplicate scan:
 
@@ -217,11 +217,17 @@ UsbFileSync therefore uses a two-phase duplicate scan:
 
 Inside `Drive Tools > Duplicate Analysis`, UsbFileSync shows one summary row per checksum group, followed by indented rows for each matching file path in that group. By default, UsbFileSync enables a safety checkbox that blocks deletion when every file in a duplicate group is selected, highlights the conflicting group header in red, and explains the conflict below the duplicate-analysis actions. You can still right-click a duplicate row to open the file, open its folder, preview it in a single-pane preview dialog, rename it, or move it elsewhere before deleting anything.
 
-`Drive Tools > Image Rename` is now reserved as the future home for metadata-driven rename analysis so those one-drive workflows stay grouped together.
+`Drive Tools > Image Rename` can now analyze and apply camera-style filename renames inside one folder or drive. The Settings dialog lets you choose among:
+
+- `yyyyMMdd_HHmmss_original_filename.jpg`
+- `yyyyMMdd_HHmmss_original_filename_City.jpg`
+- `yyyyMMdd_HHmmss.jpg`
+
+The image rename settings also include built-in camera filename masks such as `DSC_????`, `IMG_????`, and `DJI_????`, support custom masks and custom extensions, and default to the common camera media formats `.jpg`, `.jpeg`, `.heic`, `.mov`, `.3gp`, and `.mp4`. If two files would land on the same target name, or a target name is already occupied, UsbFileSync automatically appends a `_001`-style sequencer before applying the rename.
 
 ## Photo Rename Guidance
 
-For the planned picture-renaming workflow, a sensible default naming convention is `yyyyMMdd_HHmmss[_City].ext`. That format is widely readable, sorts naturally, and maps well to common EXIF fields such as `DateTimeOriginal`, with an optional city suffix derived from GPS metadata when it is available. The city suffix should stay optional because many photos do not contain reliable location metadata.
+For the current picture-renaming workflow, the default naming convention is `yyyyMMdd_HHmmss_original_filename.ext`. UsbFileSync can also use `yyyyMMdd_HHmmss.ext` or append `_City` when that naming option is selected and location metadata becomes available. Today the rename analyzer scopes itself to configured camera-style source filenames and media extensions so screenshots, exports, and already-renamed files are left alone.
 
 If you want to prepare custom provider values for the advanced override, see [`docs/custom-cloud-provider-credentials.md`](docs/custom-cloud-provider-credentials.md) for step-by-step setup instructions for Google Drive, Dropbox, and OneDrive.
 

@@ -48,6 +48,12 @@ public sealed class SyncConfiguration
 
     public IReadOnlyList<CloudProviderAppRegistration> CloudProviderAppRegistrations { get; init; } = Array.Empty<CloudProviderAppRegistration>();
 
+    public ImageRenamePatternKind ImageRenamePattern { get; init; } = ImageRenamePatternKind.TimestampOriginalFileName;
+
+    public IReadOnlyList<string> ImageRenameFileNamePatterns { get; init; } = ImageRenameDefaults.GetDefaultCameraFileNameMasks();
+
+    public IReadOnlyList<string> ImageRenameExtensions { get; init; } = ImageRenameDefaults.GetDefaultExtensions();
+
     public IReadOnlyList<string> GetDestinationPaths()
     {
         var normalized = DestinationPaths

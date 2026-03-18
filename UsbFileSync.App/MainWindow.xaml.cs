@@ -27,6 +27,9 @@ public partial class MainWindow : Window
             _viewModel.ParallelCopyCount,
             _viewModel.HideMacOsSystemFiles,
             _viewModel.GetExcludedPathPatterns(),
+            _viewModel.ImageRenamePattern,
+            _viewModel.GetImageRenameFileNamePatterns(),
+            _viewModel.GetImageRenameExtensions(),
             _viewModel.GetPreviewProviderMappings(),
             _viewModel.GetUseCustomCloudProviderCredentials(),
             _viewModel.GetCloudProviderAppRegistrations())
@@ -39,6 +42,9 @@ public partial class MainWindow : Window
             _viewModel.UpdateParallelCopyCount(dialog.ParallelCopyCount);
             _viewModel.UpdateHideMacOsSystemFiles(dialog.HideMacOsSystemFiles);
             _viewModel.UpdateExcludedPathPatterns(dialog.ExcludedPathPatterns);
+            _viewModel.UpdateImageRenamePattern(dialog.ImageRenamePattern);
+            _viewModel.UpdateImageRenameFileNamePatterns(dialog.ImageRenameFileNamePatterns);
+            _viewModel.UpdateImageRenameExtensions(dialog.ImageRenameExtensions);
             _viewModel.UpdatePreviewProviderMappings(dialog.PreviewProviderMappings);
             _viewModel.UpdateUseCustomCloudProviderCredentials(dialog.UseCustomCloudProviderCredentials);
             _viewModel.UpdateCloudProviderAppRegistrations(dialog.CloudProviderAppRegistrations);

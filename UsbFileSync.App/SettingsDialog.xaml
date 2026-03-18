@@ -60,6 +60,80 @@
                 </StackPanel>
 
                 <StackPanel Margin="0,18,0,0">
+                    <TextBlock Text="Image rename pattern" FontSize="15" FontWeight="SemiBold" />
+                    <TextBlock Margin="0,8,0,0"
+                               Text="Choose the filename layout used by Drive Tools &gt; Image Rename. The optional city suffix is skipped when location metadata is unavailable."
+                               TextWrapping="Wrap"
+                               Foreground="#616161" />
+                    <ComboBox x:Name="ImageRenamePatternComboBox"
+                              Margin="0,12,0,0"
+                              Width="420"
+                              HorizontalAlignment="Left"
+                              DisplayMemberPath="DisplayName"
+                              SelectedValuePath="Kind" />
+                </StackPanel>
+
+                <StackPanel Margin="0,18,0,0">
+                    <TextBlock Text="Image rename camera filename scope" FontSize="15" FontWeight="SemiBold" />
+                    <TextBlock Margin="0,8,0,0"
+                               Text="UsbFileSync only renames common camera-style filenames. Choose the default camera masks to include, then add your own masks below if needed. Use ? for one character and * for multiple characters."
+                               TextWrapping="Wrap"
+                               Foreground="#616161" />
+                    <ItemsControl x:Name="ImageRenamePatternOptionsItemsControl" Margin="0,12,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <CheckBox Margin="0,4,0,0"
+                                          Content="{Binding Label}"
+                                          IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Margin="0,12,0,0"
+                               Text="Custom filename masks"
+                               FontWeight="SemiBold" />
+                    <TextBox x:Name="ImageRenameCustomPatternsTextBox"
+                             Margin="0,8,0,0"
+                             Height="110"
+                             AcceptsReturn="True"
+                             VerticalScrollBarVisibility="Auto"
+                             TextWrapping="Wrap" />
+                    <TextBlock Margin="0,8,0,0"
+                               Text="Example custom masks: GOPR????, MVI_????, or VID_*."
+                               TextWrapping="Wrap"
+                               Foreground="#616161" />
+                </StackPanel>
+
+                <StackPanel Margin="0,18,0,0">
+                    <TextBlock Text="Image rename file formats" FontSize="15" FontWeight="SemiBold" />
+                    <TextBlock Margin="0,8,0,0"
+                               Text="Choose which file extensions Image Rename should consider. Defaults target common camera photo and video formats."
+                               TextWrapping="Wrap"
+                               Foreground="#616161" />
+                    <ItemsControl x:Name="ImageRenameExtensionOptionsItemsControl" Margin="0,12,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <CheckBox Margin="0,4,0,0"
+                                          Content="{Binding Label}"
+                                          IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Margin="0,12,0,0"
+                               Text="Custom file extensions"
+                               FontWeight="SemiBold" />
+                    <TextBox x:Name="ImageRenameCustomExtensionsTextBox"
+                             Margin="0,8,0,0"
+                             Height="90"
+                             AcceptsReturn="True"
+                             VerticalScrollBarVisibility="Auto"
+                             TextWrapping="Wrap" />
+                    <TextBlock Margin="0,8,0,0"
+                               Text="Enter one extension per line, such as .orf or .arw."
+                               TextWrapping="Wrap"
+                               Foreground="#616161" />
+                </StackPanel>
+
+                <StackPanel Margin="0,18,0,0">
                     <TextBlock Text="Cloud provider credentials" FontSize="15" FontWeight="SemiBold" />
                     <TextBlock Margin="0,8,0,0"
                                Text="UsbFileSync uses built-in provider credentials by default. Turn on the advanced setting below if you want to override those defaults with your own provider app registrations."
