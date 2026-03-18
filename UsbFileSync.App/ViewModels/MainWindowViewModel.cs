@@ -3201,17 +3201,27 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             if (isSelected == true)
             {
-                groupRows[0].IsSelected = false;
+                if (groupRows[0].IsSelected)
+                {
+                    groupRows[0].IsSelected = false;
+                }
+
                 for (var index = 1; index < groupRows.Count; index++)
                 {
-                    groupRows[index].IsSelected = true;
+                    if (!groupRows[index].IsSelected)
+                    {
+                        groupRows[index].IsSelected = true;
+                    }
                 }
             }
             else
             {
                 foreach (var row in groupRows)
                 {
-                    row.IsSelected = false;
+                    if (row.IsSelected)
+                    {
+                        row.IsSelected = false;
+                    }
                 }
             }
         }

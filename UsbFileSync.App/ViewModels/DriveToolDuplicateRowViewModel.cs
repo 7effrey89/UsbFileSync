@@ -106,7 +106,14 @@ public sealed class DriveToolDuplicateRowViewModel : ObservableObject
         {
             if (!IsGroupHeader)
             {
-                IsSelected = value ?? false;
+                var normalizedValue = value ?? false;
+                if (IsSelected == normalizedValue)
+                {
+                    return;
+                }
+
+                IsSelected = normalizedValue;
+                RaisePropertyChanged(nameof(SelectionState));
                 return;
             }
 
