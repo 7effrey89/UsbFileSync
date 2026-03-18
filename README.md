@@ -215,7 +215,7 @@ UsbFileSync therefore uses a two-phase duplicate scan:
 1. **Rough grouping by file size** to avoid hashing files that cannot possibly match.
 2. **SHA-256 verification** only inside those same-size groups so every listed checksum group is byte-for-byte identical.
 
-Inside `Drive Tools > Duplicate Analysis`, UsbFileSync shows one summary row per checksum group, followed by indented rows for each matching file path in that group. Leave one file unchecked in each group, select the extra copies you want removed, and then use `Delete selected`.
+Inside `Drive Tools > Duplicate Analysis`, UsbFileSync shows one summary row per checksum group, followed by indented rows for each matching file path in that group. By default, UsbFileSync enables a safety checkbox that blocks deletion when every file in a duplicate group is selected, highlights the conflicting group header in red, and explains the conflict below the duplicate-analysis actions. You can still right-click a duplicate row to open the file, open its folder, preview it in a single-pane preview dialog, rename it, or move it elsewhere before deleting anything.
 
 `Drive Tools > Image Rename` is now reserved as the future home for metadata-driven rename analysis so those one-drive workflows stay grouped together.
 

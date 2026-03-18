@@ -643,10 +643,11 @@
             <StackPanel Orientation="Horizontal" Margin="{Binding NameMargin}">
                 <TextBlock Text="{Binding NamePrefix}"
                            Width="48"
-                           Foreground="{StaticResource SubtleTextBrush}"
+                           Foreground="{Binding NameBrush}"
                            FontWeight="{Binding NameFontWeight}"
                            VerticalAlignment="Center" />
                 <TextBlock Text="{Binding DisplayName}"
+                           Foreground="{Binding NameBrush}"
                            FontWeight="{Binding NameFontWeight}"
                            TextTrimming="CharacterEllipsis"
                            VerticalAlignment="Center" />
@@ -1179,6 +1180,9 @@
                                 <CheckBox Margin="0,6,0,14"
                                           Content="Include subfolders"
                                           IsChecked="{Binding DriveToolsIncludeSubfolders}" />
+                                <CheckBox Margin="0,0,0,14"
+                                          Content="Prevent deleting all files in a duplicate group"
+                                          IsChecked="{Binding PreventDeletingAllFilesInDuplicateGroup}" />
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
@@ -1195,8 +1199,14 @@
                                             Content="Delete selected" />
                                 </Grid>
                                 <TextBlock Margin="0,12,0,0"
-                                           Foreground="{StaticResource SubtleTextBrush}"
-                                           Text="UsbFileSync first groups files by size, then verifies exact matches with SHA-256 before presenting any checksum group."
+                                            Foreground="{StaticResource SubtleTextBrush}"
+                                            Text="UsbFileSync first groups files by size, then verifies exact matches with SHA-256 before presenting any checksum group."
+                                            TextWrapping="Wrap" />
+                                <TextBlock Margin="0,10,0,0"
+                                           Foreground="#C42B1C"
+                                           FontWeight="SemiBold"
+                                           Visibility="{Binding IsDriveToolDuplicateDeletionWarningVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                           Text="{Binding DriveToolDuplicateDeletionWarningText}"
                                            TextWrapping="Wrap" />
                             </StackPanel>
                         </Grid>

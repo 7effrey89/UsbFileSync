@@ -139,7 +139,13 @@ public partial class MainWindow : Window
                 return;
             }
 
-            var dialog = new FileComparisonDialog(row, _viewModel.GetPreviewProviderMappings())
+            var isDuplicatePreview = menuItem.Tag is DriveToolDuplicateRowViewModel;
+            var dialog = new FileComparisonDialog(
+                row,
+                _viewModel.GetPreviewProviderMappings(),
+                showDestinationPane: !isDuplicatePreview,
+                dialogTitle: isDuplicatePreview ? "File Preview" : null,
+                headerText: isDuplicatePreview ? "Preview file" : null)
             {
                 Owner = this,
             };

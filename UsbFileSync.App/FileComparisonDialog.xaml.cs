@@ -27,13 +27,21 @@ public partial class FileComparisonDialog : Window
     private readonly string _destinationSize;
     private readonly string _destinationModified;
     private readonly IReadOnlyDictionary<string, string>? _previewProviderMappings;
+    private readonly bool _showDestinationPane;
+    private readonly string? _dialogTitle;
+    private readonly string? _headerText;
     private FileComparisonDialogViewModel? _viewModel;
     private double _sourceImageZoom = DefaultImageZoom;
     private double _destinationImageZoom = DefaultImageZoom;
     private static readonly System.Windows.Input.Cursor ZoomInCursor = PreviewCursorFactory.CreateZoomInCursor();
     private static readonly System.Windows.Input.Cursor ZoomOutCursor = PreviewCursorFactory.CreateZoomOutCursor();
 
-    public FileComparisonDialog(SyncPreviewRowViewModel row, IReadOnlyDictionary<string, string>? previewProviderMappings = null)
+    public FileComparisonDialog(
+        SyncPreviewRowViewModel row,
+        IReadOnlyDictionary<string, string>? previewProviderMappings = null,
+        bool showDestinationPane = true,
+        string? dialogTitle = null,
+        string? headerText = null)
     {
         InitializeComponent();
         _sourcePath = row.SourcePath;
@@ -42,6 +50,9 @@ public partial class FileComparisonDialog : Window
         _destinationPath = row.DestinationPath;
         _destinationSize = row.DestinationSize;
         _destinationModified = row.DestinationModified;
+        _showDestinationPane = showDestinationPane;
+        _dialogTitle = dialogTitle;
+        _headerText = headerText;
         _previewProviderMappings = previewProviderMappings is null
             ? null
             : new Dictionary<string, string>(previewProviderMappings, StringComparer.OrdinalIgnoreCase);
@@ -64,7 +75,12 @@ public partial class FileComparisonDialog : Window
                 _destinationPath,
                 _destinationSize,
                 _destinationModified,
-                _previewProviderMappings));
+                _previewProviderMappings,
+                _showDestinationPane,
+                _dialogTitle,
+                _headerText));
+
+            ApplyDialogMode(_viewModel);
 
             PopulatePane(
                 _viewModel.SourcePane,
@@ -121,6 +137,27 @@ public partial class FileComparisonDialog : Window
         {
             LoadingOverlay.Visibility = Visibility.Collapsed;
         }
+    }
+
+    private void ApplyDialogMode(FileComparisonDialogViewModel viewModel)
+    {
+        Title = viewModel.DialogTitle;
+        DialogHeaderTextBlock.Text = viewModel.HeaderText;
+
+        if (viewModel.ShowDestinationPane)
+        {
+            ComparisonSplitterColumnDefinition.Width = new GridLength(16);
+            DestinationColumnDefinition.Width = new GridLength(1, GridUnitType.Star);
+            DestinationPaneBorder.Visibility = Visibility.Visible;
+            MinWidth = 900;
+            return;
+        }
+
+        ComparisonSplitterColumnDefinition.Width = new GridLength(0);
+        DestinationColumnDefinition.Width = new GridLength(0);
+        DestinationPaneBorder.Visibility = Visibility.Collapsed;
+        MinWidth = 620;
+        Width = Math.Min(Width, 760);
     }
 
     private void OnOpenPathClicked(object sender, RoutedEventArgs e)

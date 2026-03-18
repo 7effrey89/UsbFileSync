@@ -65,6 +65,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private readonly DuplicateFileAnalysisService _duplicateFileAnalysisService;
     private readonly ISyncSettingsStore? _settingsStore;
     private readonly IFolderPickerService _folderPickerService;
+    private readonly IUserDialogService _userDialogService;
     private readonly ISourceVolumeService _sourceVolumeService;
     private readonly ISourceVolumeService _destinationVolumeService;
     private readonly ISyncExecutionClient _syncExecutionClient;
@@ -102,6 +103,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _moveMode;
     private bool _includeSubfolders = true;
     private bool _driveToolsIncludeSubfolders = true;
+    private bool _preventDeletingAllFilesInDuplicateGroup = true;
     private bool _hideMacOsSystemFiles = true;
     private IReadOnlyList<string> _excludedPathPatterns = Array.Empty<string>();
     private bool _useCustomCloudProviderCredentials;
@@ -134,12 +136,15 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private string _previewFilterSearchText = string.Empty;
     private ActivityLogFilter _selectedActivityLogFilter = ActivityLogFilter.All;
     private bool _suppressSelectionUpdates;
+    private bool _hasDriveToolDuplicateSelectionConflict;
+    private HashSet<string> _conflictingDriveToolDuplicateGroupKeys = new(StringComparer.OrdinalIgnoreCase);
 
     public MainWindowViewModel()
         : this(
             new SyncService(),
             settingsStore: CreateDefaultSettingsStore(),
             folderPickerService: new WindowsFolderPickerService(),
+            userDialogService: new WindowsUserDialogService(),
             fileLauncherService: new WindowsFileLauncherService(),
             sourceVolumeService: SyncVolumeServiceFactory.CreateSourceVolumeService(),
             destinationVolumeService: SyncVolumeServiceFactory.CreateDestinationVolumeService(),
@@ -152,6 +157,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         DuplicateFileAnalysisService? duplicateFileAnalysisService = null,
         ISyncSettingsStore? settingsStore = null,
         IFolderPickerService? folderPickerService = null,
+        IUserDialogService? userDialogService = null,
         IFileLauncherService? fileLauncherService = null,
         IDriveDisplayNameService? driveDisplayNameService = null,
         ISourceVolumeService? sourceVolumeService = null,
@@ -162,6 +168,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _duplicateFileAnalysisService = duplicateFileAnalysisService ?? new DuplicateFileAnalysisService();
         _settingsStore = settingsStore;
         _folderPickerService = folderPickerService ?? new WindowsFolderPickerService();
+        _userDialogService = userDialogService ?? new WindowsUserDialogService();
         _sourceVolumeService = sourceVolumeService ?? SyncVolumeServiceFactory.CreateSourceVolumeService();
         _destinationVolumeService = destinationVolumeService ?? SyncVolumeServiceFactory.CreateDestinationVolumeService();
         _syncExecutionClient = syncExecutionClient ?? new InProcessSyncExecutionClient(syncService);
@@ -601,6 +608,26 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    public bool PreventDeletingAllFilesInDuplicateGroup
+    {
+        get => _preventDeletingAllFilesInDuplicateGroup;
+        set
+        {
+            if (SetProperty(ref _preventDeletingAllFilesInDuplicateGroup, value))
+            {
+                RefreshDriveToolDuplicateSelectionSafety(showDialog: false);
+                RaisePropertyChanged(nameof(IsDriveToolDuplicateDeletionWarningVisible));
+                RaisePropertyChanged(nameof(DriveToolDuplicateDeletionWarningText));
+                DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
+
+                if (!_isLoadingSavedConfiguration)
+                {
+                    ScheduleConfigurationPersist();
+                }
+            }
+        }
+    }
+
     public bool HideMacOsSystemFiles
     {
         get => _hideMacOsSystemFiles;
@@ -814,6 +841,27 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ? "Queue empty"
         : $"{RemainingQueue.Count} queued item(s) remaining";
 
+    public bool HasDriveToolDuplicateSelectionConflict
+    {
+        get => _hasDriveToolDuplicateSelectionConflict;
+        private set
+        {
+            if (SetProperty(ref _hasDriveToolDuplicateSelectionConflict, value))
+            {
+                RaisePropertyChanged(nameof(IsDriveToolDuplicateDeletionWarningVisible));
+                RaisePropertyChanged(nameof(DriveToolDuplicateDeletionWarningText));
+                DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    public bool IsDriveToolDuplicateDeletionWarningVisible =>
+        PreventDeletingAllFilesInDuplicateGroup && HasDriveToolDuplicateSelectionConflict;
+
+    public string DriveToolDuplicateDeletionWarningText => IsDriveToolDuplicateDeletionWarningVisible
+        ? "Deletion is blocked because every file in at least one duplicate group is selected. Leave one file unchecked in each highlighted group, or turn off the safety checkbox."
+        : string.Empty;
+
     public int ParallelCopyCount
     {
         get => _parallelCopyCount;
@@ -985,6 +1033,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         !IsSyncRunning &&
         SelectedWorkspaceMode == WorkspaceMode.DriveTools &&
         SelectedDriveTool == DriveToolKind.Duplicates &&
+        (!PreventDeletingAllFilesInDuplicateGroup || !HasDriveToolDuplicateSelectionConflict) &&
         DriveToolDuplicateRows.Any(row => row.CanSelect && row.IsSelected);
 
     internal bool CanModifyDriveToolDuplicate(object? parameter) =>
@@ -1076,6 +1125,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 VerifyChecksums = VerifyChecksums,
                 MoveMode = MoveMode,
                 IncludeSubfolders = IncludeSubfolders,
+                PreventDeletingAllFilesInDuplicateGroup = PreventDeletingAllFilesInDuplicateGroup,
                 HideMacOsSystemFiles = HideMacOsSystemFiles,
                 ExcludedPathPatterns = _excludedPathPatterns.ToList(),
                 ParallelCopyCount = ParallelCopyCount,
@@ -1543,6 +1593,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private async Task DeleteSelectedDuplicatesAsync()
     {
+        RefreshDriveToolDuplicateSelectionSafety(showDialog: false);
+
         var selectedCandidates = DriveToolDuplicateRows
             .Where(row => row.CanSelect && row.IsSelected)
             .Select(row => row.FileEntry)
@@ -1555,12 +1607,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             return;
         }
 
-        if (DriveToolDuplicateRows
-            .Where(row => row.CanSelect)
-            .GroupBy(row => row.GroupKey, StringComparer.OrdinalIgnoreCase)
-            .Any(group => group.All(row => row.IsSelected)))
+        if (PreventDeletingAllFilesInDuplicateGroup && HasDriveToolDuplicateSelectionConflict)
         {
-            StatusMessage = "Leave at least one file unchecked in each checksum group.";
+            StatusMessage = "Leave at least one file unchecked in each highlighted checksum group before deleting.";
             AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
             return;
         }
@@ -2080,6 +2129,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             VerifyChecksums = savedConfiguration.VerifyChecksums;
             MoveMode = savedConfiguration.MoveMode;
             IncludeSubfolders = savedConfiguration.IncludeSubfolders;
+            PreventDeletingAllFilesInDuplicateGroup = savedConfiguration.PreventDeletingAllFilesInDuplicateGroup;
             HideMacOsSystemFiles = savedConfiguration.HideMacOsSystemFiles;
             _excludedPathPatterns = (savedConfiguration.ExcludedPathPatterns ?? Array.Empty<string>())
                 .Where(pattern => !string.IsNullOrWhiteSpace(pattern))
@@ -2402,6 +2452,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             RaisePropertyChanged(nameof(DriveToolDuplicateRowCount));
             RaisePropertyChanged(nameof(DriveToolDuplicateGroupCount));
             RaisePropertyChanged(nameof(AreAllDriveToolDuplicatesSelected));
+            RefreshDriveToolDuplicateSelectionSafety(showDialog: false);
             DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
         });
     }
@@ -3024,11 +3075,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             return;
         }
 
+        _suppressSelectionUpdates = true;
         foreach (var row in selectableRows)
         {
             row.IsSelected = selectionFactory(row);
         }
+        _suppressSelectionUpdates = false;
 
+        RefreshDriveToolDuplicateSelectionSafety(showDialog: true);
         RaisePropertyChanged(nameof(AreAllDriveToolDuplicatesSelected));
         DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
     }
@@ -3106,6 +3160,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         if (e.PropertyName == nameof(DriveToolDuplicateRowViewModel.IsSelected) ||
             e.PropertyName == nameof(DriveToolDuplicateRowViewModel.CanSelect))
         {
+            if (!_suppressSelectionUpdates)
+            {
+                RefreshDriveToolDuplicateSelectionSafety(showDialog: true);
+            }
+
             RaisePropertyChanged(nameof(AreAllDriveToolDuplicatesSelected));
             DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
         }
@@ -3165,6 +3224,40 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         path = string.Empty;
         return false;
+    }
+
+    private void RefreshDriveToolDuplicateSelectionSafety(bool showDialog)
+    {
+        var groups = DriveToolDuplicateRows
+            .Where(row => row.CanSelect)
+            .GroupBy(row => row.GroupKey, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var conflictingGroupKeys = groups
+            .Where(group => group.Any() && group.All(row => row.IsSelected))
+            .Select(group => group.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var newlyConflictedGroupCount = conflictingGroupKeys
+            .Except(_conflictingDriveToolDuplicateGroupKeys, StringComparer.OrdinalIgnoreCase)
+            .Count();
+
+        foreach (var row in DriveToolDuplicateRows.Where(row => row.IsGroupHeader))
+        {
+            row.HasSelectionConflict = conflictingGroupKeys.Contains(row.GroupKey);
+        }
+
+        _conflictingDriveToolDuplicateGroupKeys = conflictingGroupKeys;
+        HasDriveToolDuplicateSelectionConflict = conflictingGroupKeys.Count > 0;
+
+        if (showDialog && newlyConflictedGroupCount > 0)
+        {
+            _userDialogService.ShowWarning(
+                "All files selected",
+                newlyConflictedGroupCount == 1
+                    ? "All files in one duplicate group are selected for deletion."
+                    : $"All files in {newlyConflictedGroupCount} duplicate groups are selected for deletion.");
+        }
     }
 
     private static bool TryGetModifiableDriveToolDuplicate(object? parameter, out DriveToolDuplicateRowViewModel? duplicateRow)

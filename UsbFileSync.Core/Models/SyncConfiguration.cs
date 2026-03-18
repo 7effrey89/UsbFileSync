@@ -36,6 +36,8 @@ public sealed class SyncConfiguration
 
     public bool HideMacOsSystemFiles { get; init; } = true;
 
+    public bool PreventDeletingAllFilesInDuplicateGroup { get; init; } = true;
+
     public IReadOnlyList<string> ExcludedPathPatterns { get; init; } = Array.Empty<string>();
 
     public int ParallelCopyCount { get; init; } = 1;

@@ -12,17 +12,38 @@ public sealed class FileComparisonDialogViewModel
         string destinationPath,
         string destinationSize,
         string destinationModified,
-        IReadOnlyDictionary<string, string>? previewProviderMappings = null)
+        IReadOnlyDictionary<string, string>? previewProviderMappings = null,
+        bool showDestinationPane = true,
+        string? dialogTitle = null,
+        string? headerText = null)
     {
         var previewService = new FilePreviewService(previewProviderMappings);
+        ShowDestinationPane = showDestinationPane;
+        DialogTitle = string.IsNullOrWhiteSpace(dialogTitle)
+            ? (showDestinationPane ? "File Comparison" : "File Preview")
+            : dialogTitle;
+        HeaderText = string.IsNullOrWhiteSpace(headerText)
+            ? (showDestinationPane ? "Compare source and destination" : "Preview file")
+            : headerText;
         SourcePane = FileComparisonPaneViewModel.Create("Source", sourcePath, sourceSize, sourceModified, previewService);
         DestinationPane = FileComparisonPaneViewModel.Create("Destination", destinationPath, destinationSize, destinationModified, previewService);
     }
 
-    public FileComparisonDialogViewModel(SyncPreviewRowViewModel row, IReadOnlyDictionary<string, string>? previewProviderMappings = null)
-        : this(row.SourcePath, row.SourceSize, row.SourceModified, row.DestinationPath, row.DestinationSize, row.DestinationModified, previewProviderMappings)
+    public FileComparisonDialogViewModel(
+        SyncPreviewRowViewModel row,
+        IReadOnlyDictionary<string, string>? previewProviderMappings = null,
+        bool showDestinationPane = true,
+        string? dialogTitle = null,
+        string? headerText = null)
+        : this(row.SourcePath, row.SourceSize, row.SourceModified, row.DestinationPath, row.DestinationSize, row.DestinationModified, previewProviderMappings, showDestinationPane, dialogTitle, headerText)
     {
     }
+
+    public bool ShowDestinationPane { get; }
+
+    public string DialogTitle { get; }
+
+    public string HeaderText { get; }
 
     public FileComparisonPaneViewModel SourcePane { get; }
 

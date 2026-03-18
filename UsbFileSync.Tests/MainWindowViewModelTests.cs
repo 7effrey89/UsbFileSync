@@ -1514,7 +1514,8 @@ public sealed class MainWindowViewModelTests
         using var workspace = new SyncTestWorkspace();
         workspace.WriteSourceFile("keep.txt", "duplicate-bytes");
         workspace.WriteSourceFile("copy.txt", "duplicate-bytes");
-        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        var dialogService = new StubUserDialogService();
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null), userDialogService: dialogService)
         {
             DriveToolsPath = workspace.SourcePath,
         };
@@ -1528,11 +1529,45 @@ public sealed class MainWindowViewModelTests
             row.IsSelected = true;
         }
 
-        viewModel.DeleteSelectedDuplicatesCommand.Execute(null);
-
-        Assert.Equal("Leave at least one file unchecked in each checksum group.", viewModel.StatusMessage);
+        Assert.Equal(1, dialogService.WarningCount);
+        Assert.True(viewModel.HasDriveToolDuplicateSelectionConflict);
+        Assert.True(viewModel.IsDriveToolDuplicateDeletionWarningVisible);
+        Assert.False(viewModel.DeleteSelectedDuplicatesCommand.CanExecute(null));
+        Assert.True(viewModel.DriveToolDuplicateRows.Single(row => row.IsGroupHeader).HasSelectionConflict);
         Assert.True(File.Exists(Path.Combine(workspace.SourcePath, "keep.txt")));
         Assert.True(File.Exists(Path.Combine(workspace.SourcePath, "copy.txt")));
+    }
+
+    [Fact]
+    public async Task DeleteSelectedDuplicatesCommand_AllowsDeletingEntireGroup_WhenSafetyDisabled()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("keep.txt", "duplicate-bytes");
+        workspace.WriteSourceFile("copy.txt", "duplicate-bytes");
+        var dialogService = new StubUserDialogService();
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null), userDialogService: dialogService)
+        {
+            DriveToolsPath = workspace.SourcePath,
+            PreventDeletingAllFilesInDuplicateGroup = false,
+        };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
+
+        viewModel.FindDuplicatesCommand.Execute(null);
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 3).ConfigureAwait(true);
+
+        foreach (var row in viewModel.DriveToolDuplicateRows.Where(row => row.CanSelect))
+        {
+            row.IsSelected = true;
+        }
+
+        Assert.Equal(1, dialogService.WarningCount);
+        Assert.True(viewModel.DeleteSelectedDuplicatesCommand.CanExecute(null));
+
+        viewModel.DeleteSelectedDuplicatesCommand.Execute(null);
+
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 0).ConfigureAwait(true);
+        Assert.False(File.Exists(Path.Combine(workspace.SourcePath, "keep.txt")));
+        Assert.False(File.Exists(Path.Combine(workspace.SourcePath, "copy.txt")));
     }
 
     [Fact]
@@ -1631,6 +1666,49 @@ public sealed class MainWindowViewModelTests
         Assert.True(File.Exists(Path.Combine(destinationFolder, "copy.txt")));
         Assert.False(File.Exists(Path.Combine(workspace.SourcePath, "copy.txt")));
         Assert.Equal("No duplicated files were found in the selected source location.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public void PreventDeletingAllFilesInDuplicateGroup_DefaultsToTrue()
+    {
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null));
+
+        Assert.True(viewModel.PreventDeletingAllFilesInDuplicateGroup);
+    }
+
+    [Fact]
+    public void LoadSavedConfiguration_RestoresDuplicateDeletionSafetySetting()
+    {
+        var settingsStore = new StubSyncSettingsStore(new SyncConfiguration
+        {
+            SourcePath = "F:\\Primary",
+            DestinationPath = "E:\\Backup",
+            PreventDeletingAllFilesInDuplicateGroup = false,
+        });
+
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: settingsStore, folderPickerService: new StubFolderPickerService(null));
+
+        Assert.False(viewModel.PreventDeletingAllFilesInDuplicateGroup);
+    }
+
+    [Fact]
+    public void FileComparisonDialogViewModel_UsesSinglePreviewMetadata_WhenDestinationPaneIsHidden()
+    {
+        var viewModel = new FileComparisonDialogViewModel(
+            sourcePath: string.Empty,
+            sourceSize: string.Empty,
+            sourceModified: string.Empty,
+            destinationPath: string.Empty,
+            destinationSize: string.Empty,
+            destinationModified: string.Empty,
+            previewProviderMappings: null,
+            showDestinationPane: false,
+            dialogTitle: "File Preview",
+            headerText: "Preview file");
+
+        Assert.False(viewModel.ShowDestinationPane);
+        Assert.Equal("File Preview", viewModel.DialogTitle);
+        Assert.Equal("Preview file", viewModel.HeaderText);
     }
 
     [Fact]
@@ -2542,6 +2620,22 @@ public sealed class MainWindowViewModelTests
 
         public void Save(SyncConfiguration configuration)
         {
+        }
+    }
+
+    private sealed class StubUserDialogService : IUserDialogService
+    {
+        public int WarningCount { get; private set; }
+
+        public string LastTitle { get; private set; } = string.Empty;
+
+        public string LastMessage { get; private set; } = string.Empty;
+
+        public void ShowWarning(string title, string message)
+        {
+            WarningCount++;
+            LastTitle = title;
+            LastMessage = message;
         }
     }
 

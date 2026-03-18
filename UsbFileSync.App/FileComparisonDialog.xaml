@@ -46,13 +46,13 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <TextBlock Text="Compare source and destination" FontSize="22" FontWeight="SemiBold" />
+        <TextBlock x:Name="DialogHeaderTextBlock" Text="Compare source and destination" FontSize="22" FontWeight="SemiBold" />
 
-        <Grid Grid.Row="1" Margin="0,16,0,0">
+        <Grid x:Name="ComparisonPanesGrid" Grid.Row="1" Margin="0,16,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="16" />
-                <ColumnDefinition Width="*" />
+                <ColumnDefinition x:Name="ComparisonSplitterColumnDefinition" Width="16" />
+                <ColumnDefinition x:Name="DestinationColumnDefinition" Width="*" />
             </Grid.ColumnDefinitions>
 
             <Border Grid.Column="0" Style="{StaticResource ComparisonCardStyle}">
@@ -132,7 +132,7 @@
                 </Grid>
             </Border>
 
-            <Border Grid.Column="2" Style="{StaticResource ComparisonCardStyle}">
+            <Border x:Name="DestinationPaneBorder" Grid.Column="2" Style="{StaticResource ComparisonCardStyle}">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -225,14 +225,14 @@
                              Height="8"
                              IsIndeterminate="True" />
                 <TextBlock Margin="0,14,0,0"
-                           HorizontalAlignment="Center"
-                           FontSize="16"
-                           FontWeight="SemiBold"
-                           Text="Loading comparison preview..." />
+                            HorizontalAlignment="Center"
+                            FontSize="16"
+                            FontWeight="SemiBold"
+                            Text="Loading preview..." />
                 <TextBlock Margin="0,6,0,0"
                            HorizontalAlignment="Center"
                            Foreground="#616161"
-                           Text="Preparing the source and destination preview panes." />
+                           Text="Preparing the preview pane." />
             </StackPanel>
         </Border>
     </Grid>
