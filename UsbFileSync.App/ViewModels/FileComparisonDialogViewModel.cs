@@ -5,6 +5,11 @@ namespace UsbFileSync.App.ViewModels;
 
 public sealed class FileComparisonDialogViewModel
 {
+    private const string DefaultComparisonTitle = "File Comparison";
+    private const string DefaultPreviewTitle = "File Preview";
+    private const string DefaultComparisonHeaderText = "Compare source and destination";
+    private const string DefaultPreviewHeaderText = "Preview file";
+
     public FileComparisonDialogViewModel(
         string sourcePath,
         string sourceSize,
@@ -20,10 +25,10 @@ public sealed class FileComparisonDialogViewModel
         var previewService = new FilePreviewService(previewProviderMappings);
         ShowDestinationPane = showDestinationPane;
         DialogTitle = string.IsNullOrWhiteSpace(dialogTitle)
-            ? (showDestinationPane ? "File Comparison" : "File Preview")
+            ? (showDestinationPane ? DefaultComparisonTitle : DefaultPreviewTitle)
             : dialogTitle;
         HeaderText = string.IsNullOrWhiteSpace(headerText)
-            ? (showDestinationPane ? "Compare source and destination" : "Preview file")
+            ? (showDestinationPane ? DefaultComparisonHeaderText : DefaultPreviewHeaderText)
             : headerText;
         SourcePane = FileComparisonPaneViewModel.Create("Source", sourcePath, sourceSize, sourceModified, previewService);
         DestinationPane = FileComparisonPaneViewModel.Create("Destination", destinationPath, destinationSize, destinationModified, previewService);

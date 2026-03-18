@@ -225,14 +225,16 @@
                              Height="8"
                              IsIndeterminate="True" />
                 <TextBlock Margin="0,14,0,0"
-                            HorizontalAlignment="Center"
-                            FontSize="16"
-                            FontWeight="SemiBold"
+                           x:Name="LoadingTitleTextBlock"
+                           HorizontalAlignment="Center"
+                           FontSize="16"
+                           FontWeight="SemiBold"
                             Text="Loading preview..." />
                 <TextBlock Margin="0,6,0,0"
+                           x:Name="LoadingDescriptionTextBlock"
                            HorizontalAlignment="Center"
                            Foreground="#616161"
-                           Text="Preparing the preview pane." />
+                           Text="Preparing the source and destination preview panes." />
             </StackPanel>
         </Border>
     </Grid>

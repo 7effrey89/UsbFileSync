@@ -146,6 +146,8 @@ public partial class FileComparisonDialog : Window
 
         if (viewModel.ShowDestinationPane)
         {
+            LoadingTitleTextBlock.Text = "Loading comparison preview...";
+            LoadingDescriptionTextBlock.Text = "Preparing the source and destination preview panes.";
             ComparisonSplitterColumnDefinition.Width = new GridLength(16);
             DestinationColumnDefinition.Width = new GridLength(1, GridUnitType.Star);
             DestinationPaneBorder.Visibility = Visibility.Visible;
@@ -153,6 +155,8 @@ public partial class FileComparisonDialog : Window
             return;
         }
 
+        LoadingTitleTextBlock.Text = "Loading preview...";
+        LoadingDescriptionTextBlock.Text = "Preparing the preview pane.";
         ComparisonSplitterColumnDefinition.Width = new GridLength(0);
         DestinationColumnDefinition.Width = new GridLength(0);
         DestinationPaneBorder.Visibility = Visibility.Collapsed;

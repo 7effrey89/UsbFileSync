@@ -1609,7 +1609,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         if (PreventDeletingAllFilesInDuplicateGroup && HasDriveToolDuplicateSelectionConflict)
         {
-            StatusMessage = "Leave at least one file unchecked in each highlighted checksum group before deleting.";
+            StatusMessage = "Leave at least one file unchecked in each red-marked checksum group before deleting.";
             AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
             return;
         }
