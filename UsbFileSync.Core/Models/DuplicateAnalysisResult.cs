@@ -1,6 +1,6 @@
 namespace UsbFileSync.Core.Models;
 
 public sealed record DuplicateAnalysisResult(
-    IReadOnlyList<DuplicateFileCandidate> Candidates,
+    IReadOnlyList<DuplicateFileGroup> Groups,
     int DuplicateGroupCount,
     int HashedFileCount);

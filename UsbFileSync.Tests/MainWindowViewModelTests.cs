@@ -1447,7 +1447,7 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
-    public async Task FindDuplicatesCommand_LoadsChecksumConfirmedDuplicateCandidates()
+    public async Task FindDuplicatesCommand_LoadsGroupedDriveToolRows()
     {
         using var workspace = new SyncTestWorkspace();
         workspace.WriteSourceFile("photos\\keep.jpg", "duplicate-bytes");
@@ -1455,24 +1455,25 @@ public sealed class MainWindowViewModelTests
         workspace.WriteSourceFile("photos\\same-size-different.jpg", "different-bytes");
         using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
         {
-            SourcePath = workspace.SourcePath,
+            DriveToolsPath = workspace.SourcePath,
         };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
 
         viewModel.FindDuplicatesCommand.Execute(null);
 
-        await WaitForAsync(() => viewModel.DuplicateFilesCount == 1).ConfigureAwait(true);
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 3).ConfigureAwait(true);
 
-        var duplicateRow = Assert.Single(viewModel.DuplicateFiles);
-        var pairedPaths = new[]
-        {
-            duplicateRow.SourcePath,
-            duplicateRow.DestinationPath,
-        };
-        Assert.Equal("Duplicate", duplicateRow.Status);
-        Assert.Contains(pairedPaths, path => path.Contains("keep.jpg", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(pairedPaths, path => path.Contains("copy.jpg", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(1, viewModel.DriveToolDuplicateGroupCount);
+        var summaryRow = viewModel.DriveToolDuplicateRows[0];
+        Assert.True(summaryRow.IsGroupHeader);
+        Assert.False(string.IsNullOrWhiteSpace(summaryRow.ChecksumText));
+
+        var detailRows = viewModel.DriveToolDuplicateRows.Skip(1).ToList();
+        Assert.All(detailRows, row => Assert.False(row.IsGroupHeader));
+        Assert.Contains(detailRows, row => row.DisplayPath.Contains("keep.jpg", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(detailRows, row => row.DisplayPath.Contains("copy.jpg", StringComparison.OrdinalIgnoreCase));
         Assert.Empty(viewModel.RemainingQueue);
-        Assert.Contains("duplicate file candidate", viewModel.StatusMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("checksum-matched group", viewModel.StatusMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -1483,18 +1484,19 @@ public sealed class MainWindowViewModelTests
         workspace.WriteSourceFile("copy.txt", "duplicate-bytes");
         using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
         {
-            SourcePath = workspace.SourcePath,
+            DriveToolsPath = workspace.SourcePath,
         };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
 
         viewModel.FindDuplicatesCommand.Execute(null);
-        await WaitForAsync(() => viewModel.DuplicateFilesCount == 1).ConfigureAwait(true);
-        viewModel.SelectAllInTab(PreviewTabKind.Duplicates);
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 3).ConfigureAwait(true);
+        viewModel.DriveToolDuplicateRows.Single(row => !row.IsGroupHeader && row.DisplayPath.Contains("copy.txt", StringComparison.OrdinalIgnoreCase)).IsSelected = true;
 
         Assert.True(viewModel.DeleteSelectedDuplicatesCommand.CanExecute(null));
 
         viewModel.DeleteSelectedDuplicatesCommand.Execute(null);
 
-        await WaitForAsync(() => viewModel.DuplicateFilesCount == 0).ConfigureAwait(true);
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 2).ConfigureAwait(true);
 
         var remainingFiles = new[]
         {
@@ -1504,6 +1506,33 @@ public sealed class MainWindowViewModelTests
 
         Assert.Single(remainingFiles);
         Assert.Equal("Deleted 1 duplicate file.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task DeleteSelectedDuplicatesCommand_RequiresOneUncheckedFilePerGroup()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("keep.txt", "duplicate-bytes");
+        workspace.WriteSourceFile("copy.txt", "duplicate-bytes");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            DriveToolsPath = workspace.SourcePath,
+        };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
+
+        viewModel.FindDuplicatesCommand.Execute(null);
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 3).ConfigureAwait(true);
+
+        foreach (var row in viewModel.DriveToolDuplicateRows.Where(row => row.CanSelect))
+        {
+            row.IsSelected = true;
+        }
+
+        viewModel.DeleteSelectedDuplicatesCommand.Execute(null);
+
+        Assert.Equal("Leave at least one file unchecked in each checksum group.", viewModel.StatusMessage);
+        Assert.True(File.Exists(Path.Combine(workspace.SourcePath, "keep.txt")));
+        Assert.True(File.Exists(Path.Combine(workspace.SourcePath, "copy.txt")));
     }
 
     [Fact]

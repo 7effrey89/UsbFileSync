@@ -20,7 +20,6 @@ public enum PreviewTabKind
     ChangedFiles,
     DeletedFiles,
     UnchangedFiles,
-    Duplicates,
     AllFiles,
 }
 
@@ -29,6 +28,18 @@ public enum PreviewSelectionTarget
     FileName,
     FileFolder,
     FullPath,
+}
+
+public enum WorkspaceMode
+{
+    Sync,
+    DriveTools,
+}
+
+public enum DriveToolKind
+{
+    Duplicates,
+    ImageRename,
 }
 
 internal enum BusyOperationKind
@@ -65,9 +76,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private readonly Stopwatch _busyOperationStopwatch = new();
     private readonly Dictionary<string, AnalyzeTimingHistory> _analyzeTimingHistory = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, SyncPreviewRowViewModel> _previewRowsByItemKey = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, DuplicateFileCandidate> _duplicateCandidatesByItemKey = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<PreviewTabKind, ICollectionView> _previewViews = new();
     private readonly Dictionary<PreviewColumnKey, HashSet<string>> _activePreviewFilters = new();
+    private readonly Dictionary<string, DuplicateFileEntry> _driveToolDuplicateEntriesByItemKey = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _persistConfigurationCancellationTokenSource;
     private CancellationTokenSource? _busyOperationCancellationTokenSource;
     private CancellationTokenSource? _syncCancellationTokenSource;
@@ -80,13 +91,17 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private double? _busyOverlaySmoothedEtaSeconds;
     private string _sourcePath = string.Empty;
     private string _destinationPath = string.Empty;
+    private string _driveToolsPath = string.Empty;
     private SyncMode _selectedMode = SyncMode.OneWay;
+    private WorkspaceMode _selectedWorkspaceMode;
+    private DriveToolKind _selectedDriveTool = DriveToolKind.Duplicates;
     private int _parallelCopyCount = 1;
     private bool _detectMoves = true;
     private bool _dryRun = true;
     private bool _verifyChecksums;
     private bool _moveMode;
     private bool _includeSubfolders = true;
+    private bool _driveToolsIncludeSubfolders = true;
     private bool _hideMacOsSystemFiles = true;
     private IReadOnlyList<string> _excludedPathPatterns = Array.Empty<string>();
     private bool _useCustomCloudProviderCredentials;
@@ -100,6 +115,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _isStatusSuccess;
     private bool _isSourcePathFocused;
     private bool _isDestinationPathFocused;
+    private bool _isDriveToolsPathFocused;
     private BusyOperationKind _busyOperationKind;
     private string _busyOverlayTitle = "Working...";
     private string _busyOverlayDescription = "Please wait.";
@@ -160,15 +176,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ChangedFiles = new BulkObservableCollection<SyncPreviewRowViewModel>();
         DeletedFiles = new BulkObservableCollection<SyncPreviewRowViewModel>();
         UnchangedFiles = new BulkObservableCollection<SyncPreviewRowViewModel>();
-        DuplicateFiles = new BulkObservableCollection<SyncPreviewRowViewModel>();
         AllFiles = new BulkObservableCollection<SyncPreviewRowViewModel>();
+        DriveToolDuplicateRows = new BulkObservableCollection<DriveToolDuplicateRowViewModel>();
         if (_hasWpfApplication)
         {
             _previewViews[PreviewTabKind.NewFiles] = CreatePreviewView(NewFiles);
             _previewViews[PreviewTabKind.ChangedFiles] = CreatePreviewView(ChangedFiles);
             _previewViews[PreviewTabKind.DeletedFiles] = CreatePreviewView(DeletedFiles);
             _previewViews[PreviewTabKind.UnchangedFiles] = CreatePreviewView(UnchangedFiles);
-            _previewViews[PreviewTabKind.Duplicates] = CreatePreviewView(DuplicateFiles);
             _previewViews[PreviewTabKind.AllFiles] = CreatePreviewView(AllFiles);
         }
         PreviewFilterOptions = new ObservableCollection<PreviewFilterOptionViewModel>();
@@ -189,6 +204,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         CancelBusyOperationCommand = new RelayCommand(CancelBusyOperation, CanCancelBusyOperation);
         UseCompletedAnalyzeResultsCommand = new RelayCommand(UseCompletedAnalyzeResults, CanUseCompletedAnalyzeResults);
         BrowseSourcePathCommand = new RelayCommand(BrowseSourcePath);
+        BrowseDriveToolsPathCommand = new RelayCommand(BrowseDriveToolsPath);
         AddDestinationPathCommand = new RelayCommand(AddDestinationPath);
         BrowseDestinationPathCommand = new ParameterizedRelayCommand(BrowseDestinationPath);
         RemoveDestinationPathCommand = new ParameterizedRelayCommand(RemoveDestinationPath, CanRemoveDestinationPath);
@@ -216,9 +232,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<SyncPreviewRowViewModel> UnchangedFiles { get; }
 
-    public ObservableCollection<SyncPreviewRowViewModel> DuplicateFiles { get; }
-
     public ObservableCollection<SyncPreviewRowViewModel> AllFiles { get; }
+
+    public ObservableCollection<DriveToolDuplicateRowViewModel> DriveToolDuplicateRows { get; }
 
     public ObservableCollection<SyncLogEntryViewModel> ActivityLog { get; }
 
@@ -300,6 +316,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public RelayCommand BrowseSourcePathCommand { get; }
 
+    public RelayCommand BrowseDriveToolsPathCommand { get; }
+
     public RelayCommand AddDestinationPathCommand { get; }
 
     public ParameterizedRelayCommand BrowseDestinationPathCommand { get; }
@@ -344,6 +362,19 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    public string DriveToolsPath
+    {
+        get => _driveToolsPath;
+        set
+        {
+            if (SetProperty(ref _driveToolsPath, value))
+            {
+                RaisePropertyChanged(nameof(DriveToolsPathDisplayText));
+                HandleDriveToolsConfigurationChanged();
+            }
+        }
+    }
+
     public string SourcePathDisplayText => _isSourcePathFocused
         ? SourcePath
         : _driveDisplayNameService.FormatPathForDisplay(SourcePath);
@@ -352,7 +383,99 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ? DestinationPath
         : _driveDisplayNameService.FormatPathForDisplay(DestinationPath);
 
+    public string DriveToolsPathDisplayText => _isDriveToolsPathFocused
+        ? DriveToolsPath
+        : _driveDisplayNameService.FormatPathForDisplay(DriveToolsPath);
+
     public bool HasAdditionalDestinationPaths => AdditionalDestinationPaths.Count > 0;
+
+    public WorkspaceMode SelectedWorkspaceMode
+    {
+        get => _selectedWorkspaceMode;
+        set
+        {
+            if (SetProperty(ref _selectedWorkspaceMode, value))
+            {
+                RaisePropertyChanged(nameof(IsSyncWorkspaceSelected));
+                RaisePropertyChanged(nameof(IsDriveToolsWorkspaceSelected));
+                RaisePropertyChanged(nameof(IsSyncWorkspaceVisible));
+                RaisePropertyChanged(nameof(IsDriveToolsWorkspaceVisible));
+                HandleDriveToolsConfigurationChanged();
+            }
+        }
+    }
+
+    public bool IsSyncWorkspaceSelected
+    {
+        get => SelectedWorkspaceMode == WorkspaceMode.Sync;
+        set
+        {
+            if (value)
+            {
+                SelectedWorkspaceMode = WorkspaceMode.Sync;
+            }
+        }
+    }
+
+    public bool IsDriveToolsWorkspaceSelected
+    {
+        get => SelectedWorkspaceMode == WorkspaceMode.DriveTools;
+        set
+        {
+            if (value)
+            {
+                SelectedWorkspaceMode = WorkspaceMode.DriveTools;
+            }
+        }
+    }
+
+    public bool IsSyncWorkspaceVisible => SelectedWorkspaceMode == WorkspaceMode.Sync;
+
+    public bool IsDriveToolsWorkspaceVisible => SelectedWorkspaceMode == WorkspaceMode.DriveTools;
+
+    public DriveToolKind SelectedDriveTool
+    {
+        get => _selectedDriveTool;
+        set
+        {
+            if (SetProperty(ref _selectedDriveTool, value))
+            {
+                RaisePropertyChanged(nameof(IsDuplicateDriveToolSelected));
+                RaisePropertyChanged(nameof(IsImageRenameDriveToolSelected));
+                RaisePropertyChanged(nameof(IsDuplicateDriveToolVisible));
+                RaisePropertyChanged(nameof(IsImageRenameDriveToolVisible));
+                HandleDriveToolsConfigurationChanged();
+            }
+        }
+    }
+
+    public bool IsDuplicateDriveToolSelected
+    {
+        get => SelectedDriveTool == DriveToolKind.Duplicates;
+        set
+        {
+            if (value)
+            {
+                SelectedDriveTool = DriveToolKind.Duplicates;
+            }
+        }
+    }
+
+    public bool IsImageRenameDriveToolSelected
+    {
+        get => SelectedDriveTool == DriveToolKind.ImageRename;
+        set
+        {
+            if (value)
+            {
+                SelectedDriveTool = DriveToolKind.ImageRename;
+            }
+        }
+    }
+
+    public bool IsDuplicateDriveToolVisible => SelectedDriveTool == DriveToolKind.Duplicates;
+
+    public bool IsImageRenameDriveToolVisible => SelectedDriveTool == DriveToolKind.ImageRename;
 
     public SyncMode SelectedMode
     {
@@ -401,6 +524,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         SyncMode.TwoWay => "Changes on this side are also reconciled back to the source location.",
         _ => "This side receives created folders, new files, and overwrite updates.",
     };
+
+    public string DriveToolsLocationDescription => "Drive Tools works against one drive or folder at a time for duplicate cleanup and future image rename workflows.";
 
     public bool IsDetectMovesAvailable => SelectedMode == SyncMode.OneWay;
 
@@ -460,6 +585,18 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             if (SetProperty(ref _includeSubfolders, value))
             {
                 HandleConfigurationChanged();
+            }
+        }
+    }
+
+    public bool DriveToolsIncludeSubfolders
+    {
+        get => _driveToolsIncludeSubfolders;
+        set
+        {
+            if (SetProperty(ref _driveToolsIncludeSubfolders, value))
+            {
+                HandleDriveToolsConfigurationChanged();
             }
         }
     }
@@ -631,7 +768,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public int UnchangedFilesCount => UnchangedFiles.Count;
 
-    public int DuplicateFilesCount => DuplicateFiles.Count;
+    public int DriveToolDuplicateRowCount => DriveToolDuplicateRows.Count;
+
+    public int DriveToolDuplicateGroupCount => DriveToolDuplicateRows.Count(row => row.IsGroupHeader);
 
     public int AllFilesCount => AllFiles.Count;
 
@@ -659,10 +798,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         set => SetSelection(PreviewTabKind.UnchangedFiles, value);
     }
 
-    public bool? AreAllDuplicateFilesSelected
+    public bool? AreAllDriveToolDuplicatesSelected
     {
-        get => GetSelectionState(PreviewTabKind.Duplicates);
-        set => SetSelection(PreviewTabKind.Duplicates, value);
+        get => GetDriveToolDuplicateSelectionState();
+        set => SetDriveToolDuplicateSelection(value);
     }
 
     public bool? AreAllFilesSelected
@@ -706,6 +845,15 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         if (!string.IsNullOrWhiteSpace(selectedPath))
         {
             SourcePath = selectedPath;
+        }
+    }
+
+    private void BrowseDriveToolsPath()
+    {
+        var selectedPath = WindowsSourceLocationPickerService.PickSourceLocation(DriveToolsPath, _folderPickerService, GetCurrentSourceVolumeService());
+        if (!string.IsNullOrWhiteSpace(selectedPath))
+        {
+            DriveToolsPath = selectedPath;
         }
     }
 
@@ -813,7 +961,12 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private bool CanExecuteSyncCommands() => !IsBusy && !IsSyncRunning && IsConfigurationComplete();
 
-    private bool CanExecuteDuplicateAnalyzeCommand() => !IsBusy && !IsSyncRunning && !string.IsNullOrWhiteSpace(SourcePath);
+    private bool CanExecuteDuplicateAnalyzeCommand() =>
+        !IsBusy &&
+        !IsSyncRunning &&
+        SelectedWorkspaceMode == WorkspaceMode.DriveTools &&
+        SelectedDriveTool == DriveToolKind.Duplicates &&
+        !string.IsNullOrWhiteSpace(DriveToolsPath);
 
     private bool CanExecuteToggleSyncCommand() => IsSyncRunning || (!IsBusy && IsConfigurationComplete());
 
@@ -822,7 +975,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool CanDeleteSelectedDuplicates() =>
         !IsBusy &&
         !IsSyncRunning &&
-        DuplicateFiles.Any(row => row.CanSelect && row.IsSelected);
+        SelectedWorkspaceMode == WorkspaceMode.DriveTools &&
+        SelectedDriveTool == DriveToolKind.Duplicates &&
+        DriveToolDuplicateRows.Any(row => row.CanSelect && row.IsSelected);
 
     private bool CanUseCompletedAnalyzeResults() =>
         IsBusy &&
@@ -1034,6 +1189,34 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         return rows.Count(row => row.IsSelected);
     }
 
+    public void SelectAllDriveToolDuplicates()
+    {
+        UpdateDriveToolDuplicateSelection(_ => true);
+    }
+
+    public void InvertDriveToolDuplicateSelection()
+    {
+        UpdateDriveToolDuplicateSelection(row => !row.IsSelected);
+    }
+
+    public int SelectDriveToolDuplicatesByPattern(string keyword, PreviewSelectionTarget target)
+    {
+        var normalizedKeyword = keyword?.Trim();
+        if (string.IsNullOrWhiteSpace(normalizedKeyword))
+        {
+            return 0;
+        }
+
+        var rows = GetSelectableDriveToolDuplicateRows();
+        if (rows.Count == 0)
+        {
+            return 0;
+        }
+
+        UpdateDriveToolDuplicateSelection(row => MatchesDriveToolPattern(row, normalizedKeyword, target));
+        return rows.Count(row => row.IsSelected);
+    }
+
     public void OpenPreviewColumnFilter(PreviewTabKind tabKind, PreviewColumnHeader header)
     {
         _activePreviewFilterColumn = header.ColumnKey;
@@ -1152,6 +1335,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    public void SetDriveToolsPathFocused(bool isFocused)
+    {
+        if (SetProperty(ref _isDriveToolsPathFocused, isFocused))
+        {
+            RaisePropertyChanged(nameof(DriveToolsPathDisplayText));
+        }
+    }
+
     public void SetAdditionalDestinationPathFocused(object? parameter, bool isFocused)
     {
         if (parameter is DestinationPathEntryViewModel entry)
@@ -1162,7 +1353,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private async Task AnalyzeAsync()
     {
-        ReplaceDuplicateCandidates([]);
+        ReplaceDriveToolDuplicateEntries([]);
+        ReplaceDriveToolDuplicateRows([]);
 
         if (!TryValidateConfiguration(requireAccessibleDestinationPath: false, out var destinationPathsToAnalyze, out var skippedDestinationPaths))
         {
@@ -1283,7 +1475,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private async Task FindDuplicatesAsync()
     {
-        if (!TryResolveSourceVolume(out var sourceVolume, out var validationMessage))
+        if (!TryResolveSingleVolume(DriveToolsPath, "Drive Tools", out var sourceVolume, out var validationMessage))
         {
             StatusMessage = validationMessage;
             AddLog("Error", StatusMessage, SyncLogSeverity.Error);
@@ -1303,7 +1495,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                     sourceVolume!,
                     HideMacOsSystemFiles,
                     _excludedPathPatterns,
-                    IncludeSubfolders,
+                    DriveToolsIncludeSubfolders,
                     cancellationTokenSource.Token,
                     progress: new Progress<DuplicateAnalyzeProgress>(progress =>
                     {
@@ -1335,10 +1527,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private async Task DeleteSelectedDuplicatesAsync()
     {
-        var selectedCandidates = DuplicateFiles
+        var selectedCandidates = DriveToolDuplicateRows
             .Where(row => row.CanSelect && row.IsSelected)
-            .Select(row => _duplicateCandidatesByItemKey.TryGetValue(row.ItemKey, out var candidate) ? candidate : null)
-            .OfType<DuplicateFileCandidate>()
+            .Select(row => row.FileEntry)
+            .OfType<DuplicateFileEntry>()
             .ToList();
 
         if (selectedCandidates.Count == 0)
@@ -1347,7 +1539,17 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             return;
         }
 
-        if (!TryResolveSourceVolume(out var sourceVolume, out var validationMessage))
+        if (DriveToolDuplicateRows
+            .Where(row => row.CanSelect)
+            .GroupBy(row => row.GroupKey, StringComparer.OrdinalIgnoreCase)
+            .Any(group => group.All(row => row.IsSelected)))
+        {
+            StatusMessage = "Leave at least one file unchecked in each checksum group.";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
+            return;
+        }
+
+        if (!TryResolveSingleVolume(DriveToolsPath, "Drive Tools", out var sourceVolume, out var validationMessage))
         {
             StatusMessage = validationMessage;
             AddLog("Error", StatusMessage, SyncLogSeverity.Error);
@@ -1374,17 +1576,18 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 .Select(candidate => candidate.ItemKey)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            ReplaceDuplicateCandidates(_duplicateCandidatesByItemKey.Values.Where(candidate => !deletedKeys.Contains(candidate.ItemKey)));
-            ReplacePreviewRows(DuplicateFiles.Where(row => !deletedKeys.Contains(row.ItemKey)).ToList());
+            ReplaceDriveToolDuplicateEntries(_driveToolDuplicateEntriesByItemKey.Values.Where(candidate => !deletedKeys.Contains(candidate.ItemKey)));
+            ReplaceDriveToolDuplicateRows(DriveToolDuplicateRows.Where(row => row.IsGroupHeader || !deletedKeys.Contains(row.ItemKey)).ToList());
+            RemoveEmptyDriveToolDuplicateGroups();
             SetStatusMessage(
                 deletedCount == 1
                     ? "Deleted 1 duplicate file."
                     : $"Deleted {deletedCount} duplicate files.",
                 isSuccess: true);
             CurrentTransferItem = deletedCount == 1 ? "1 duplicate removed." : $"{deletedCount} duplicates removed.";
-            CurrentTransferDetails = DuplicateFilesCount == 0
+            CurrentTransferDetails = DriveToolDuplicateGroupCount == 0
                 ? "No duplicate candidates remain."
-                : $"{DuplicateFilesCount} duplicate candidate(s) remain.";
+                : $"{DriveToolDuplicateGroupCount} checksum group(s) remain.";
             CurrentTransferProgressValue = 0;
             AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Verbose);
         }, cancellationTokenSource.Token).ConfigureAwait(true);
@@ -1571,6 +1774,12 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         ScheduleConfigurationPersist();
+    }
+
+    private void HandleDriveToolsConfigurationChanged()
+    {
+        FindDuplicatesCommand.RaiseCanExecuteChanged();
+        DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
     }
 
     private static string BuildCompletionMessage(int appliedOperations, bool verifyChecksums, int verifiedCopyCount)
@@ -2077,7 +2286,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         var actions = analysisResult.Actions;
         var preview = analysisResult.Preview;
 
-        ReplaceDuplicateCandidates([]);
+        ReplaceDriveToolDuplicateEntries([]);
+        ReplaceDriveToolDuplicateRows([]);
         ReplaceActions(actions);
         await ReplacePreviewAsync(preview, cancellationToken).ConfigureAwait(true);
         ReplaceQueue(GetSelectedActions());
@@ -2093,18 +2303,16 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void ApplyDuplicateAnalysisResult(DuplicateAnalysisResult analysisResult)
     {
-        var duplicatePreview = CreateDuplicatePreview(analysisResult.Candidates);
-        ReplaceDuplicateCandidates(analysisResult.Candidates);
+        var duplicateRows = CreateDriveToolDuplicateRows(analysisResult.Groups);
+        ReplaceDriveToolDuplicateEntries(analysisResult.Groups.SelectMany(group => group.Files));
+        ReplaceDriveToolDuplicateRows(duplicateRows);
         ReplaceActions([]);
-        ReplacePreviewRows(duplicatePreview);
         ReplaceQueue([]);
 
-        var duplicateCount = analysisResult.Candidates.Count;
+        var duplicateCount = analysisResult.Groups.Sum(group => group.Files.Count);
         var message = duplicateCount == 0
             ? "No duplicated files were found in the selected source location."
-            : duplicateCount == 1
-                ? "Found 1 duplicate file candidate. Select it if you want UsbFileSync to delete it."
-                : $"Found {duplicateCount} duplicate file candidates across {analysisResult.DuplicateGroupCount} checksum-matched group(s). Select the files you want UsbFileSync to delete.";
+            : $"Found {duplicateCount} duplicate file(s) across {analysisResult.DuplicateGroupCount} checksum-matched group(s). Leave one copy unchecked in each group, then select the copies you want UsbFileSync to delete.";
         SetStatusMessage(message, isSuccess: duplicateCount == 0);
         CurrentTransferItem = duplicateCount == 0 ? "Duplicate analysis complete." : "Duplicate results ready.";
         CurrentTransferDetails = duplicateCount == 0
@@ -2114,50 +2322,118 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         AddLog("Duplicate Finder", StatusMessage, duplicateCount == 0 ? SyncLogSeverity.Verbose : SyncLogSeverity.Warning);
     }
 
-    private IReadOnlyList<SyncPreviewRowViewModel> CreateDuplicatePreview(IEnumerable<DuplicateFileCandidate> candidates)
+    private IReadOnlyList<DriveToolDuplicateRowViewModel> CreateDriveToolDuplicateRows(IEnumerable<DuplicateFileGroup> groups)
     {
-        var rows = candidates
-            .Select(candidate => new SyncPreviewRowViewModel(new SyncPreviewItem(
-                ItemKey: candidate.ItemKey,
-                RelativePath: candidate.DuplicateRelativePath,
-                IsDirectory: false,
-                SourceFullPath: candidate.DuplicateFullPath,
-                SourceLength: candidate.Length,
-                SourceLastWriteTimeUtc: candidate.LastWriteTimeUtc,
-                DestinationFullPath: candidate.KeepFullPath,
-                DestinationLength: candidate.Length,
-                DestinationLastWriteTimeUtc: candidate.LastWriteTimeUtc,
-                Direction: "<-",
-                Status: "Duplicate",
-                Category: SyncPreviewCategory.Duplicates,
-                PlannedActionType: SyncActionType.DeleteFromSource,
-                DriveLocationPath: SourcePath), driveDisplayNameService: _driveDisplayNameService))
-            .ToList();
+        var rows = new List<DriveToolDuplicateRowViewModel>();
+        foreach (var group in groups.OrderBy(group => group.Files[0].RelativePath, StringComparer.OrdinalIgnoreCase))
+        {
+            var firstFile = group.Files[0];
+            rows.Add(new DriveToolDuplicateRowViewModel(
+                itemKey: $"summary|{group.GroupKey}",
+                groupKey: group.GroupKey,
+                isGroupHeader: true,
+                displayName: firstFile.ChecksumSha256,
+                displayPath: $"{group.Files.Count} matching file(s)",
+                checksumText: group.ChecksumSha256,
+                fileType: Path.GetExtension(firstFile.FullPath).TrimStart('.').ToUpperInvariant() is { Length: > 0 } extension ? extension : "File",
+                sizeText: FormatDriveToolSize(group.Length),
+                actionText: "Review"));
 
-        return SortPreviewRows(rows);
+            foreach (var file in group.Files)
+            {
+                rows.Add(new DriveToolDuplicateRowViewModel(
+                    itemKey: file.ItemKey,
+                    groupKey: group.GroupKey,
+                    isGroupHeader: false,
+                    displayName: Path.GetFileName(file.FullPath),
+                    displayPath: _driveDisplayNameService.FormatDestinationPathForDisplay(file.FullPath),
+                    checksumText: string.Empty,
+                    fileType: string.Empty,
+                    sizeText: string.Empty,
+                    actionText: "Delete",
+                    fileEntry: file));
+            }
+        }
+
+        return rows;
     }
 
-    private void ReplaceDuplicateCandidates(IEnumerable<DuplicateFileCandidate> candidates)
+    private void ReplaceDriveToolDuplicateEntries(IEnumerable<DuplicateFileEntry> candidates)
     {
-        _duplicateCandidatesByItemKey.Clear();
+        _driveToolDuplicateEntriesByItemKey.Clear();
         foreach (var candidate in candidates)
         {
-            _duplicateCandidatesByItemKey[candidate.ItemKey] = candidate;
+            _driveToolDuplicateEntriesByItemKey[candidate.ItemKey] = candidate;
         }
 
         DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
     }
 
-    private bool TryResolveSourceVolume(out IVolumeSource? sourceVolume, out string validationMessage)
+    private void ReplaceDriveToolDuplicateRows(IReadOnlyList<DriveToolDuplicateRowViewModel> rows)
+    {
+        RunOnDispatcher(() =>
+        {
+            foreach (var existingRow in DriveToolDuplicateRows)
+            {
+                existingRow.PropertyChanged -= OnDriveToolDuplicateRowPropertyChanged;
+            }
+
+            ReplaceCollection(DriveToolDuplicateRows, rows);
+            foreach (var row in DriveToolDuplicateRows)
+            {
+                row.PropertyChanged += OnDriveToolDuplicateRowPropertyChanged;
+            }
+            RaisePropertyChanged(nameof(DriveToolDuplicateRowCount));
+            RaisePropertyChanged(nameof(DriveToolDuplicateGroupCount));
+            RaisePropertyChanged(nameof(AreAllDriveToolDuplicatesSelected));
+            DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
+        });
+    }
+
+    private void RemoveEmptyDriveToolDuplicateGroups()
+    {
+        var rowsToKeep = new List<DriveToolDuplicateRowViewModel>();
+        DriveToolDuplicateRowViewModel? pendingHeader = null;
+        var currentGroupChildren = new List<DriveToolDuplicateRowViewModel>();
+
+        void FlushCurrentGroup()
+        {
+            if (pendingHeader is null || currentGroupChildren.Count < 2)
+            {
+                return;
+            }
+
+            rowsToKeep.Add(pendingHeader);
+            rowsToKeep.AddRange(currentGroupChildren);
+        }
+
+        foreach (var row in DriveToolDuplicateRows)
+        {
+            if (row.IsGroupHeader)
+            {
+                FlushCurrentGroup();
+                pendingHeader = row;
+                currentGroupChildren.Clear();
+                continue;
+            }
+
+            currentGroupChildren.Add(row);
+        }
+
+        FlushCurrentGroup();
+        ReplaceDriveToolDuplicateRows(rowsToKeep);
+    }
+
+    private bool TryResolveSingleVolume(string path, string label, out IVolumeSource? sourceVolume, out string validationMessage)
     {
         sourceVolume = null;
-        if (!TryValidateSyncPath(SourcePath, "Source", requireExistingDirectory: true, out validationMessage))
+        if (!TryValidateSyncPath(path, label, requireExistingDirectory: true, out validationMessage))
         {
             return false;
         }
 
         var sourceVolumeService = GetCurrentSourceVolumeService();
-        if (sourceVolumeService.TryCreateVolume(SourcePath, out sourceVolume, out var failureReason) &&
+        if (sourceVolumeService.TryCreateVolume(path, out sourceVolume, out var failureReason) &&
             sourceVolume is not null)
         {
             validationMessage = string.Empty;
@@ -2166,15 +2442,15 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         try
         {
-            sourceVolume = new WindowsMountedVolume(SourcePath);
+            sourceVolume = new WindowsMountedVolume(path);
             validationMessage = string.Empty;
             return true;
         }
         catch (Exception)
         {
             validationMessage = string.IsNullOrWhiteSpace(failureReason)
-                ? "Source path could not be opened."
-                : $"Source volume could not be opened. {failureReason}";
+                ? $"{label} path could not be opened."
+                : $"{label} volume could not be opened. {failureReason}";
             return false;
         }
     }
@@ -2532,13 +2808,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             ReplaceRows(ChangedFiles, rows.Where(row => row.Category == SyncPreviewCategory.ChangedFiles));
             ReplaceRows(DeletedFiles, rows.Where(row => row.Category == SyncPreviewCategory.DeletedFiles));
             ReplaceRows(UnchangedFiles, rows.Where(row => row.Status == "Unchanged"));
-            ReplaceRows(DuplicateFiles, rows.Where(row => row.Category == SyncPreviewCategory.Duplicates));
             ReplaceRows(AllFiles, rows);
             RaisePropertyChanged(nameof(NewFilesCount));
             RaisePropertyChanged(nameof(ChangedFilesCount));
             RaisePropertyChanged(nameof(DeletedFilesCount));
             RaisePropertyChanged(nameof(UnchangedFilesCount));
-            RaisePropertyChanged(nameof(DuplicateFilesCount));
             RaisePropertyChanged(nameof(AllFilesCount));
             RaiseSelectionStateChanged();
         });
@@ -2658,7 +2932,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         PreviewTabKind.ChangedFiles => ChangedFiles,
         PreviewTabKind.DeletedFiles => DeletedFiles,
         PreviewTabKind.UnchangedFiles => UnchangedFiles,
-        PreviewTabKind.Duplicates => DuplicateFiles,
         _ => AllFiles,
     };
 
@@ -2702,6 +2975,55 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         UpdateSelectedQueue();
     }
 
+    private bool? GetDriveToolDuplicateSelectionState()
+    {
+        var selectableRows = GetSelectableDriveToolDuplicateRows();
+        if (selectableRows.Count == 0)
+        {
+            return false;
+        }
+
+        var selectedCount = selectableRows.Count(row => row.IsSelected);
+        if (selectedCount == 0)
+        {
+            return false;
+        }
+
+        return selectedCount == selectableRows.Count ? true : null;
+    }
+
+    private void SetDriveToolDuplicateSelection(bool? isSelected)
+    {
+        UpdateDriveToolDuplicateSelection(_ => isSelected ?? false);
+    }
+
+    private List<DriveToolDuplicateRowViewModel> GetSelectableDriveToolDuplicateRows() =>
+        DriveToolDuplicateRows.Where(row => row.CanSelect).ToList();
+
+    private void UpdateDriveToolDuplicateSelection(Func<DriveToolDuplicateRowViewModel, bool> selectionFactory)
+    {
+        var selectableRows = GetSelectableDriveToolDuplicateRows();
+        if (selectableRows.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var row in selectableRows)
+        {
+            row.IsSelected = selectionFactory(row);
+        }
+
+        RaisePropertyChanged(nameof(AreAllDriveToolDuplicatesSelected));
+        DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
+    }
+
+    private static bool MatchesDriveToolPattern(DriveToolDuplicateRowViewModel row, string keyword, PreviewSelectionTarget target) => target switch
+    {
+        PreviewSelectionTarget.FileName => ContainsKeyword(row.FileName, keyword),
+        PreviewSelectionTarget.FileFolder => ContainsKeyword(Path.GetDirectoryName(row.DisplayPath), keyword),
+        _ => ContainsKeyword(row.DisplayPath, keyword),
+    };
+
     private static bool MatchesPattern(SyncPreviewRowViewModel row, string keyword, PreviewSelectionTarget target)
     {
         return target switch
@@ -2744,6 +3066,35 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         !string.IsNullOrWhiteSpace(value) &&
         value.Contains(keyword, StringComparison.OrdinalIgnoreCase);
 
+    private static string FormatDriveToolSize(long size)
+    {
+        if (size < 1024)
+        {
+            return $"{size} B";
+        }
+
+        var units = new[] { "KB", "MB", "GB", "TB" };
+        double value = size;
+        var unitIndex = -1;
+        while (value >= 1024 && unitIndex < units.Length - 1)
+        {
+            value /= 1024;
+            unitIndex++;
+        }
+
+        return $"{value:0.##} {units[Math.Max(unitIndex, 0)]}";
+    }
+
+    private void OnDriveToolDuplicateRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(DriveToolDuplicateRowViewModel.IsSelected) ||
+            e.PropertyName == nameof(DriveToolDuplicateRowViewModel.CanSelect))
+        {
+            RaisePropertyChanged(nameof(AreAllDriveToolDuplicatesSelected));
+            DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
+        }
+    }
+
     private void UpdateSelectedQueue()
     {
         ReplaceQueue(GetSelectedActions());
@@ -2756,9 +3107,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         RaisePropertyChanged(nameof(AreAllChangedFilesSelected));
         RaisePropertyChanged(nameof(AreAllDeletedFilesSelected));
         RaisePropertyChanged(nameof(AreAllUnchangedFilesSelected));
-        RaisePropertyChanged(nameof(AreAllDuplicateFilesSelected));
         RaisePropertyChanged(nameof(AreAllFilesSelected));
-        DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
     }
 
     private ICollectionView CreatePreviewView(ObservableCollection<SyncPreviewRowViewModel> rows)
@@ -2795,7 +3144,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ReplaceRows(ChangedFiles, SortPreviewRows(ChangedFiles));
         ReplaceRows(DeletedFiles, SortPreviewRows(DeletedFiles));
         ReplaceRows(UnchangedFiles, SortPreviewRows(UnchangedFiles));
-        ReplaceRows(DuplicateFiles, SortPreviewRows(DuplicateFiles));
         ReplaceRows(AllFiles, SortPreviewRows(AllFiles));
         RefreshPreviewViews();
     }

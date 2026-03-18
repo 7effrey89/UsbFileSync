@@ -47,8 +47,16 @@ public partial class MainWindow : Window
 
     private void OnExitClicked(object sender, RoutedEventArgs e) => Close();
 
-    private void OnSelectAllInTabClicked(object sender, RoutedEventArgs e) =>
+    private void OnSelectAllInTabClicked(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel.IsDriveToolsWorkspaceSelected && _viewModel.IsDuplicateDriveToolSelected)
+        {
+            _viewModel.SelectAllDriveToolDuplicates();
+            return;
+        }
+
         _viewModel.SelectAllInTab(GetSelectedPreviewTabKind());
+    }
 
     private void OnSelectByPatternClicked(object sender, RoutedEventArgs e)
     {
@@ -62,11 +70,25 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_viewModel.IsDriveToolsWorkspaceSelected && _viewModel.IsDuplicateDriveToolSelected)
+        {
+            _viewModel.SelectDriveToolDuplicatesByPattern(dialog.PatternText, dialog.SelectionTarget);
+            return;
+        }
+
         _viewModel.SelectByPattern(GetSelectedPreviewTabKind(), dialog.PatternText, dialog.SelectionTarget);
     }
 
-    private void OnInvertSelectionClicked(object sender, RoutedEventArgs e) =>
+    private void OnInvertSelectionClicked(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel.IsDriveToolsWorkspaceSelected && _viewModel.IsDuplicateDriveToolSelected)
+        {
+            _viewModel.InvertDriveToolDuplicateSelection();
+            return;
+        }
+
         _viewModel.InvertSelectionInTab(GetSelectedPreviewTabKind());
+    }
 
     private void OnToggleInfoBoxesClicked(object sender, RoutedEventArgs e)
     {
@@ -146,6 +168,15 @@ public partial class MainWindow : Window
 
     private void OnDestinationPathTextBoxLostKeyboardFocus(object sender, RoutedEventArgs e) =>
         _viewModel.SetDestinationPathFocused(false);
+
+    private void OnDriveToolsPathTextBoxGotKeyboardFocus(object sender, RoutedEventArgs e)
+    {
+        _viewModel.SetDriveToolsPathFocused(true);
+        SelectAllText(sender);
+    }
+
+    private void OnDriveToolsPathTextBoxLostKeyboardFocus(object sender, RoutedEventArgs e) =>
+        _viewModel.SetDriveToolsPathFocused(false);
 
     private void OnAdditionalDestinationPathTextBoxGotKeyboardFocus(object sender, RoutedEventArgs e)
     {
@@ -228,7 +259,6 @@ public partial class MainWindow : Window
         1 => PreviewTabKind.ChangedFiles,
         2 => PreviewTabKind.DeletedFiles,
         3 => PreviewTabKind.UnchangedFiles,
-        4 => PreviewTabKind.Duplicates,
         _ => PreviewTabKind.AllFiles,
     };
 

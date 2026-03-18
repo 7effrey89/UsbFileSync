@@ -33,11 +33,9 @@
         <Geometry x:Key="SyncModeChevronGeometry">M0,0 L196,0 L220,22 L196,44 L0,44 L24,22 Z</Geometry>
         <Geometry x:Key="SyncModeBidirectionalGeometry">M24,0 L196,0 L220,22 L196,44 L24,44 L0,22 Z</Geometry>
         <viewModels:PreviewColumnHeader x:Key="PreviewSourceFileHeader" Title="Source File" ColumnKey="SourceFile" />
-        <viewModels:PreviewColumnHeader x:Key="PreviewDuplicateFileHeader" Title="Duplicate File" ColumnKey="SourceFile" />
         <viewModels:PreviewColumnHeader x:Key="PreviewSyncActionHeader" Title="Sync action" ColumnKey="SyncAction" />
         <viewModels:PreviewColumnHeader x:Key="PreviewTransferSpeedHeader" Title="Transfer speed" ColumnKey="TransferSpeed" />
         <viewModels:PreviewColumnHeader x:Key="PreviewDestinationFileHeader" Title="Destination File" ColumnKey="DestinationFile" />
-        <viewModels:PreviewColumnHeader x:Key="PreviewKeepFileHeader" Title="Keep File" ColumnKey="DestinationFile" />
         <viewModels:PreviewColumnHeader x:Key="PreviewFileTypeHeader" Title="File type" ColumnKey="FileType" />
         <viewModels:PreviewColumnHeader x:Key="PreviewSourceSizeHeader" Title="Source size" ColumnKey="SourceSize" />
         <viewModels:PreviewColumnHeader x:Key="PreviewDestinationSizeHeader" Title="Destination size" ColumnKey="DestinationSize" />
@@ -575,6 +573,77 @@
                        VerticalAlignment="Center"
                        TextTrimming="CharacterEllipsis" />
         </DataTemplate>
+        <Style x:Key="ModeToggleButtonStyle" TargetType="ToggleButton">
+            <Setter Property="Background" Value="#FFFFFF" />
+            <Setter Property="Foreground" Value="{StaticResource HeaderTextBrush}" />
+            <Setter Property="BorderBrush" Value="#CFCFCF" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="18,10" />
+            <Setter Property="MinWidth" Value="150" />
+            <Setter Property="Margin" Value="0,0,12,0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="18"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsChecked" Value="True">
+                    <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+                    <Setter Property="Foreground" Value="#FFFFFF" />
+                    <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.6" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="DriveToolDuplicateRowStyle" TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsGroupHeader}" Value="True">
+                    <Setter Property="Background" Value="{StaticResource SectionBackgroundBrush}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <DataTemplate x:Key="DriveToolDuplicateNameCellTemplate">
+            <StackPanel Orientation="Horizontal" Margin="{Binding NameMargin}">
+                <TextBlock Text="{Binding NamePrefix}"
+                           Width="48"
+                           Foreground="{StaticResource SubtleTextBrush}"
+                           FontWeight="{Binding NameFontWeight}"
+                           VerticalAlignment="Center" />
+                <TextBlock Text="{Binding DisplayName}"
+                           FontWeight="{Binding NameFontWeight}"
+                           TextTrimming="CharacterEllipsis"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+        </DataTemplate>
+        <DataTemplate x:Key="DriveToolDuplicatePathCellTemplate">
+            <TextBlock Text="{Binding DisplayPath}"
+                       TextTrimming="CharacterEllipsis"
+                       Foreground="{StaticResource SubtleTextBrush}"
+                       VerticalAlignment="Center" />
+        </DataTemplate>
+        <DataTemplate x:Key="DriveToolDuplicateSelectionCellTemplate">
+            <CheckBox HorizontalAlignment="Center"
+                      VerticalAlignment="Center"
+                      IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                      IsEnabled="{Binding CanSelect}" />
+        </DataTemplate>
+        <DataTemplate x:Key="DriveToolDuplicateActionCellTemplate">
+            <TextBlock Text="{Binding ActionText}"
+                       FontWeight="{Binding NameFontWeight}"
+                       VerticalAlignment="Center"
+                       Foreground="{StaticResource HeaderTextBrush}" />
+        </DataTemplate>
     </Window.Resources>
 
     <DockPanel>
@@ -734,11 +803,26 @@
         <Grid Margin="20">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <Grid Grid.Row="0" Margin="0,0,0,16">
+            <Border Grid.Row="0" Style="{StaticResource CardBorderStyle}" Padding="14,12" Margin="0,0,0,16">
+                <StackPanel Orientation="Horizontal">
+                    <ToggleButton Style="{StaticResource ModeToggleButtonStyle}"
+                                  IsChecked="{Binding IsSyncWorkspaceSelected}"
+                                  Content="Sync Mode" />
+                    <ToggleButton Style="{StaticResource ModeToggleButtonStyle}"
+                                  Margin="0"
+                                  IsChecked="{Binding IsDriveToolsWorkspaceSelected}"
+                                  Content="Drive Tools" />
+                </StackPanel>
+            </Border>
+
+            <Grid Grid.Row="1"
+                  Margin="0,0,0,16"
+                  Visibility="{Binding IsSyncWorkspaceVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition x:Name="SourceLocationColumnDefinition" Width="1.25*" />
                     <ColumnDefinition x:Name="SyncSettingsColumnDefinition" Width="400" />
@@ -846,18 +930,11 @@
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="90" />
                                 <ColumnDefinition Width="10" />
-                                <ColumnDefinition Width="120" />
-                                <ColumnDefinition Width="10" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
 
                             <Button Grid.Column="0" HorizontalAlignment="Stretch" Command="{Binding AnalyzeCommand}" Content="Analyze" />
-                            <Button Grid.Column="2"
-                                    HorizontalAlignment="Stretch"
-                                    Command="{Binding FindDuplicatesCommand}"
-                                    Content="Find duplicates"
-                                    ToolTip="Scan the selected source location for same-size files and confirm duplicate candidates with SHA-256." />
-                            <ToggleButton Grid.Column="4"
+                            <ToggleButton Grid.Column="2"
                                            HorizontalAlignment="Stretch"
                                            IsChecked="{Binding IsSyncRunning, Mode=OneWay}"
                                            Command="{Binding ToggleSyncCommand}"
@@ -944,7 +1021,114 @@
                 </Border>
             </Grid>
 
-            <Grid Grid.Row="1">
+            <Grid Grid.Row="1"
+                  Margin="0,0,0,16"
+                  Visibility="{Binding IsDriveToolsWorkspaceVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="1.3*" />
+                    <ColumnDefinition Width="0.9*" />
+                    <ColumnDefinition Width="1*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0" Style="{StaticResource CardBorderStyle}" Padding="18" Margin="0,0,12,0">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource SectionLabelStyle}" Text="DRIVE TOOLS LOCATION" />
+                        <TextBlock Text="Drive or folder" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBox x:Name="DriveToolsPathTextBox"
+                                     Grid.Column="0"
+                                     IsReadOnly="True"
+                                     Text="{Binding DriveToolsPathDisplayText, Mode=OneWay}"
+                                     ToolTip="{Binding DriveToolsPath}"
+                                     GotKeyboardFocus="OnDriveToolsPathTextBoxGotKeyboardFocus"
+                                     LostKeyboardFocus="OnDriveToolsPathTextBoxLostKeyboardFocus" />
+                            <Button Grid.Column="1"
+                                    Margin="10,8,0,0"
+                                    Padding="14,7"
+                                    Command="{Binding BrowseDriveToolsPathCommand}"
+                                    Content="Browse..." />
+                        </Grid>
+                        <TextBlock Margin="0,10,0,0"
+                                   Foreground="{StaticResource SubtleTextBrush}"
+                                   Text="{Binding DriveToolsLocationDescription}"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="1" Style="{StaticResource CardBorderStyle}" Padding="18" Margin="0,0,12,0">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource SectionLabelStyle}" Text="DRIVE TOOLS" />
+                        <ToggleButton Style="{StaticResource ModeToggleButtonStyle}"
+                                      IsChecked="{Binding IsDuplicateDriveToolSelected}"
+                                      Margin="0,8,0,10"
+                                      Content="Duplicate Analysis" />
+                        <ToggleButton Style="{StaticResource ModeToggleButtonStyle}"
+                                      IsChecked="{Binding IsImageRenameDriveToolSelected}"
+                                      Margin="0"
+                                      Content="Image Rename" />
+                        <TextBlock Margin="0,16,0,0"
+                                   Foreground="{StaticResource SubtleTextBrush}"
+                                   Text="Drive Tools stays focused on one drive at a time so file-management features do not interfere with sync planning."
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="2" Style="{StaticResource CardBorderStyle}" Padding="18">
+                    <Grid>
+                        <Grid Visibility="{Binding IsDuplicateDriveToolVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource SectionLabelStyle}" Text="DUPLICATE ANALYSIS" />
+                                <CheckBox Margin="0,6,0,14"
+                                          Content="Include subfolders"
+                                          IsChecked="{Binding DriveToolsIncludeSubfolders}" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="10" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button Grid.Column="0"
+                                            HorizontalAlignment="Stretch"
+                                            Command="{Binding FindDuplicatesCommand}"
+                                            Content="Analyze duplicates" />
+                                    <Button Grid.Column="2"
+                                            HorizontalAlignment="Stretch"
+                                            Command="{Binding DeleteSelectedDuplicatesCommand}"
+                                            Content="Delete selected" />
+                                </Grid>
+                                <TextBlock Margin="0,12,0,0"
+                                           Foreground="{StaticResource SubtleTextBrush}"
+                                           Text="UsbFileSync first groups files by size, then verifies exact matches with SHA-256 before presenting any checksum group."
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Grid>
+                        <Grid Visibility="{Binding IsImageRenameDriveToolVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource SectionLabelStyle}" Text="IMAGE RENAME ANALYSIS" />
+                                <TextBlock Text="Planned metadata-first default" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}" />
+                                <Border Margin="0,10,0,0" Style="{StaticResource CardBorderStyle}" Padding="12" Background="{StaticResource SectionBackgroundBrush}">
+                                    <TextBlock Text="yyyyMMdd_HHmmss[_City].ext"
+                                               FontFamily="Consolas"
+                                               FontSize="15"
+                                               Foreground="{StaticResource HeaderTextBrush}" />
+                                </Border>
+                                <TextBlock Margin="0,12,0,0"
+                                           Foreground="{StaticResource SubtleTextBrush}"
+                                           Text="This mode is reserved for one-drive image rename analysis. A future pass can analyze EXIF date and optional GPS-derived city metadata before renaming camera-style filenames."
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <Grid Grid.Row="2"
+                  Visibility="{Binding IsSyncWorkspaceVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <Grid.RowDefinitions>
                     <RowDefinition x:Name="PreviewPaneRowDefinition" Height="*" MinHeight="280" />
                     <RowDefinition x:Name="DashboardSplitterRowDefinition" Height="12" />
@@ -965,14 +1149,8 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0">
                                 <TextBlock Text="Synchronization preview" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}" />
-                                <TextBlock Margin="0,6,0,0" Text="Use the tabs to filter the preview table by new, changed, deleted, unchanged, duplicate candidates, or all items." Foreground="{StaticResource SubtleTextBrush}" />
+                                <TextBlock Margin="0,6,0,0" Text="Use the tabs to filter the preview table by new, changed, deleted, unchanged, or all items." Foreground="{StaticResource SubtleTextBrush}" />
                             </StackPanel>
-                            <Button Grid.Column="1"
-                                    Margin="12,0,0,0"
-                                    VerticalAlignment="Center"
-                                    Command="{Binding DeleteSelectedDuplicatesCommand}"
-                                    Content="Delete selected duplicates"
-                                    ToolTip="Delete the checked duplicate files from the currently selected source location." />
                         </Grid>
 
                         <Grid Grid.Row="1">
@@ -1144,47 +1322,6 @@
                             <TabItem>
                                 <TabItem.Header>
                                     <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="⧉"
-                                                   Margin="0,0,6,0"
-                                                   FontWeight="Bold"
-                                                   Foreground="#0F6CBD" />
-                                        <TextBlock Text="{Binding DuplicateFilesCount, StringFormat=Duplicates ({0})}" />
-                                    </StackPanel>
-                                </TabItem.Header>
-                                <DataGrid ItemsSource="{Binding DuplicateFiles}"
-                                          AutoGenerateColumns="False"
-                                          CanUserAddRows="False"
-                                          IsReadOnly="True"
-                                          ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                          ScrollViewer.VerticalScrollBarVisibility="Auto">
-                                    <DataGrid.Columns>
-                                        <DataGridTemplateColumn Width="36" CellTemplate="{StaticResource PreviewSelectionCellTemplate}" HeaderStyle="{StaticResource PreviewSelectionColumnHeaderStyle}">
-                                            <DataGridTemplateColumn.HeaderTemplate>
-                                                <DataTemplate>
-                                                    <CheckBox IsThreeState="True"
-                                                              HorizontalAlignment="Center"
-                                                              VerticalAlignment="Center"
-                                                              IsChecked="{Binding DataContext.AreAllDuplicateFilesSelected, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                                                </DataTemplate>
-                                            </DataGridTemplateColumn.HeaderTemplate>
-                                        </DataGridTemplateColumn>
-                                        <DataGridTemplateColumn Header="{StaticResource PreviewDuplicateFileHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" CellTemplate="{StaticResource PreviewNameCellTemplate}" Width="400" />
-                                        <DataGridTemplateColumn Header="{StaticResource PreviewSyncActionHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" CellTemplate="{StaticResource PreviewProgressCellTemplate}" Width="140" />
-                                        <DataGridTemplateColumn Header="{StaticResource PreviewTransferSpeedHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" CellTemplate="{StaticResource PreviewTransferSpeedCellTemplate}" Width="110" />
-                                        <DataGridTemplateColumn Header="{StaticResource PreviewKeepFileHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" CellTemplate="{StaticResource PreviewDestinationPathCellTemplate}" Width="220" />
-                                        <DataGridTextColumn Header="{StaticResource PreviewFileTypeHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" Binding="{Binding FileType}" Width="90" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
-                                        <DataGridTextColumn Header="{StaticResource PreviewSourceSizeHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" Binding="{Binding SourceSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
-                                        <DataGridTextColumn Header="{StaticResource PreviewDestinationSizeHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" Binding="{Binding DestinationSize}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
-                                        <DataGridTextColumn Header="{StaticResource PreviewSourceModifiedHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" Binding="{Binding SourceModified}" Width="150" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
-                                        <DataGridTextColumn Header="{StaticResource PreviewDestinationModifiedHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" Binding="{Binding DestinationModified}" Width="150" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
-                                        <DataGridTemplateColumn Header="{StaticResource PreviewStatusHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" CellTemplate="{StaticResource PreviewStatusCellTemplate}" Width="140" />
-                                        <DataGridTemplateColumn Header="{StaticResource PreviewActionHeader}" HeaderTemplate="{StaticResource PreviewFilterableColumnHeaderTemplate}" CellTemplate="{StaticResource PreviewActionCellTemplate}" Width="210" />
-                                    </DataGrid.Columns>
-                                </DataGrid>
-                            </TabItem>
-                            <TabItem>
-                                <TabItem.Header>
-                                    <StackPanel Orientation="Horizontal">
                                         <TextBlock Text="•"
                                                    Margin="0,0,6,0"
                                                    FontWeight="Bold"
@@ -1315,6 +1452,89 @@
             </Grid>
 
             <Border Grid.Row="2"
+                    Style="{StaticResource CardBorderStyle}"
+                    Padding="16"
+                    MinHeight="280"
+                    Visibility="{Binding IsDriveToolsWorkspaceVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Grid>
+                    <Grid Visibility="{Binding IsDuplicateDriveToolVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Grid.Row="0" Margin="0,0,0,12">
+                            <TextBlock Text="Duplicate analysis preview" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}" />
+                            <TextBlock Margin="0,6,0,0"
+                                       Text="Each SHA-256 summary row is followed by the matching file copies. Leave one file unchecked in each group, then select the copies you want to delete."
+                                       Foreground="{StaticResource SubtleTextBrush}"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <DataGrid Grid.Row="1"
+                                  ItemsSource="{Binding DriveToolDuplicateRows}"
+                                  RowStyle="{StaticResource DriveToolDuplicateRowStyle}"
+                                  AutoGenerateColumns="False"
+                                  CanUserAddRows="False"
+                                  IsReadOnly="True"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                  ScrollViewer.VerticalScrollBarVisibility="Auto">
+                            <DataGrid.Columns>
+                                <DataGridTemplateColumn Width="36" CellTemplate="{StaticResource DriveToolDuplicateSelectionCellTemplate}" HeaderStyle="{StaticResource PreviewSelectionColumnHeaderStyle}">
+                                    <DataGridTemplateColumn.HeaderTemplate>
+                                        <DataTemplate>
+                                            <CheckBox IsThreeState="True"
+                                                      HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center"
+                                                      IsChecked="{Binding DataContext.AreAllDriveToolDuplicatesSelected, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.HeaderTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="Item" CellTemplate="{StaticResource DriveToolDuplicateNameCellTemplate}" Width="260" />
+                                <DataGridTemplateColumn Header="Location / notes" CellTemplate="{StaticResource DriveToolDuplicatePathCellTemplate}" Width="*" />
+                                <DataGridTextColumn Header="Checksum" Binding="{Binding ChecksumText}" Width="240" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
+                                <DataGridTextColumn Header="File type" Binding="{Binding FileType}" Width="90" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
+                                <DataGridTextColumn Header="Size" Binding="{Binding SizeText}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
+                                <DataGridTemplateColumn Header="Action" CellTemplate="{StaticResource DriveToolDuplicateActionCellTemplate}" Width="110" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+
+                    <Grid Visibility="{Binding IsImageRenameDriveToolVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Grid.Row="0" Margin="0,0,0,12">
+                            <TextBlock Text="Image rename analysis" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}" />
+                            <TextBlock Margin="0,6,0,0"
+                                       Text="This Drive Tools area reserves image renaming for a future one-drive workflow. The preview below describes the intended metadata model without changing files yet."
+                                       Foreground="{StaticResource SubtleTextBrush}"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <Border Grid.Row="1" Style="{StaticResource CardBorderStyle}" Padding="20" Background="{StaticResource SectionBackgroundBrush}">
+                            <StackPanel>
+                                <TextBlock Text="Planned analysis output" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}" />
+                                <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" Foreground="{StaticResource SubtleTextBrush}">
+                                    <Run Text="UsbFileSync can analyze generic camera filenames such as " />
+                                    <Run Text="DCIM_0001.jpg" FontFamily="Consolas" />
+                                    <Run Text=" and propose a sortable rename like " />
+                                    <Run Text="20260318_140546[_City].jpg" FontFamily="Consolas" />
+                                    <Run Text=" using EXIF date/time and optional GPS-based location metadata when it is available." />
+                                </TextBlock>
+                                <TextBlock Margin="0,14,0,0" Text="Planned inputs" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}" />
+                                <TextBlock Margin="0,6,0,0" Text="• DateTimeOriginal / CreateDate for the timestamp" Foreground="{StaticResource SubtleTextBrush}" />
+                                <TextBlock Margin="0,4,0,0" Text="• Optional city suffix derived from GPS metadata" Foreground="{StaticResource SubtleTextBrush}" />
+                                <TextBlock Margin="0,4,0,0" Text="• Settings-driven format selection so the pattern remains configurable" Foreground="{StaticResource SubtleTextBrush}" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="3"
                     Margin="0,16,0,0"
                     Padding="14,10">
                 <Border.Style>
@@ -1344,7 +1564,7 @@
                 </TextBlock>
             </Border>
 
-            <Border Grid.RowSpan="3"
+            <Border Grid.RowSpan="4"
                     Background="#CCFFFFFF"
                     Visibility="{Binding IsBusyOverlayVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                     Panel.ZIndex="20">

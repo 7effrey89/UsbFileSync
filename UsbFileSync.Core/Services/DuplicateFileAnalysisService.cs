@@ -34,7 +34,7 @@ public sealed class DuplicateFileAnalysisService
         var totalFilesToHash = sizeCandidateGroups.Sum(group => group.Count);
         var hashedFiles = 0;
         var duplicateGroups = 0;
-        var candidates = new List<DuplicateFileCandidate>();
+        var groups = new List<DuplicateFileGroup>();
 
         foreach (var sizeGroup in sizeCandidateGroups)
         {
@@ -69,28 +69,28 @@ public sealed class DuplicateFileAnalysisService
                     .ThenBy(file => file.FullPath, StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
-                var keepFile = orderedFiles[0];
-                foreach (var duplicateFile in orderedFiles.Skip(1))
-                {
-                    candidates.Add(new DuplicateFileCandidate(
-                        ItemKey: $"{duplicateFile.RelativePath}|{duplicateFile.FullPath}|{keepFile.FullPath}",
-                        DuplicateRelativePath: duplicateFile.RelativePath,
-                        DuplicateFullPath: duplicateFile.FullPath,
-                        Length: duplicateFile.Length,
-                        LastWriteTimeUtc: duplicateFile.LastWriteTimeUtc,
-                        KeepRelativePath: keepFile.RelativePath,
-                        KeepFullPath: keepFile.FullPath,
-                        ChecksumSha256: checksumGroup.Key));
-                }
+                groups.Add(new DuplicateFileGroup(
+                    GroupKey: checksumGroup.Key,
+                    ChecksumSha256: checksumGroup.Key,
+                    Length: orderedFiles[0].Length,
+                    Files: orderedFiles
+                        .Select(file => new DuplicateFileEntry(
+                            ItemKey: $"{checksumGroup.Key}|{file.RelativePath}|{file.FullPath}",
+                            RelativePath: file.RelativePath,
+                            FullPath: file.FullPath,
+                            Length: file.Length,
+                            LastWriteTimeUtc: file.LastWriteTimeUtc,
+                            ChecksumSha256: checksumGroup.Key))
+                        .ToList()));
             }
         }
 
-        return new DuplicateAnalysisResult(candidates, duplicateGroups, hashedFiles);
+        return new DuplicateAnalysisResult(groups, duplicateGroups, hashedFiles);
     }
 
     public int DeleteDuplicates(
         IVolumeSource volume,
-        IEnumerable<DuplicateFileCandidate> candidates,
+        IEnumerable<DuplicateFileEntry> candidates,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(volume);
@@ -100,7 +100,7 @@ public sealed class DuplicateFileAnalysisService
         foreach (var candidate in candidates)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            volume.DeleteFile(candidate.DuplicateRelativePath);
+            volume.DeleteFile(candidate.RelativePath);
             deletedCount++;
         }
 

@@ -38,7 +38,7 @@ The HFS+ backend intentionally enforces read-only behavior so the application do
 - Safe cancellation for file copy operations.
 - Optional SHA-256 checksum validation for each copied file.
 - Optional `Move Mode` that deletes the original file only after the copy in the planned sync direction has been verified.
-- A dedicated **Find duplicates** workflow for the selected source location. It first narrows candidates by file size, then confirms byte-for-byte matches with SHA-256 before listing duplicate candidates side-by-side with the file that would be kept.
+- A dedicated **Drive Tools** workspace for single-drive file-management tasks, with grouped duplicate analysis now available and image rename analysis reserved for a future metadata-driven pass.
 - Configurable parallel file copy count, including `0` for adaptive auto parallelism.
 - Source and destination volumes are scanned concurrently during the analyze phase, so the time to index a source and destination on separate drives overlaps rather than being sequential. Each volume is also scanned in a single pass that collects both files and directories together, halving the number of directory traversals. Within each volume, multiple worker threads enumerate different directories in parallel so the OS I/O scheduler and SSD parallelism are fully utilised. File metadata (size, timestamps) is retrieved from the underlying `FindFirstFile`/`FindNextFile` OS call in a single pass, eliminating redundant per-file stat lookups.
 - Settings persistence between runs.
@@ -178,9 +178,9 @@ The main window includes:
 - Sync mode selection.
 - `Detect moves`, `Dry run`, `Subfolders`, `Checksums`, and `Move Mode` options with hover tooltips that explain their behavior.
 - `Analyze` and `Synchronize` actions.
-- A `Find duplicates` action for single-location duplicate analysis plus a `Delete selected duplicates` action after review.
+- Top-level `Sync Mode` and `Drive Tools` buttons so sync planning and single-drive file management stay clearly separated.
 - A large synchronization preview table.
-- Filter tabs for `New Files`, `Changed`, `Deleted`, `Unchanged`, `Duplicates`, and `All`.
+- Filter tabs for `New Files`, `Changed`, `Deleted`, `Unchanged`, and `All` inside `Sync Mode`, plus a dedicated grouped duplicate preview table inside `Drive Tools`.
 - Shared selection checkboxes across filtered tabs, including select-all checkboxes in each preview header.
 - Edit menu actions for `Select All In Tab`, `Select By Pattern`, and `Invert Selection` against the active preview tab.
 - Action, status, sync action, transfer speed, source metadata, and destination metadata columns, with the same column set available across all preview tabs.
@@ -206,16 +206,18 @@ The settings dialog currently supports:
 
 Google Drive and OneDrive now support both source and destination flows on this branch when custom provider credentials are enabled. The settings dialog can test the configured cloud connection, and the source or destination picker can authenticate against the selected provider, browse folders, and use the selected cloud folder as either a readable source volume or a writable destination volume for synchronization.
 
-## Duplicate Finder
+## Drive Tools
 
-Duplicate finding is intentionally kept as a separate workflow from the normal source-versus-destination synchronize analysis. Duplicate cleanup is a single-location file-management task, so combining it with pairwise sync planning would make every analyze run slower and would blur the meaning of the existing `New`, `Changed`, and `Deleted` tabs.
+Drive Tools is intentionally kept separate from the normal source-versus-destination synchronize analysis. Duplicate cleanup and future image renaming are single-location file-management tasks, so combining them with pairwise sync planning would make every analyze run slower and would blur the meaning of the existing sync preview tabs.
 
 UsbFileSync therefore uses a two-phase duplicate scan:
 
 1. **Rough grouping by file size** to avoid hashing files that cannot possibly match.
-2. **SHA-256 verification** only inside those same-size groups so every listed duplicate candidate is byte-for-byte identical.
+2. **SHA-256 verification** only inside those same-size groups so every listed checksum group is byte-for-byte identical.
 
-The `Duplicates` tab shows the redundant file on the left and the file chosen as the deterministic keep-reference on the right. Review the list, check the rows you want to remove, and then use `Delete selected duplicates`.
+Inside `Drive Tools > Duplicate Analysis`, UsbFileSync shows one summary row per checksum group, followed by indented rows for each matching file path in that group. Leave one file unchecked in each group, select the extra copies you want removed, and then use `Delete selected`.
+
+`Drive Tools > Image Rename` is now reserved as the future home for metadata-driven rename analysis so those one-drive workflows stay grouped together.
 
 ## Photo Rename Guidance
 

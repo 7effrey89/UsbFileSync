@@ -20,14 +20,14 @@ public sealed class DuplicateFileAnalysisServiceTests
             excludedPathPatterns: null,
             includeSubfolders: true);
 
-        var candidate = Assert.Single(result.Candidates);
-        var pairedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            candidate.DuplicateRelativePath.Replace('\\', '/'),
-            candidate.KeepRelativePath.Replace('\\', '/'),
-        };
+        var group = Assert.Single(result.Groups);
+        var pairedPaths = group.Files
+            .Select(file => file.RelativePath.Replace('\\', '/'))
+            .OrderBy(path => path)
+            .ToArray();
         Assert.Equal(1, result.DuplicateGroupCount);
-        Assert.Equal(new[] { "copy.txt", "keep.txt" }, pairedPaths.OrderBy(path => path).ToArray());
+        Assert.Equal(new[] { "copy.txt", "keep.txt" }, pairedPaths);
+        Assert.Equal(group.ChecksumSha256, group.Files[0].ChecksumSha256);
         Assert.True(result.HashedFileCount >= 3);
     }
 
