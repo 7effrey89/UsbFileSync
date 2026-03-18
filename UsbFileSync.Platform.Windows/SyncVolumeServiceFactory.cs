@@ -75,6 +75,7 @@ public static class SyncVolumeServiceFactory
             DryRun = configuration.DryRun,
             VerifyChecksums = configuration.VerifyChecksums,
             MoveMode = configuration.MoveMode,
+            IncludeSubfolders = configuration.IncludeSubfolders,
             HideMacOsSystemFiles = configuration.HideMacOsSystemFiles,
             ParallelCopyCount = configuration.ParallelCopyCount,
             PreviewProviderMappings = new Dictionary<string, string>(configuration.PreviewProviderMappings, StringComparer.OrdinalIgnoreCase),

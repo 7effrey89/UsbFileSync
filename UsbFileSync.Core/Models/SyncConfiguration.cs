@@ -32,6 +32,8 @@ public sealed class SyncConfiguration
 
     public bool MoveMode { get; init; }
 
+    public bool IncludeSubfolders { get; init; } = true;
+
     public bool HideMacOsSystemFiles { get; init; } = true;
 
     public IReadOnlyList<string> ExcludedPathPatterns { get; init; } = Array.Empty<string>();

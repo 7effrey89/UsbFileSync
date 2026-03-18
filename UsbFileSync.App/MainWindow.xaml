@@ -812,36 +812,34 @@
                                 </ComboBox>
                             </Grid>
                         </Grid>
-                        <Grid Margin="0,12,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-
-                            <CheckBox Grid.Column="0"
+                        <WrapPanel Margin="0,12,0,0">
+                            <CheckBox Margin="0,0,24,8"
                                       VerticalAlignment="Center"
                                       Content="Detect moves"
                                       IsEnabled="{Binding IsDetectMovesAvailable}"
                                       IsChecked="{Binding DetectMoves}"
                                       ToolTip="One-way mode only. Treat matching delete-and-create changes as a rename or move when the file content appears to be the same." />
-                            <CheckBox Grid.Column="1"
+                            <CheckBox Margin="0,0,24,8"
                                       VerticalAlignment="Center"
                                       Content="Dry run"
                                       IsChecked="{Binding DryRun}"
                                       ToolTip="Preview the planned synchronization actions without copying, overwriting, deleting, or creating files and folders." />
-                            <CheckBox Grid.Column="2"
+                            <CheckBox Margin="0,0,24,8"
+                                      VerticalAlignment="Center"
+                                      Content="Subfolders"
+                                      IsChecked="{Binding IncludeSubfolders}"
+                                      ToolTip="Include subfolders during preview analysis. Uncheck to analyze the selected folder only without traversing nested folders." />
+                            <CheckBox Margin="0,0,24,8"
                                       VerticalAlignment="Center"
                                       Content="Checksums"
                                       IsChecked="{Binding VerifyChecksums}"
                                       ToolTip="Calculate SHA-256 checksums for the source and copied file before committing each transfer. This improves integrity validation but makes transfers slower." />
-                            <CheckBox Grid.Column="3"
+                            <CheckBox Margin="0,0,24,8"
                                       VerticalAlignment="Center"
                                       Content="Move Mode"
                                       IsChecked="{Binding MoveMode}"
                                       ToolTip="After each copy or overwrite completes, UsbFileSync validates the copied file with SHA-256 and deletes the original only when the source and destination hashes match. This is intended for move-style transfer workflows." />
-                        </Grid>
+                        </WrapPanel>
                         <Grid Margin="0,16,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="90" />

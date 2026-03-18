@@ -168,8 +168,18 @@ public sealed class SyncService
         IReadOnlySet<string> destinationDirectories = null!;
 
         Parallel.Invoke(
-            () => (sourceFiles, sourceDirectories) = DirectorySnapshotBuilder.BuildSnapshot(sourceVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns),
-            () => (destinationFiles, destinationDirectories) = DirectorySnapshotBuilder.BuildSnapshot(destinationVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns));
+            () => (sourceFiles, sourceDirectories) = DirectorySnapshotBuilder.BuildSnapshot(
+                sourceVolume,
+                configuration.HideMacOsSystemFiles,
+                configuration.ExcludedPathPatterns,
+                scanObserver: null,
+                includeSubfolders: configuration.IncludeSubfolders),
+            () => (destinationFiles, destinationDirectories) = DirectorySnapshotBuilder.BuildSnapshot(
+                destinationVolume,
+                configuration.HideMacOsSystemFiles,
+                configuration.ExcludedPathPatterns,
+                scanObserver: null,
+                includeSubfolders: configuration.IncludeSubfolders));
         var actionsByRelativePath = actions
             .GroupBy(action => action.RelativePath, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
@@ -281,6 +291,7 @@ public sealed class SyncService
         DryRun = configuration.DryRun,
         VerifyChecksums = configuration.VerifyChecksums,
         MoveMode = configuration.MoveMode,
+        IncludeSubfolders = configuration.IncludeSubfolders,
         HideMacOsSystemFiles = configuration.HideMacOsSystemFiles,
         ExcludedPathPatterns = configuration.ExcludedPathPatterns.ToList(),
         ParallelCopyCount = configuration.ParallelCopyCount,

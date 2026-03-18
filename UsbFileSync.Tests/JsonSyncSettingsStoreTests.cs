@@ -32,6 +32,7 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
             DryRun = true,
             VerifyChecksums = true,
             MoveMode = true,
+            IncludeSubfolders = false,
             HideMacOsSystemFiles = false,
             ExcludedPathPatterns = ["node_modules", ".venv", "bin", "obj"],
             ParallelCopyCount = 4,
@@ -48,6 +49,7 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
         Assert.Equal(configuration.DryRun, restored.DryRun);
         Assert.Equal(configuration.VerifyChecksums, restored.VerifyChecksums);
         Assert.Equal(configuration.MoveMode, restored.MoveMode);
+        Assert.Equal(configuration.IncludeSubfolders, restored.IncludeSubfolders);
         Assert.Equal(configuration.HideMacOsSystemFiles, restored.HideMacOsSystemFiles);
         Assert.Equal(configuration.ExcludedPathPatterns, restored.ExcludedPathPatterns);
         Assert.Equal(configuration.ParallelCopyCount, restored.ParallelCopyCount);

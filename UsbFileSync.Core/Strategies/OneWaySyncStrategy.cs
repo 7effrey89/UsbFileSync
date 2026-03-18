@@ -21,10 +21,10 @@ public sealed class OneWaySyncStrategy : ISyncStrategy
         var destinationObserver = progressTracker?.CreateObserver(destinationVolume.Root);
 
         var sourceSnapshotTask = Task.Run(
-            () => DirectorySnapshotBuilder.BuildSnapshot(sourceVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns, sourceObserver),
+            () => DirectorySnapshotBuilder.BuildSnapshot(sourceVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns, sourceObserver, configuration.IncludeSubfolders),
             cancellationToken);
         var destinationSnapshotTask = Task.Run(
-            () => DirectorySnapshotBuilder.BuildSnapshot(destinationVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns, destinationObserver),
+            () => DirectorySnapshotBuilder.BuildSnapshot(destinationVolume, configuration.HideMacOsSystemFiles, configuration.ExcludedPathPatterns, destinationObserver, configuration.IncludeSubfolders),
             cancellationToken);
 
         await Task.WhenAll(sourceSnapshotTask, destinationSnapshotTask).ConfigureAwait(false);

@@ -29,6 +29,7 @@ The HFS+ backend intentionally enforces read-only behavior so the application do
 - Preview analysis also shows throttled scan details, including cumulative file and folder counts, current scan rate, and the current path being analyzed, without turning the overlay into a per-file live log.
 - Preview analysis also shows an approximate, smoothed `Estimated time` value derived from elapsed analyze time versus staged progress. When you analyze the same source and destination again, UsbFileSync also reuses the last observed timing for that pair so the overlay can show a numeric estimate earlier during the `Analyzing changes` phase. The progress bar interpolates smoothly within the analyze step on every run by tracking the live pending directory count from the parallel scanner—no historical data is needed for the bar to fill meaningfully on the very first scan.
 - Application Settings also support configurable path exclusion patterns so folders like `node_modules`, `.venv`, `bin`, `obj`, and other matched trees can be excluded from preview analysis and synchronization planning.
+- The main window now includes a `Subfolders` toggle for preview analysis, and when it is off both analysis and preview results stay limited to the selected folder instead of traversing nested content.
 - Preview row projection and list replacement now run in background or batched phases so the main window stays responsive while large previews are prepared.
 - Completed preview rows remain visible after synchronization and are marked done until the next analyze refresh, while already-applied rows are retired from future queue selection.
 - Synchronization now runs in a separate background worker process, which allows ext4 write elevation without restarting the WPF UI.
@@ -174,7 +175,7 @@ The main window includes:
 
 - Source path selection plus add/remove controls for multiple destination paths.
 - Sync mode selection.
-- `Detect moves`, `Dry run`, `Checksums`, and `Move Mode` options with hover tooltips that explain their behavior.
+- `Detect moves`, `Dry run`, `Subfolders`, `Checksums`, and `Move Mode` options with hover tooltips that explain their behavior.
 - `Analyze` and `Synchronize` actions.
 - A large synchronization preview table.
 - Filter tabs for `New Files`, `Changed`, `Deleted`, `Unchanged`, and `All`.

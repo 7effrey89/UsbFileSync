@@ -41,7 +41,8 @@ internal static class DirectorySnapshotBuilder
         IVolumeSource volume,
         bool hideMacOsSystemFiles,
         IReadOnlyList<string>? excludedPathPatterns,
-        Action<string, bool, int>? scanObserver = null)
+        Action<string, bool, int>? scanObserver = null,
+        bool includeSubfolders = true)
     {
         ArgumentNullException.ThrowIfNull(volume);
 
@@ -51,19 +52,19 @@ internal static class DirectorySnapshotBuilder
             return new Dictionary<string, FileSnapshot>(StringComparer.OrdinalIgnoreCase);
         }
 
-        return EnumerateFileSnapshots(volume, hideMacOsSystemFiles, excludedPathPatterns, scanObserver)
+        return EnumerateFileSnapshots(volume, hideMacOsSystemFiles, excludedPathPatterns, scanObserver, includeSubfolders)
             .OrderBy(snapshot => snapshot.RelativePath, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(snapshot => snapshot.RelativePath, snapshot => snapshot, StringComparer.OrdinalIgnoreCase);
     }
 
     public static IReadOnlyDictionary<string, FileSnapshot> Build(IVolumeSource volume, bool hideMacOsSystemFiles)
-        => Build(volume, hideMacOsSystemFiles, excludedPathPatterns: null, scanObserver: null);
+        => Build(volume, hideMacOsSystemFiles, excludedPathPatterns: null, scanObserver: null, includeSubfolders: true);
 
     public static IReadOnlyDictionary<string, FileSnapshot> Build(
         IVolumeSource volume,
         bool hideMacOsSystemFiles,
         IReadOnlyList<string>? excludedPathPatterns)
-        => Build(volume, hideMacOsSystemFiles, excludedPathPatterns, scanObserver: null);
+        => Build(volume, hideMacOsSystemFiles, excludedPathPatterns, scanObserver: null, includeSubfolders: true);
 
     public static IReadOnlySet<string> BuildDirectories(string rootPath) =>
         BuildDirectories(new WindowsMountedVolume(rootPath));
@@ -78,7 +79,8 @@ internal static class DirectorySnapshotBuilder
         IVolumeSource volume,
         bool hideMacOsSystemFiles,
         IReadOnlyList<string>? excludedPathPatterns,
-        Action<string, bool, int>? scanObserver = null)
+        Action<string, bool, int>? scanObserver = null,
+        bool includeSubfolders = true)
     {
         ArgumentNullException.ThrowIfNull(volume);
 
@@ -88,17 +90,17 @@ internal static class DirectorySnapshotBuilder
             return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
 
-        return EnumerateDirectories(volume, hideMacOsSystemFiles, excludedPathPatterns, scanObserver).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return EnumerateDirectories(volume, hideMacOsSystemFiles, excludedPathPatterns, scanObserver, includeSubfolders).ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
     public static IReadOnlySet<string> BuildDirectories(IVolumeSource volume, bool hideMacOsSystemFiles)
-        => BuildDirectories(volume, hideMacOsSystemFiles, excludedPathPatterns: null, scanObserver: null);
+        => BuildDirectories(volume, hideMacOsSystemFiles, excludedPathPatterns: null, scanObserver: null, includeSubfolders: true);
 
     public static IReadOnlySet<string> BuildDirectories(
         IVolumeSource volume,
         bool hideMacOsSystemFiles,
         IReadOnlyList<string>? excludedPathPatterns)
-        => BuildDirectories(volume, hideMacOsSystemFiles, excludedPathPatterns, scanObserver: null);
+        => BuildDirectories(volume, hideMacOsSystemFiles, excludedPathPatterns, scanObserver: null, includeSubfolders: true);
 
     /// <summary>
     /// Scans a volume using parallel directory workers and returns both file snapshots
@@ -109,7 +111,8 @@ internal static class DirectorySnapshotBuilder
         IVolumeSource volume,
         bool hideMacOsSystemFiles,
         IReadOnlyList<string>? excludedPathPatterns,
-        Action<string, bool, int>? scanObserver = null)
+        Action<string, bool, int>? scanObserver = null,
+        bool includeSubfolders = true)
     {
         ArgumentNullException.ThrowIfNull(volume);
 
@@ -159,8 +162,11 @@ internal static class DirectorySnapshotBuilder
                                 {
                                     scanObserver?.Invoke(entry.FullPath, true, Volatile.Read(ref outstandingWork));
                                     directories.Add(relativePath);
-                                    Interlocked.Increment(ref outstandingWork);
-                                    pendingWork.Enqueue(relativePath);
+                                    if (includeSubfolders)
+                                    {
+                                        Interlocked.Increment(ref outstandingWork);
+                                        pendingWork.Enqueue(relativePath);
+                                    }
                                 }
                                 else if (entry.Size is not null && entry.LastWriteTimeUtc is not null)
                                 {
@@ -212,7 +218,8 @@ internal static class DirectorySnapshotBuilder
         IVolumeSource volume,
         bool hideMacOsSystemFiles,
         IReadOnlyList<string>? excludedPathPatterns,
-        Action<string, bool, int>? scanObserver)
+        Action<string, bool, int>? scanObserver,
+        bool includeSubfolders)
     {
         var pendingDirectories = new Stack<string>();
         pendingDirectories.Push(string.Empty);
@@ -239,7 +246,10 @@ internal static class DirectorySnapshotBuilder
                 var relativePath = GetRelativePath(volume, entry);
                 if (!IsExcludedRelativePath(volume, relativePath, hideMacOsSystemFiles, excludedPathPatterns))
                 {
-                    pendingDirectories.Push(relativePath);
+                    if (includeSubfolders)
+                    {
+                        pendingDirectories.Push(relativePath);
+                    }
                 }
             }
         }
@@ -249,7 +259,8 @@ internal static class DirectorySnapshotBuilder
         IVolumeSource volume,
         bool hideMacOsSystemFiles,
         IReadOnlyList<string>? excludedPathPatterns,
-        Action<string, bool, int>? scanObserver)
+        Action<string, bool, int>? scanObserver,
+        bool includeSubfolders)
     {
         var pendingDirectories = new Stack<string>();
         pendingDirectories.Push(string.Empty);
@@ -267,7 +278,10 @@ internal static class DirectorySnapshotBuilder
 
                 scanObserver?.Invoke(entry.FullPath, true, pendingDirectories.Count);
                 yield return relativePath;
-                pendingDirectories.Push(relativePath);
+                if (includeSubfolders)
+                {
+                    pendingDirectories.Push(relativePath);
+                }
             }
         }
     }
