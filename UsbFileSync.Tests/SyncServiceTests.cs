@@ -549,6 +549,32 @@ public sealed class SyncServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task BuildPreview_IncludeSubfoldersFalse_ExcludesNestedUnchangedItems()
+    {
+        var source = CreateDirectory("preview-top-level-only-source");
+        var destination = CreateDirectory("preview-top-level-only-destination");
+        var timestamp = new DateTime(2024, 5, 5, 0, 0, 0, DateTimeKind.Utc);
+        WriteFile(source, "root.txt", "payload", timestamp);
+        WriteFile(source, Path.Combine("nested", "child.txt"), "same", timestamp);
+        WriteFile(destination, Path.Combine("nested", "child.txt"), "same", timestamp);
+
+        var service = new SyncService();
+        var configuration = new SyncConfiguration
+        {
+            SourcePath = source,
+            DestinationPath = destination,
+            Mode = SyncMode.OneWay,
+            IncludeSubfolders = false,
+        };
+
+        var actions = await service.AnalyzeChangesAsync(configuration);
+        var preview = service.BuildPreview(configuration, actions);
+
+        Assert.Contains(preview, item => item.RelativePath == "root.txt" && item.Category == SyncPreviewCategory.NewFiles);
+        Assert.DoesNotContain(preview, item => item.RelativePath.StartsWith("nested/", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task ExecutePlannedAsync_UsesProvidedActionOrder()
     {
         var source = CreateDirectory("source");
