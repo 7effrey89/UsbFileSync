@@ -9,6 +9,7 @@ namespace UsbFileSync.Core.Services;
 internal sealed class ImageRenameCityResolver : IImageRenameCityResolver
 {
     private const int MaxMetadataPrefixLength = 256 * 1024;
+    private static readonly string[] CityAddressPropertyNames = ["city", "town", "village", "municipality", "hamlet", "county"];
     private static readonly HttpClient HttpClient = CreateHttpClient();
     private readonly ConcurrentDictionary<string, string?> _cityCache = new(StringComparer.OrdinalIgnoreCase);
 
@@ -67,7 +68,7 @@ internal sealed class ImageRenameCityResolver : IImageRenameCityResolver
         {
             Timeout = TimeSpan.FromSeconds(5),
         };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("UsbFileSync/1.0");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("UsbFileSync");
         client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
         return client;
     }
@@ -423,7 +424,7 @@ internal sealed class ImageRenameCityResolver : IImageRenameCityResolver
                 return null;
             }
 
-            foreach (var propertyName in new[] { "city", "town", "village", "municipality", "hamlet", "county" })
+            foreach (var propertyName in CityAddressPropertyNames)
             {
                 if (addressElement.TryGetProperty(propertyName, out var valueElement) &&
                     valueElement.ValueKind == JsonValueKind.String)
