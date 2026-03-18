@@ -1550,6 +1550,9 @@ public sealed class MainWindowViewModelTests
         viewModel.FindDuplicatesCommand.Execute(null);
         await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 3).ConfigureAwait(true);
 
+        var summaryRow = viewModel.DriveToolDuplicateRows.Single(row => row.IsGroupHeader);
+        Assert.Equal("Review", summaryRow.ActionText);
+
         var duplicateRow = viewModel.DriveToolDuplicateRows.Single(row => !row.IsGroupHeader && row.DisplayPath.Contains("copy.txt", StringComparison.OrdinalIgnoreCase));
         Assert.Equal("Keep", duplicateRow.ActionText);
 
@@ -1578,7 +1581,7 @@ public sealed class MainWindowViewModelTests
         viewModel.OpenPreviewContainingFolderCommand.Execute(duplicateRow);
 
         Assert.Equal("open-folder", launcher.LastOperation);
-        Assert.EndsWith(Path.Combine("copy.txt"), launcher.LastPath, StringComparison.OrdinalIgnoreCase);
+        Assert.EndsWith("copy.txt", launcher.LastPath, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -1624,6 +1627,7 @@ public sealed class MainWindowViewModelTests
         var moved = await viewModel.MoveDriveToolDuplicateAsync(duplicateRow, destinationFolder).ConfigureAwait(true);
 
         Assert.True(moved);
+        Assert.True(Directory.Exists(destinationFolder));
         Assert.True(File.Exists(Path.Combine(destinationFolder, "copy.txt")));
         Assert.False(File.Exists(Path.Combine(workspace.SourcePath, "copy.txt")));
         Assert.Equal("No duplicated files were found in the selected source location.", viewModel.StatusMessage);

@@ -3,14 +3,26 @@ using System.Windows;
 using System.Windows.Media;
 using UsbFileSync.App.Services;
 using UsbFileSync.Core.Models;
+using Brush = System.Windows.Media.Brush;
+using Color = System.Windows.Media.Color;
 
 namespace UsbFileSync.App.ViewModels;
 
 public sealed class DriveToolDuplicateRowViewModel : ObservableObject
 {
-    private static readonly System.Windows.Media.Brush DefaultPathBrush = CreateFrozenBrush(32, 32, 32);
-    private static readonly System.Windows.Media.Brush KeepActionBrush = CreateFrozenBrush(98, 98, 98);
-    private static readonly System.Windows.Media.Brush DeleteActionBrush = CreateFrozenBrush(196, 43, 28);
+    private const byte NeutralRed = 32;
+    private const byte NeutralGreen = 32;
+    private const byte NeutralBlue = 32;
+    private const byte KeepRed = 98;
+    private const byte KeepGreen = 98;
+    private const byte KeepBlue = 98;
+    private const byte DeleteRed = 196;
+    private const byte DeleteGreen = 43;
+    private const byte DeleteBlue = 28;
+
+    private static readonly Brush DefaultPathBrush = CreateFrozenBrush(NeutralRed, NeutralGreen, NeutralBlue);
+    private static readonly Brush KeepActionBrush = CreateFrozenBrush(KeepRed, KeepGreen, KeepBlue);
+    private static readonly Brush DeleteActionBrush = CreateFrozenBrush(DeleteRed, DeleteGreen, DeleteBlue);
 
     private readonly bool _canSelect;
     private bool _isSelected;
@@ -70,7 +82,7 @@ public sealed class DriveToolDuplicateRowViewModel : ObservableObject
 
     public string IconGlyph { get; }
 
-    public System.Windows.Media.Brush PathBrush => DefaultPathBrush;
+    public Brush PathBrush => DefaultPathBrush;
 
     public bool CanSelect => _canSelect;
 
@@ -98,7 +110,7 @@ public sealed class DriveToolDuplicateRowViewModel : ObservableObject
             ? "Delete"
             : "Keep";
 
-    public System.Windows.Media.Brush ActionBrush => IsGroupHeader
+    public Brush ActionBrush => IsGroupHeader
         ? DefaultPathBrush
         : IsSelected
             ? DeleteActionBrush
@@ -112,9 +124,9 @@ public sealed class DriveToolDuplicateRowViewModel : ObservableObject
 
     public string FileName => FileEntry is null ? DisplayName : Path.GetFileName(FileEntry.FullPath);
 
-    private static System.Windows.Media.Brush CreateFrozenBrush(byte red, byte green, byte blue)
+    private static Brush CreateFrozenBrush(byte red, byte green, byte blue)
     {
-        var brush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(red, green, blue));
+        var brush = new SolidColorBrush(Color.FromRgb(red, green, blue));
         brush.Freeze();
         return brush;
     }

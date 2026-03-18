@@ -990,7 +990,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     internal bool CanModifyDriveToolDuplicate(object? parameter) =>
         !IsBusy &&
         !IsSyncRunning &&
-        parameter is DriveToolDuplicateRowViewModel { FileEntry: not null, HasOpenPath: true };
+        parameter is DriveToolDuplicateRowViewModel { HasOpenPath: true };
 
     private bool CanUseCompletedAnalyzeResults() =>
         IsBusy &&
@@ -2350,11 +2350,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 itemKey: $"summary|{group.GroupKey}",
                 groupKey: group.GroupKey,
                 isGroupHeader: true,
-                    displayName: firstFile.ChecksumSha256,
-                    displayPath: $"{group.Files.Count} matching file(s)",
-                    checksumText: group.ChecksumSha256,
-                    fileType: Path.GetExtension(firstFile.FullPath).TrimStart('.').ToUpperInvariant() is { Length: > 0 } extension ? extension : "File",
-                    sizeText: FormatDriveToolSize(group.Length)));
+                displayName: "Duplicate group",
+                displayPath: $"{group.Files.Count} matching file(s)",
+                checksumText: group.ChecksumSha256,
+                fileType: Path.GetExtension(firstFile.FullPath).TrimStart('.').ToUpperInvariant() is { Length: > 0 } extension ? extension : "File",
+                sizeText: FormatDriveToolSize(group.Length)));
 
             foreach (var file in group.Files)
             {
@@ -3167,14 +3167,26 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         return false;
     }
 
+    private static bool TryGetModifiableDriveToolDuplicate(object? parameter, out DriveToolDuplicateRowViewModel? duplicateRow)
+    {
+        if (parameter is DriveToolDuplicateRowViewModel { FileEntry: not null, HasOpenPath: true } row)
+        {
+            duplicateRow = row;
+            return true;
+        }
+
+        duplicateRow = null;
+        return false;
+    }
+
     internal async Task<bool> RenameDriveToolDuplicateAsync(object? parameter, string newFileName)
     {
-        if (!CanModifyDriveToolDuplicate(parameter) ||
-            parameter is not DriveToolDuplicateRowViewModel duplicateRow ||
-            duplicateRow.FileEntry is null)
+        if (!TryGetModifiableDriveToolDuplicate(parameter, out var duplicateRow))
         {
             return false;
         }
+
+        ArgumentNullException.ThrowIfNull(duplicateRow);
 
         var trimmedFileName = newFileName?.Trim() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(trimmedFileName))
@@ -3192,7 +3204,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         var sourcePath = duplicateRow.OpenPath;
-        var targetPath = Path.Combine(Path.GetDirectoryName(sourcePath) ?? DriveToolsPath, trimmedFileName);
+        var targetDirectory = Path.GetDirectoryName(sourcePath) ?? DriveToolsPath;
+        var targetPath = Path.Combine(targetDirectory, trimmedFileName);
         if (string.Equals(sourcePath, targetPath, StringComparison.OrdinalIgnoreCase))
         {
             StatusMessage = "The file already has that name.";
@@ -3207,21 +3220,30 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             return false;
         }
 
-        File.Move(sourcePath, targetPath);
-        SetStatusMessage($"Renamed '{duplicateRow.FileName}' to '{trimmedFileName}'.", isSuccess: true);
-        AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Verbose);
-        await FindDuplicatesAsync().ConfigureAwait(true);
-        return true;
+        try
+        {
+            File.Move(sourcePath, targetPath);
+            SetStatusMessage($"Renamed '{duplicateRow.FileName}' to '{trimmedFileName}'.", isSuccess: true);
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Verbose);
+            await FindDuplicatesAsync().ConfigureAwait(true);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            StatusMessage = $"Could not rename '{duplicateRow.FileName}'. {exception.Message}";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Error);
+            return false;
+        }
     }
 
     internal async Task<bool> MoveDriveToolDuplicateAsync(object? parameter, string destinationFolder)
     {
-        if (!CanModifyDriveToolDuplicate(parameter) ||
-            parameter is not DriveToolDuplicateRowViewModel duplicateRow ||
-            duplicateRow.FileEntry is null)
+        if (!TryGetModifiableDriveToolDuplicate(parameter, out var duplicateRow))
         {
             return false;
         }
+
+        ArgumentNullException.ThrowIfNull(duplicateRow);
 
         var trimmedDestinationFolder = destinationFolder?.Trim() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(trimmedDestinationFolder))
@@ -3231,10 +3253,27 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             return false;
         }
 
-        Directory.CreateDirectory(trimmedDestinationFolder);
+        string normalizedDestinationFolder;
+        try
+        {
+            normalizedDestinationFolder = Path.GetFullPath(trimmedDestinationFolder);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            StatusMessage = $"The selected destination folder is invalid. {exception.Message}";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
+            return false;
+        }
+
+        if (!Path.IsPathFullyQualified(normalizedDestinationFolder))
+        {
+            StatusMessage = "Select a fully qualified destination folder before moving the file.";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
+            return false;
+        }
 
         var sourcePath = duplicateRow.OpenPath;
-        var targetPath = Path.Combine(trimmedDestinationFolder, duplicateRow.FileName);
+        var targetPath = Path.Combine(normalizedDestinationFolder, duplicateRow.FileName);
         if (string.Equals(sourcePath, targetPath, StringComparison.OrdinalIgnoreCase))
         {
             StatusMessage = "The file is already in that folder.";
@@ -3249,11 +3288,21 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             return false;
         }
 
-        File.Move(sourcePath, targetPath);
-        SetStatusMessage($"Moved '{duplicateRow.FileName}' to '{trimmedDestinationFolder}'.", isSuccess: true);
-        AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Verbose);
-        await FindDuplicatesAsync().ConfigureAwait(true);
-        return true;
+        try
+        {
+            Directory.CreateDirectory(normalizedDestinationFolder);
+            File.Move(sourcePath, targetPath);
+            SetStatusMessage($"Moved '{duplicateRow.FileName}' to '{normalizedDestinationFolder}'.", isSuccess: true);
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Verbose);
+            await FindDuplicatesAsync().ConfigureAwait(true);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            StatusMessage = $"Could not move '{duplicateRow.FileName}'. {exception.Message}";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Error);
+            return false;
+        }
     }
 
     private void UpdateSelectedQueue()
