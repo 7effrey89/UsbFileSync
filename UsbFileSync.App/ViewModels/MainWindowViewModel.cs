@@ -2325,7 +2325,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private IReadOnlyList<DriveToolDuplicateRowViewModel> CreateDriveToolDuplicateRows(IEnumerable<DuplicateFileGroup> groups)
     {
         var rows = new List<DriveToolDuplicateRowViewModel>();
-        foreach (var group in groups.OrderBy(group => group.Files[0].RelativePath, StringComparer.OrdinalIgnoreCase))
+        foreach (var group in groups
+            .Where(group => group.Files.Count > 0)
+            .OrderBy(group => group.Files[0].RelativePath, StringComparer.OrdinalIgnoreCase))
         {
             var firstFile = group.Files[0];
             rows.Add(new DriveToolDuplicateRowViewModel(
