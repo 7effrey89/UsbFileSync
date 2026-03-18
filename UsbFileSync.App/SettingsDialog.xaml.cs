@@ -42,10 +42,12 @@ public partial class SettingsDialog : Window
         ImageRenamePatternComboBox.SelectedValue = ImageRenamePattern;
         ImageRenameFileNamePatternItems = CreateSelectableOptions(ImageRenameDefaults.DefaultCameraFileNamePatterns, imageRenameFileNamePatterns);
         ImageRenameExtensionItems = CreateSelectableOptions(ImageRenameDefaults.DefaultExtensions, imageRenameExtensions);
+        ImageRenameCustomFileNamePatternItems = CreateCustomSelectableOptions(imageRenameFileNamePatterns, ImageRenameDefaults.DefaultCameraFileNamePatterns.Select(option => option.Value));
+        ImageRenameCustomExtensionItems = CreateCustomSelectableOptions(imageRenameExtensions, ImageRenameDefaults.DefaultExtensions.Select(option => option.Value));
         ImageRenamePatternOptionsItemsControl.ItemsSource = ImageRenameFileNamePatternItems;
         ImageRenameExtensionOptionsItemsControl.ItemsSource = ImageRenameExtensionItems;
-        ImageRenameCustomPatternsTextBox.Text = BuildCustomOptionText(imageRenameFileNamePatterns, ImageRenameDefaults.DefaultCameraFileNamePatterns.Select(option => option.Value));
-        ImageRenameCustomExtensionsTextBox.Text = BuildCustomOptionText(imageRenameExtensions, ImageRenameDefaults.DefaultExtensions.Select(option => option.Value));
+        ImageRenameCustomPatternItemsControl.ItemsSource = ImageRenameCustomFileNamePatternItems;
+        ImageRenameCustomExtensionItemsControl.ItemsSource = ImageRenameCustomExtensionItems;
         PreviewProviderMappingItems = CreateMappingItems(previewProviderMappings);
         CloudProviderAppRegistrationItems = CreateCloudProviderAppRegistrationItems(cloudProviderAppRegistrations);
         PreviewProviderMappingsDataGrid.ItemsSource = PreviewProviderMappingItems;
@@ -100,6 +102,10 @@ public partial class SettingsDialog : Window
 
     public ObservableCollection<SelectableTextOptionViewModel> ImageRenameExtensionItems { get; }
 
+    public ObservableCollection<EditableSelectableTextOptionViewModel> ImageRenameCustomFileNamePatternItems { get; }
+
+    public ObservableCollection<EditableSelectableTextOptionViewModel> ImageRenameCustomExtensionItems { get; }
+
     private bool _isTestingCloudProviderConnection;
     private string _testingRegistrationId = string.Empty;
 
@@ -140,13 +146,13 @@ public partial class SettingsDialog : Window
             ImageRenamePattern = selectedImageRenamePattern;
         }
 
-        if (!TryCreateImageRenameFileNamePatterns(ImageRenameFileNamePatternItems, ImageRenameCustomPatternsTextBox.Text, out var imageRenameFileNamePatterns, out errorMessage))
+        if (!TryCreateImageRenameFileNamePatterns(ImageRenameFileNamePatternItems, ImageRenameCustomFileNamePatternItems, out var imageRenameFileNamePatterns, out errorMessage))
         {
             System.Windows.MessageBox.Show(this, errorMessage, "Invalid image rename filename scope", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
-        if (!TryCreateImageRenameExtensions(ImageRenameExtensionItems, ImageRenameCustomExtensionsTextBox.Text, out var imageRenameExtensions, out errorMessage))
+        if (!TryCreateImageRenameExtensions(ImageRenameExtensionItems, ImageRenameCustomExtensionItems, out var imageRenameExtensions, out errorMessage))
         {
             System.Windows.MessageBox.Show(this, errorMessage, "Invalid image rename file formats", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
@@ -216,6 +222,32 @@ public partial class SettingsDialog : Window
         CloudProviderAppRegistrationItems.Add(item);
         CloudProviderRegistrationsDataGrid.SelectedItem = item;
         CloudProviderRegistrationsDataGrid.ScrollIntoView(item);
+    }
+
+    private void OnAddImageRenameCustomPatternClicked(object sender, RoutedEventArgs e)
+    {
+        ImageRenameCustomFileNamePatternItems.Add(new EditableSelectableTextOptionViewModel());
+    }
+
+    private void OnRemoveImageRenameCustomPatternClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: EditableSelectableTextOptionViewModel item })
+        {
+            ImageRenameCustomFileNamePatternItems.Remove(item);
+        }
+    }
+
+    private void OnAddImageRenameCustomExtensionClicked(object sender, RoutedEventArgs e)
+    {
+        ImageRenameCustomExtensionItems.Add(new EditableSelectableTextOptionViewModel());
+    }
+
+    private void OnRemoveImageRenameCustomExtensionClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: EditableSelectableTextOptionViewModel item })
+        {
+            ImageRenameCustomExtensionItems.Remove(item);
+        }
     }
 
     private void OnRemoveCloudAccountClicked(object sender, RoutedEventArgs e)
@@ -310,7 +342,7 @@ public partial class SettingsDialog : Window
 
     public static bool TryCreateImageRenameFileNamePatterns(
         IEnumerable<SelectableTextOptionViewModel> selectedDefaults,
-        string? customText,
+        IEnumerable<EditableSelectableTextOptionViewModel> customEntries,
         out List<string> patterns,
         out string errorMessage)
     {
@@ -321,7 +353,9 @@ public partial class SettingsDialog : Window
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        foreach (var rawPattern in SplitLines(customText))
+        foreach (var rawPattern in customEntries
+            .Where(option => option.IsSelected)
+            .Select(option => option.Value))
         {
             var normalizedPattern = ImageRenameDefaults.NormalizeFileNameMask(rawPattern);
             if (string.IsNullOrWhiteSpace(normalizedPattern))
@@ -353,7 +387,7 @@ public partial class SettingsDialog : Window
 
     public static bool TryCreateImageRenameExtensions(
         IEnumerable<SelectableTextOptionViewModel> selectedDefaults,
-        string? customText,
+        IEnumerable<EditableSelectableTextOptionViewModel> customEntries,
         out List<string> extensions,
         out string errorMessage)
     {
@@ -364,7 +398,9 @@ public partial class SettingsDialog : Window
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        foreach (var rawExtension in SplitLines(customText))
+        foreach (var rawExtension in customEntries
+            .Where(option => option.IsSelected)
+            .Select(option => option.Value))
         {
             var normalizedExtension = ImageRenameDefaults.NormalizeExtension(rawExtension);
             if (string.IsNullOrWhiteSpace(normalizedExtension) || normalizedExtension == ".")
@@ -865,20 +901,21 @@ public partial class SettingsDialog : Window
             }));
     }
 
-    private static string BuildCustomOptionText(IEnumerable<string>? selectedValues, IEnumerable<string> defaultValues)
+    private static ObservableCollection<EditableSelectableTextOptionViewModel> CreateCustomSelectableOptions(
+        IEnumerable<string>? selectedValues,
+        IEnumerable<string> defaultValues)
     {
         var defaults = defaultValues.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return string.Join(
-            Environment.NewLine,
+        return new ObservableCollection<EditableSelectableTextOptionViewModel>(
             (selectedValues ?? Array.Empty<string>())
                 .Select(value => value?.Trim() ?? string.Empty)
                 .Where(value => !string.IsNullOrWhiteSpace(value) && !defaults.Contains(value))
-                .Distinct(StringComparer.OrdinalIgnoreCase));
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(value => new EditableSelectableTextOptionViewModel
+                {
+                    Value = value,
+                    IsSelected = true,
+                }));
     }
-
-    private static IEnumerable<string> SplitLines(string? text) =>
-        (text ?? string.Empty)
-            .Replace("\r", string.Empty, StringComparison.Ordinal)
-            .Split(['\n', ';', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
 }

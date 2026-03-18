@@ -91,12 +91,41 @@
                     <TextBlock Margin="0,12,0,0"
                                Text="Custom filename masks"
                                FontWeight="SemiBold" />
-                    <TextBox x:Name="ImageRenameCustomPatternsTextBox"
-                             Margin="0,8,0,0"
-                             Height="110"
-                             AcceptsReturn="True"
-                             VerticalScrollBarVisibility="Auto"
-                             TextWrapping="Wrap" />
+                    <TextBlock Margin="0,8,0,0"
+                               Text="Add one custom mask per row, then check the rows you want Image Rename to use."
+                               TextWrapping="Wrap"
+                               Foreground="#616161" />
+                    <ItemsControl x:Name="ImageRenameCustomPatternItemsControl" Margin="0,10,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,4,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="10" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="10" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <CheckBox Grid.Column="0"
+                                              VerticalAlignment="Center"
+                                              IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBox Grid.Column="2"
+                                             VerticalContentAlignment="Center"
+                                             Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}" />
+                                    <Button Grid.Column="4"
+                                            Width="74"
+                                            Content="Remove"
+                                            Tag="{Binding}"
+                                            Click="OnRemoveImageRenameCustomPatternClicked" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <Button Width="170"
+                            Margin="0,10,0,0"
+                            HorizontalAlignment="Left"
+                            Content="Add custom mask"
+                            Click="OnAddImageRenameCustomPatternClicked" />
                     <TextBlock Margin="0,8,0,0"
                                Text="Example custom masks: GOPR????, MVI_????, or VID_*."
                                TextWrapping="Wrap"
@@ -121,14 +150,43 @@
                     <TextBlock Margin="0,12,0,0"
                                Text="Custom file extensions"
                                FontWeight="SemiBold" />
-                    <TextBox x:Name="ImageRenameCustomExtensionsTextBox"
-                             Margin="0,8,0,0"
-                             Height="90"
-                             AcceptsReturn="True"
-                             VerticalScrollBarVisibility="Auto"
-                             TextWrapping="Wrap" />
                     <TextBlock Margin="0,8,0,0"
-                               Text="Enter one extension per line, such as .orf or .arw."
+                               Text="Add one custom extension per row, then check the rows you want Image Rename to include."
+                               TextWrapping="Wrap"
+                               Foreground="#616161" />
+                    <ItemsControl x:Name="ImageRenameCustomExtensionItemsControl" Margin="0,10,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,4,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="10" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="10" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <CheckBox Grid.Column="0"
+                                              VerticalAlignment="Center"
+                                              IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBox Grid.Column="2"
+                                             VerticalContentAlignment="Center"
+                                             Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}" />
+                                    <Button Grid.Column="4"
+                                            Width="74"
+                                            Content="Remove"
+                                            Tag="{Binding}"
+                                            Click="OnRemoveImageRenameCustomExtensionClicked" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <Button Width="185"
+                            Margin="0,10,0,0"
+                            HorizontalAlignment="Left"
+                            Content="Add custom extension"
+                            Click="OnAddImageRenameCustomExtensionClicked" />
+                    <TextBlock Margin="0,8,0,0"
+                               Text="Enter custom extensions such as .orf or .arw."
                                TextWrapping="Wrap"
                                Foreground="#616161" />
                 </StackPanel>
