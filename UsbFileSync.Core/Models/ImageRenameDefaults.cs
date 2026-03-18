@@ -52,7 +52,7 @@ public static class ImageRenameDefaults
             return string.Empty;
         }
 
-        if (!normalized.StartsWith('.', StringComparison.Ordinal))
+        if (!normalized.StartsWith(".", StringComparison.Ordinal))
         {
             normalized = $".{normalized}";
         }

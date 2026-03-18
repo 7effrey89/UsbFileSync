@@ -214,7 +214,7 @@ public sealed class ImageRenameAnalysisService
 
     private static string GetDirectoryPath(string relativePath)
     {
-        var normalized = relativePath.Replace('\\', '/', StringComparison.Ordinal);
+        var normalized = relativePath.Replace('\\', '/');
         var separatorIndex = normalized.LastIndexOf('/');
         return separatorIndex < 0 ? string.Empty : normalized[..separatorIndex];
     }

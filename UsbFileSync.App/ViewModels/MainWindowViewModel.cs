@@ -683,7 +683,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public string ImageRenamePatternDescription =>
         ImageRenamePattern == ImageRenamePatternKind.TimestampOriginalFileNameCity
-            ? "City is appended only when location metadata is available."
+            ? "The city slot stays reserved in the filename and is skipped until location metadata support is available."
             : "Rename analysis uses the stored file timestamp and adds a sequencer when a target name is already taken.";
 
     public bool UseCustomCloudProviderCredentials
