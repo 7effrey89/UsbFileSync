@@ -2404,7 +2404,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 displayPath: $"{group.Files.Count} matching file(s)",
                 checksumText: group.ChecksumSha256,
                 fileType: Path.GetExtension(firstFile.FullPath).TrimStart('.').ToUpperInvariant() is { Length: > 0 } extension ? extension : "File",
-                sizeText: FormatDriveToolSize(group.Length)));
+                sizeText: FormatDriveToolSize(group.Length),
+                groupSelectionChanged: OnDriveToolDuplicateGroupSelectionChanged));
 
             foreach (var file in group.Files)
             {
@@ -2452,6 +2453,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             RaisePropertyChanged(nameof(DriveToolDuplicateRowCount));
             RaisePropertyChanged(nameof(DriveToolDuplicateGroupCount));
             RaisePropertyChanged(nameof(AreAllDriveToolDuplicatesSelected));
+            UpdateDriveToolDuplicateGroupSelectionStates();
             RefreshDriveToolDuplicateSelectionSafety(showDialog: false);
             DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
         });
@@ -3082,6 +3084,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
         _suppressSelectionUpdates = false;
 
+        UpdateDriveToolDuplicateGroupSelectionStates();
         RefreshDriveToolDuplicateSelectionSafety(showDialog: true);
         RaisePropertyChanged(nameof(AreAllDriveToolDuplicatesSelected));
         DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
@@ -3162,11 +3165,93 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             if (!_suppressSelectionUpdates)
             {
+                UpdateDriveToolDuplicateGroupSelectionStates();
                 RefreshDriveToolDuplicateSelectionSafety(showDialog: true);
             }
 
             RaisePropertyChanged(nameof(AreAllDriveToolDuplicatesSelected));
             DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    private void OnDriveToolDuplicateGroupSelectionChanged(DriveToolDuplicateRowViewModel groupHeader, bool? isSelected)
+    {
+        SetDriveToolDuplicateGroupSelection(groupHeader, isSelected);
+    }
+
+    internal void SetDriveToolDuplicateGroupSelection(DriveToolDuplicateRowViewModel groupHeader, bool? isSelected)
+    {
+        if (!groupHeader.IsGroupHeader)
+        {
+            return;
+        }
+
+        var groupRows = DriveToolDuplicateRows
+            .Where(row => !row.IsGroupHeader && string.Equals(row.GroupKey, groupHeader.GroupKey, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (groupRows.Count == 0)
+        {
+            groupHeader.SetGroupSelectionState(false);
+            return;
+        }
+
+        _suppressSelectionUpdates = true;
+        try
+        {
+            if (isSelected == true)
+            {
+                groupRows[0].IsSelected = false;
+                for (var index = 1; index < groupRows.Count; index++)
+                {
+                    groupRows[index].IsSelected = true;
+                }
+            }
+            else
+            {
+                foreach (var row in groupRows)
+                {
+                    row.IsSelected = false;
+                }
+            }
+        }
+        finally
+        {
+            _suppressSelectionUpdates = false;
+        }
+
+        UpdateDriveToolDuplicateGroupSelectionStates();
+        RefreshDriveToolDuplicateSelectionSafety(showDialog: true);
+        RaisePropertyChanged(nameof(AreAllDriveToolDuplicatesSelected));
+        DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
+    }
+
+    private void UpdateDriveToolDuplicateGroupSelectionStates()
+    {
+        foreach (var group in DriveToolDuplicateRows.GroupBy(row => row.GroupKey, StringComparer.OrdinalIgnoreCase))
+        {
+            var groupHeader = group.FirstOrDefault(row => row.IsGroupHeader);
+            if (groupHeader is null)
+            {
+                continue;
+            }
+
+            var groupRows = group.Where(row => !row.IsGroupHeader).ToList();
+            if (groupRows.Count == 0)
+            {
+                groupHeader.SetGroupSelectionState(false);
+                continue;
+            }
+
+            var firstRow = groupRows[0];
+            var remainingRows = groupRows.Skip(1).ToList();
+            var hasAnySelected = groupRows.Any(row => row.IsSelected);
+            var matchesHeaderSelectionPattern = !firstRow.IsSelected && remainingRows.All(row => row.IsSelected);
+
+            groupHeader.SetGroupSelectionState(
+                !hasAnySelected ? false :
+                matchesHeaderSelectionPattern ? true :
+                null);
         }
     }
 

@@ -25,7 +25,9 @@ public sealed class DriveToolDuplicateRowViewModel : ObservableObject
     private static readonly Brush DeleteActionBrush = CreateFrozenBrush(DeleteRed, DeleteGreen, DeleteBlue);
 
     private readonly bool _canSelect;
+    private readonly Action<DriveToolDuplicateRowViewModel, bool?>? _groupSelectionChanged;
     private bool _isSelected;
+    private bool? _groupSelectionState;
     private bool _hasSelectionConflict;
 
     public DriveToolDuplicateRowViewModel(
@@ -38,7 +40,8 @@ public sealed class DriveToolDuplicateRowViewModel : ObservableObject
         string fileType,
         string sizeText,
         DuplicateFileEntry? fileEntry = null,
-        IFileIconProvider? iconProvider = null)
+        IFileIconProvider? iconProvider = null,
+        Action<DriveToolDuplicateRowViewModel, bool?>? groupSelectionChanged = null)
     {
         ItemKey = itemKey;
         GroupKey = groupKey;
@@ -50,6 +53,7 @@ public sealed class DriveToolDuplicateRowViewModel : ObservableObject
         SizeText = sizeText;
         FileEntry = fileEntry;
         _canSelect = !isGroupHeader && fileEntry is not null;
+        _groupSelectionChanged = groupSelectionChanged;
         OpenPath = fileEntry?.FullPath ?? string.Empty;
         IconSource = isGroupHeader || string.IsNullOrWhiteSpace(OpenPath)
             ? null
@@ -93,6 +97,28 @@ public sealed class DriveToolDuplicateRowViewModel : ObservableObject
 
     public bool CanSelect => _canSelect;
 
+    public bool CanToggleSelection => _canSelect || IsGroupHeader;
+
+    public bool? SelectionState
+    {
+        get => IsGroupHeader ? _groupSelectionState : IsSelected;
+        set
+        {
+            if (!IsGroupHeader)
+            {
+                IsSelected = value ?? false;
+                return;
+            }
+
+            if (_groupSelectionState != value)
+            {
+                _groupSelectionState = value;
+                RaisePropertyChanged(nameof(SelectionState));
+                _groupSelectionChanged?.Invoke(this, value);
+            }
+        }
+    }
+
     public bool HasSelectionConflict
     {
         get => _hasSelectionConflict;
@@ -117,6 +143,7 @@ public sealed class DriveToolDuplicateRowViewModel : ObservableObject
 
             if (SetProperty(ref _isSelected, value))
             {
+                RaisePropertyChanged(nameof(SelectionState));
                 RaisePropertyChanged(nameof(ActionText));
                 RaisePropertyChanged(nameof(ActionBrush));
             }
@@ -142,6 +169,17 @@ public sealed class DriveToolDuplicateRowViewModel : ObservableObject
     public string NamePrefix => IsGroupHeader ? "SHA-256" : "↳";
 
     public string FileName => FileEntry is null ? DisplayName : Path.GetFileName(FileEntry.FullPath);
+
+    public void SetGroupSelectionState(bool? value)
+    {
+        if (!IsGroupHeader || _groupSelectionState == value)
+        {
+            return;
+        }
+
+        _groupSelectionState = value;
+        RaisePropertyChanged(nameof(SelectionState));
+    }
 
     private static Brush CreateFrozenBrush(byte red, byte green, byte blue)
     {

@@ -1539,6 +1539,61 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public async Task DuplicateGroupHeaderSelection_SelectsAllRowsExceptFirst()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("keep.txt", "duplicate-bytes");
+        workspace.WriteSourceFile("copy-one.txt", "duplicate-bytes");
+        workspace.WriteSourceFile("copy-two.txt", "duplicate-bytes");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            DriveToolsPath = workspace.SourcePath,
+        };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
+
+        viewModel.FindDuplicatesCommand.Execute(null);
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 4).ConfigureAwait(true);
+
+        var summaryRow = viewModel.DriveToolDuplicateRows.Single(row => row.IsGroupHeader);
+        var detailRows = viewModel.DriveToolDuplicateRows.Where(row => !row.IsGroupHeader).ToList();
+
+        Assert.True(summaryRow.CanToggleSelection);
+        Assert.False(summaryRow.SelectionState ?? true);
+
+        summaryRow.SelectionState = true;
+
+        Assert.False(detailRows[0].IsSelected);
+        Assert.All(detailRows.Skip(1), row => Assert.True(row.IsSelected));
+        Assert.True(summaryRow.SelectionState);
+    }
+
+    [Fact]
+    public async Task DuplicateGroupHeaderSelection_ClearsGroupWhenUnchecked()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("keep.txt", "duplicate-bytes");
+        workspace.WriteSourceFile("copy-one.txt", "duplicate-bytes");
+        workspace.WriteSourceFile("copy-two.txt", "duplicate-bytes");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            DriveToolsPath = workspace.SourcePath,
+        };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
+
+        viewModel.FindDuplicatesCommand.Execute(null);
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 4).ConfigureAwait(true);
+
+        var summaryRow = viewModel.DriveToolDuplicateRows.Single(row => row.IsGroupHeader);
+        var detailRows = viewModel.DriveToolDuplicateRows.Where(row => !row.IsGroupHeader).ToList();
+
+        summaryRow.SelectionState = true;
+        summaryRow.SelectionState = false;
+
+        Assert.All(detailRows, row => Assert.False(row.IsSelected));
+        Assert.False(summaryRow.SelectionState ?? true);
+    }
+
+    [Fact]
     public async Task DeleteSelectedDuplicatesCommand_AllowsDeletingEntireGroup_WhenSafetyDisabled()
     {
         using var workspace = new SyncTestWorkspace();

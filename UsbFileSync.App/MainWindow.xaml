@@ -730,8 +730,8 @@
         <DataTemplate x:Key="DriveToolDuplicateSelectionCellTemplate">
             <CheckBox HorizontalAlignment="Center"
                       VerticalAlignment="Center"
-                      IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                      IsEnabled="{Binding CanSelect}" />
+                      IsChecked="{Binding SelectionState, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                      IsEnabled="{Binding CanToggleSelection}" />
         </DataTemplate>
         <DataTemplate x:Key="DriveToolDuplicateActionCellTemplate">
             <TextBlock Text="{Binding ActionText}"
