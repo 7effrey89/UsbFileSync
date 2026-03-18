@@ -227,7 +227,7 @@ The image rename settings also include built-in camera filename masks such as `D
 
 ## Photo Rename Guidance
 
-For the current picture-renaming workflow, the default naming convention is `yyyyMMdd_HHmmss_original_filename.ext`. UsbFileSync can also use `yyyyMMdd_HHmmss.ext`, and the `_City` option is available in settings as a reserved slot that is skipped until location metadata support is added. Today the rename analyzer scopes itself to configured camera-style source filenames and media extensions so screenshots, exports, and already-renamed files are left alone.
+For the current picture-renaming workflow, the default naming convention is `yyyyMMdd_HHmmss_original_filename.ext`. UsbFileSync can also use `yyyyMMdd_HHmmss.ext`, and the `_City` option is available in settings as a reserved slot that is skipped until location metadata support is added. Currently, the rename analyzer scopes itself to configured camera-style source filenames and media extensions so screenshots, exports, and already-renamed files are left alone.
 
 If you want to prepare custom provider values for the advanced override, see [`docs/custom-cloud-provider-credentials.md`](docs/custom-cloud-provider-credentials.md) for step-by-step setup instructions for Google Drive, Dropbox, and OneDrive.
 
