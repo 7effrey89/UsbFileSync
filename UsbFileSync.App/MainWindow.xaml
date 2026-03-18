@@ -230,6 +230,17 @@
             <Setter Property="Padding" Value="6,4" />
             <Setter Property="Margin" Value="0" />
         </Style>
+        <Style x:Key="PrimaryActionButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+            <Setter Property="Foreground" Value="#FFFFFF" />
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.6" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
         <DataTemplate x:Key="PreviewFilterableColumnHeaderTemplate" DataType="{x:Type viewModels:PreviewColumnHeader}">
             <DockPanel LastChildFill="False">
                 <TextBlock Text="{Binding Title}" VerticalAlignment="Center" />
@@ -507,6 +518,11 @@
                       VerticalAlignment="Center"
                       IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                       IsEnabled="{Binding CanSelect}" />
+        </DataTemplate>
+        <DataTemplate x:Key="ImageRenameSelectionCellTemplate">
+            <CheckBox HorizontalAlignment="Center"
+                      VerticalAlignment="Center"
+                      IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
         </DataTemplate>
         <DataTemplate x:Key="PreviewProgressCellTemplate">
             <Viewbox HorizontalAlignment="Left"
@@ -1195,6 +1211,7 @@
                                             Command="{Binding FindDuplicatesCommand}"
                                             Content="Analyze duplicates" />
                                     <Button Grid.Column="2"
+                                            Style="{StaticResource PrimaryActionButtonStyle}"
                                             HorizontalAlignment="Stretch"
                                             Command="{Binding DeleteSelectedDuplicatesCommand}"
                                             Content="Delete selected" />
@@ -1235,6 +1252,7 @@
                                             Command="{Binding AnalyzeImageRenameCommand}"
                                             Content="Analyze rename" />
                                     <Button Grid.Column="2"
+                                            Style="{StaticResource PrimaryActionButtonStyle}"
                                             HorizontalAlignment="Stretch"
                                             Command="{Binding ApplyImageRenameCommand}"
                                             Content="Rename files" />
@@ -1632,7 +1650,7 @@
                         <StackPanel Grid.Row="0" Margin="0,0,0,12">
                             <TextBlock Text="Image rename analysis" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}" />
                             <TextBlock Margin="0,6,0,0"
-                                       Text="Review the planned rename list below, then apply it when the generated filenames look correct. UsbFileSync only includes matching camera-style filenames and reserves unique names before renaming."
+                                       Text="Review the mask-match and no-mask tabs below, then apply the rows you want to rename. Mask matches are preselected, while no-mask files stay optional."
                                        Foreground="{StaticResource SubtleTextBrush}"
                                        TextWrapping="Wrap" />
                         </StackPanel>
@@ -1646,27 +1664,83 @@
                                 <StackPanel Grid.Row="0" Margin="0,0,0,12">
                                     <TextBlock Text="{Binding ImageRenameRowCount, StringFormat=Planned renames ({0})}" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}" />
                                     <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" Foreground="{StaticResource SubtleTextBrush}">
-                                        <Run Text="The table shows the current filename, the reserved target filename, the matched camera mask, and whether UsbFileSync had to append a " />
+                                        <Run Text="Each tab shows the current filename, the reserved target filename, the matched camera mask status, and whether UsbFileSync had to append a " />
                                         <Run Text="_001" FontFamily="Consolas" />
-                                        <Run Text="-style sequencer to avoid a collision." />
+                                        <Run Text="-style sequencer to avoid a collision. Use the first-column checkboxes to decide which files should be renamed." />
                                     </TextBlock>
                                 </StackPanel>
-                                <DataGrid Grid.Row="1"
-                                          ItemsSource="{Binding ImageRenameRows}"
-                                          AutoGenerateColumns="False"
-                                          CanUserAddRows="False"
-                                          IsReadOnly="True"
-                                          ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                          ScrollViewer.VerticalScrollBarVisibility="Auto">
-                                    <DataGrid.Columns>
-                                        <DataGridTextColumn Header="Current name" Binding="{Binding CurrentFileName}" Width="180" />
-                                        <DataGridTextColumn Header="Planned name" Binding="{Binding ProposedFileName}" Width="240" />
-                                        <DataGridTextColumn Header="Matched mask" Binding="{Binding MatchedFileNameMask}" Width="120" />
-                                        <DataGridTextColumn Header="Timestamp" Binding="{Binding TimestampText}" Width="150" />
-                                        <DataGridTextColumn Header="Status" Binding="{Binding CollisionText}" Width="95" />
-                                        <DataGridTextColumn Header="Source path" Binding="{Binding DisplayPath}" Width="*" />
-                                    </DataGrid.Columns>
-                                </DataGrid>
+                                <TabControl Grid.Row="1">
+                                    <TabItem>
+                                        <TabItem.Header>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="✓"
+                                                           Margin="0,0,6,0"
+                                                           FontWeight="Bold"
+                                                           Foreground="#128C44" />
+                                                <TextBlock Text="{Binding ImageRenameMatchedRowCount, StringFormat=Mask match ({0})}" />
+                                            </StackPanel>
+                                        </TabItem.Header>
+                                        <DataGrid ItemsSource="{Binding ImageRenameMatchedRows}"
+                                                  AutoGenerateColumns="False"
+                                                  CanUserAddRows="False"
+                                                  IsReadOnly="False"
+                                                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                                  ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                            <DataGrid.Columns>
+                                                <DataGridTemplateColumn Width="36" CellTemplate="{StaticResource ImageRenameSelectionCellTemplate}" HeaderStyle="{StaticResource PreviewSelectionColumnHeaderStyle}">
+                                                    <DataGridTemplateColumn.HeaderTemplate>
+                                                        <DataTemplate>
+                                                            <CheckBox HorizontalAlignment="Center"
+                                                                      VerticalAlignment="Center"
+                                                                      IsChecked="{Binding DataContext.AreAllImageRenameMatchedRowsSelected, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.HeaderTemplate>
+                                                </DataGridTemplateColumn>
+                                                <DataGridTextColumn Header="Current name" Binding="{Binding CurrentFileName}" Width="180" IsReadOnly="True" />
+                                                <DataGridTextColumn Header="Planned name" Binding="{Binding ProposedFileName}" Width="240" IsReadOnly="True" />
+                                                <DataGridTextColumn Header="Matched mask" Binding="{Binding MatchedFileNameMask}" Width="140" IsReadOnly="True" />
+                                                <DataGridTextColumn Header="Timestamp" Binding="{Binding TimestampText}" Width="150" IsReadOnly="True" />
+                                                <DataGridTextColumn Header="Status" Binding="{Binding CollisionText}" Width="95" IsReadOnly="True" />
+                                                <DataGridTextColumn Header="Source path" Binding="{Binding DisplayPath}" Width="*" IsReadOnly="True" />
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                    </TabItem>
+                                    <TabItem>
+                                        <TabItem.Header>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="?"
+                                                           Margin="0,0,6,0"
+                                                           FontWeight="Bold"
+                                                           Foreground="#B87D00" />
+                                                <TextBlock Text="{Binding ImageRenameUnmatchedRowCount, StringFormat=No mask match ({0})}" />
+                                            </StackPanel>
+                                        </TabItem.Header>
+                                        <DataGrid ItemsSource="{Binding ImageRenameUnmatchedRows}"
+                                                  AutoGenerateColumns="False"
+                                                  CanUserAddRows="False"
+                                                  IsReadOnly="False"
+                                                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                                  ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                            <DataGrid.Columns>
+                                                <DataGridTemplateColumn Width="36" CellTemplate="{StaticResource ImageRenameSelectionCellTemplate}" HeaderStyle="{StaticResource PreviewSelectionColumnHeaderStyle}">
+                                                    <DataGridTemplateColumn.HeaderTemplate>
+                                                        <DataTemplate>
+                                                            <CheckBox HorizontalAlignment="Center"
+                                                                      VerticalAlignment="Center"
+                                                                      IsChecked="{Binding DataContext.AreAllImageRenameUnmatchedRowsSelected, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.HeaderTemplate>
+                                                </DataGridTemplateColumn>
+                                                <DataGridTextColumn Header="Current name" Binding="{Binding CurrentFileName}" Width="180" IsReadOnly="True" />
+                                                <DataGridTextColumn Header="Planned name" Binding="{Binding ProposedFileName}" Width="240" IsReadOnly="True" />
+                                                <DataGridTextColumn Header="Mask status" Binding="{Binding MatchedFileNameMask}" Width="140" IsReadOnly="True" />
+                                                <DataGridTextColumn Header="Timestamp" Binding="{Binding TimestampText}" Width="150" IsReadOnly="True" />
+                                                <DataGridTextColumn Header="Status" Binding="{Binding CollisionText}" Width="95" IsReadOnly="True" />
+                                                <DataGridTextColumn Header="Source path" Binding="{Binding DisplayPath}" Width="*" IsReadOnly="True" />
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                    </TabItem>
+                                </TabControl>
                             </Grid>
                         </Border>
                     </Grid>

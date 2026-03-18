@@ -8,9 +8,11 @@ public sealed record ImageRenamePlanItem(
     string ProposedRelativePath,
     string MatchedFileNameMask,
     DateTime TimestampLocal,
-    bool UsedCollisionSuffix);
+    bool UsedCollisionSuffix,
+    bool IsMatchedByFileNameMask);
 
 public sealed record ImageRenameAnalysisResult(
-    IReadOnlyList<ImageRenamePlanItem> PlannedRenames,
+    IReadOnlyList<ImageRenamePlanItem> RenameSuggestions,
     int ScannedFileCount,
-    int CandidateFileCount);
+    int CandidateFileCount,
+    int MatchedMaskCandidateCount);

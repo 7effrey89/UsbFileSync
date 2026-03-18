@@ -223,11 +223,11 @@ Inside `Drive Tools > Duplicate Analysis`, UsbFileSync shows one summary row per
 - `yyyyMMdd_HHmmss_original_filename_City.jpg`
 - `yyyyMMdd_HHmmss.jpg`
 
-The image rename settings also include built-in camera filename masks such as `DSC_????`, `IMG_????`, and `DJI_????`, support custom masks and custom extensions, and default to the common camera media formats `.jpg`, `.jpeg`, `.heic`, `.mov`, `.3gp`, and `.mp4`. If two files would land on the same target name, or a target name is already occupied, UsbFileSync automatically appends a `_001`-style sequencer before applying the rename.
+The image rename settings also include built-in camera filename masks such as `DSC_????`, `IMG_????`, and `DJI_????`, support custom masks and custom extensions through checkbox-enabled custom rows, and default to the common camera media formats `.jpg`, `.jpeg`, `.heic`, `.mov`, `.3gp`, and `.mp4`. The image rename preview now splits results into a `Mask match` tab and a `No mask match` tab with first-column checkboxes, so mask-matched files are preselected while out-of-scope files can still be manually opted in for rename. If two files would land on the same target name, or a target name is already occupied, UsbFileSync automatically appends a `_001`-style sequencer before applying the rename.
 
 ## Photo Rename Guidance
 
-For the current picture-renaming workflow, the default naming convention is `yyyyMMdd_HHmmss_original_filename.ext`. UsbFileSync can also use `yyyyMMdd_HHmmss.ext`, and the `_City` option is available in settings as a reserved slot that is skipped until location metadata support is added. Currently, the rename analyzer scopes itself to configured camera-style source filenames and media extensions so screenshots, exports, and already-renamed files are left alone.
+For the current picture-renaming workflow, the default naming convention is `yyyyMMdd_HHmmss_original_filename.ext`. UsbFileSync can also use `yyyyMMdd_HHmmss.ext`, and the `_City` option now tries to resolve a city name from supported JPEG/TIFF GPS metadata using reverse geocoding when coordinates are present. Rename analysis preselects files that match the configured filename masks, lists same-format no-mask files in a separate optional tab, and still leaves already-renamed target names alone.
 
 If you want to prepare custom provider values for the advanced override, see [`docs/custom-cloud-provider-credentials.md`](docs/custom-cloud-provider-credentials.md) for step-by-step setup instructions for Google Drive, Dropbox, and OneDrive.
 

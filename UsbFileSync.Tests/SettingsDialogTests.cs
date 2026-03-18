@@ -106,8 +106,14 @@ public sealed class SettingsDialogTests
             new SelectableTextOptionViewModel { Label = "IMG_????", Value = "IMG_????", IsSelected = true },
             new SelectableTextOptionViewModel { Label = "DSC_????", Value = "DSC_????", IsSelected = false },
         };
+        var customEntries = new[]
+        {
+            new EditableSelectableTextOptionViewModel { Value = "gopr????", IsSelected = true },
+            new EditableSelectableTextOptionViewModel { Value = "IMG_????", IsSelected = true },
+            new EditableSelectableTextOptionViewModel { Value = "MVI_????", IsSelected = false },
+        };
 
-        var success = SettingsDialog.TryCreateImageRenameFileNamePatterns(defaults, "gopr????\nIMG_????", out var patterns, out var errorMessage);
+        var success = SettingsDialog.TryCreateImageRenameFileNamePatterns(defaults, customEntries, out var patterns, out var errorMessage);
 
         Assert.True(success);
         Assert.Equal(string.Empty, errorMessage);
@@ -122,8 +128,14 @@ public sealed class SettingsDialogTests
             new SelectableTextOptionViewModel { Label = ".jpg", Value = ".jpg", IsSelected = true },
             new SelectableTextOptionViewModel { Label = ".jpeg", Value = ".jpeg", IsSelected = false },
         };
+        var customEntries = new[]
+        {
+            new EditableSelectableTextOptionViewModel { Value = "jpeg", IsSelected = true },
+            new EditableSelectableTextOptionViewModel { Value = ".jpg", IsSelected = true },
+            new EditableSelectableTextOptionViewModel { Value = ".heic", IsSelected = false },
+        };
 
-        var success = SettingsDialog.TryCreateImageRenameExtensions(defaults, "jpeg\n.jpg", out var extensions, out var errorMessage);
+        var success = SettingsDialog.TryCreateImageRenameExtensions(defaults, customEntries, out var extensions, out var errorMessage);
 
         Assert.True(success);
         Assert.Equal(string.Empty, errorMessage);

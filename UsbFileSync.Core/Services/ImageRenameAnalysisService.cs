@@ -8,6 +8,18 @@ namespace UsbFileSync.Core.Services;
 
 public sealed class ImageRenameAnalysisService
 {
+    private readonly IImageRenameCityResolver _cityResolver;
+
+    public ImageRenameAnalysisService()
+        : this(new ImageRenameCityResolver())
+    {
+    }
+
+    internal ImageRenameAnalysisService(IImageRenameCityResolver cityResolver)
+    {
+        _cityResolver = cityResolver;
+    }
+
     public ImageRenameAnalysisResult Analyze(
         IVolumeSource volume,
         bool hideMacOsSystemFiles,
@@ -29,6 +41,7 @@ public sealed class ImageRenameAnalysisService
 
         var plans = new List<ImageRenamePlanItem>();
         var candidateCount = 0;
+        var matchedMaskCandidateCount = 0;
 
         foreach (var snapshot in snapshots.Values.OrderBy(snapshot => snapshot.RelativePath, StringComparer.OrdinalIgnoreCase))
         {
@@ -42,14 +55,22 @@ public sealed class ImageRenameAnalysisService
             var matchedMask = compiledMasks
                 .FirstOrDefault(entry => entry.Value.IsMatch(fileNameWithoutExtension));
 
-            if (string.IsNullOrWhiteSpace(matchedMask.Key))
+            candidateCount++;
+            var isMatchedByMask = !string.IsNullOrWhiteSpace(matchedMask.Key);
+            if (isMatchedByMask)
+            {
+                matchedMaskCandidateCount++;
+            }
+
+            var city = patternKind == ImageRenamePatternKind.TimestampOriginalFileNameCity
+                ? _cityResolver.TryResolveCity(volume, snapshot.RelativePath, extension)
+                : null;
+            var proposedFileName = BuildProposedFileName(snapshot.LastWriteTimeUtc.ToLocalTime(), fileNameWithoutExtension, extension, patternKind, city);
+            if (string.Equals(Path.GetFileName(snapshot.RelativePath), proposedFileName, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
 
-            candidateCount++;
-
-            var proposedFileName = BuildProposedFileName(snapshot.LastWriteTimeUtc.ToLocalTime(), fileNameWithoutExtension, extension, patternKind, city: null);
             var proposedRelativePath = BuildUniqueRelativePath(snapshot.RelativePath, proposedFileName, occupiedRelativePaths);
 
             if (string.Equals(proposedRelativePath, snapshot.RelativePath, StringComparison.OrdinalIgnoreCase))
@@ -64,12 +85,13 @@ public sealed class ImageRenameAnalysisService
                 Path.GetFileName(snapshot.RelativePath),
                 Path.GetFileName(proposedRelativePath),
                 proposedRelativePath,
-                matchedMask.Key,
+                matchedMask.Key ?? string.Empty,
                 snapshot.LastWriteTimeUtc.ToLocalTime(),
-                !string.Equals(Path.GetFileName(proposedRelativePath), proposedFileName, StringComparison.OrdinalIgnoreCase)));
+                !string.Equals(Path.GetFileName(proposedRelativePath), proposedFileName, StringComparison.OrdinalIgnoreCase),
+                isMatchedByMask));
         }
 
-        return new ImageRenameAnalysisResult(plans, snapshots.Count, candidateCount);
+        return new ImageRenameAnalysisResult(plans, snapshots.Count, candidateCount, matchedMaskCandidateCount);
     }
 
     public int ApplyRenames(IVolumeSource volume, IEnumerable<ImageRenamePlanItem> plannedRenames, CancellationToken cancellationToken)
