@@ -263,6 +263,168 @@ From the solution root, `dotnet run` still needs an explicit startup project bec
 dotnet run --project UsbFileSync.App/UsbFileSync.App.csproj
 ```
 
+## Create A GitHub Release Build
+
+UsbFileSync now includes a Windows release workflow that publishes a self-contained `win-x64` executable as `UsbFileSync.exe`, zips the publish folder, and attaches that zip to a GitHub release when you push a `v*` tag.
+
+### Release files produced
+
+The release packaging script writes these outputs:
+
+- `artifacts/release/win-x64/publish/UsbFileSync.exe`
+- `artifacts/release/UsbFileSync-v1.0.0-win-x64.zip`
+
+The zip is the file intended for GitHub Releases.
+
+### Step 1: Prepare a code-signing certificate
+
+If you want Windows to treat the app as signed, you need an Authenticode code-signing certificate in `.pfx` format.
+
+You need:
+
+- the `.pfx` file
+- the `.pfx` password
+- optionally, your preferred timestamp server URL
+
+If you do not have a certificate yet, the workflow can still publish an unsigned release.
+
+#### How to get the `.pfx` file and password
+
+There are three common cases:
+
+1. You already have a real code-signing certificate installed in Windows.
+2. Your company provides a code-signing certificate through internal IT or PKI.
+3. You only want a temporary self-signed certificate for local workflow testing.
+
+If your certificate is already installed in Windows and the private key is exportable:
+
+1. Press `Win+R`, run `certmgr.msc`, and open the current user's certificate store.
+2. Open `Personal` > `Certificates`.
+3. Find your code-signing certificate. If you do not already have one, use `Step 3: Create a self-signed code-signing certificate if you do not already have one`, then come back here after it has been created.
+4. Right-click it and choose `All Tasks` > `Export`.
+5. Choose `Yes, export the private key`.
+6. Choose `Personal Information Exchange (.pfx)`.
+7. Set a password during export.
+8. Save the file.
+
+The exported file is your `.pfx` file. The password you choose during export is the `.pfx` password you will later store in GitHub.
+
+If you do not have a certificate yet and want a real public release, obtain a code-signing certificate from a certificate authority or your organization's internal PKI first, then export it as a `.pfx` if the private key is exportable.
+
+If you only need to test the release workflow locally, you can create a self-signed code-signing certificate and export it as a `.pfx`, but that is not appropriate for a public release because Windows trust and SmartScreen reputation will not treat it as a normal commercial signature.
+
+If your certificate is stored on a hardware token or smart card, especially with EV code signing, you often cannot export a `.pfx` at all. In that case you will not have a `.pfx` file or password to upload to GitHub, and you should use a different signing approach such as a self-hosted runner with token access or a cloud signing service.
+
+### Step 2: Convert the `.pfx` file to base64 for GitHub Secrets
+
+GitHub Actions secrets store text, so the workflow expects the certificate as base64.
+
+Run this in PowerShell on the machine that has the `.pfx` file:
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\UsbFileSyncCodesign.pfx")) | Set-Clipboard
+```
+
+That copies the base64 certificate contents to your clipboard.
+
+### Step 3: Create a self-signed code-signing certificate if you do not already have one
+
+If you do not already have a code-signing certificate and you only need one for local testing or private/internal distribution, you can create a self-signed certificate in PowerShell.
+
+This is useful for testing the release workflow, but it is not a good replacement for a real public-release certificate because Windows trust and SmartScreen reputation will not treat it like a commercial code-signing cert.
+
+Create the certificate in the current user's certificate store:
+
+```powershell
+$certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=UsbFileSync Test Code Signing" -FriendlyName "UsbFileSync" -CertStoreLocation "Cert:\CurrentUser\My" -KeyExportPolicy Exportable -HashAlgorithm sha256
+```
+
+Export it to a `.pfx` file and set a password:
+
+```powershell
+$password = Read-Host "Enter a password for the PFX file" -AsSecureString
+Export-PfxCertificate -Cert $certificate -FilePath "C:\path\to\UsbFileSyncCodesign.pfx" -Password $password
+```
+
+After that:
+
+1. The exported file is your `.pfx` file.
+2. The password you entered is the `.pfx` password.
+3. You can then continue with the next step and add that certificate to GitHub secrets.
+
+### Step 4: Add the signing secrets in GitHub
+
+In the GitHub repository:
+
+1. Open `Settings`.
+2. Open `Secrets and variables`.
+3. Open `Actions`.
+4. Add a new repository secret named `WINDOWS_CODESIGN_PFX_BASE64` and paste the base64 output.
+5. Add a new repository secret named `WINDOWS_CODESIGN_PFX_PASSWORD` and enter the `.pfx` password.
+6. Optionally add `WINDOWS_CODESIGN_TIMESTAMP_URL` if you want something other than the default `http://timestamp.digicert.com`.
+
+If the first two secrets are present, the `Release` workflow signs `UsbFileSync.exe` before it creates the zip.
+
+### Step 5: Test the release package locally
+
+Build an unsigned local release package:
+
+```powershell
+./scripts/Publish-Release.ps1 -Version v1.0.0
+```
+
+Build and sign locally with a `.pfx` file:
+
+```powershell
+./scripts/Publish-Release.ps1 -Version v1.0.0 -Sign -SigningCertificatePath C:\path\to\UsbFileSyncCodesign.pfx -SigningCertificatePassword "your-password"
+```
+
+After that completes:
+
+1. Check that `artifacts/release/UsbFileSync-v1.0.0-win-x64.zip` exists.
+2. Open `artifacts/release/win-x64/publish/UsbFileSync.exe` and confirm the app starts.
+3. If you signed locally, right-click the exe in Explorer, open `Properties`, and confirm a `Digital Signatures` tab is present.
+
+### Step 6: Create the Git tag for the release
+
+When you are ready to publish a GitHub release, create and push a version tag:
+
+```powershell
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Pushing a tag matching `v*` triggers the `Release` workflow in GitHub Actions.
+
+### Step 7: Let GitHub Actions build and publish the release
+
+The `Release` workflow does this on `windows-latest`:
+
+1. Restores the solution.
+2. Builds the solution in `Release` mode.
+3. Runs the test project.
+4. Publishes a self-contained `win-x64` build.
+5. Signs `UsbFileSync.exe` if signing secrets are configured.
+6. Zips the publish folder.
+7. Uploads the zip as a workflow artifact.
+8. Creates or updates the GitHub Release for the tag and attaches the zip.
+
+You can also run the workflow manually from the `Actions` tab by choosing the `Release` workflow and using `Run workflow`. The manual run supports an optional version string and an optional `sign` toggle.
+
+### Step 8: Verify the GitHub release
+
+After the workflow completes:
+
+1. Open the `Actions` tab and confirm the `Release` workflow succeeded.
+2. Open the new GitHub Release for the tag.
+3. Download the attached `UsbFileSync-<version>-win-x64.zip` asset.
+4. Extract it and launch `UsbFileSync.exe` on a clean Windows machine if possible.
+5. If you enabled signing, confirm Windows reports the file as digitally signed.
+
+### If you want an unsigned release
+
+Do not add the signing secrets. The workflow will still build the zip and publish the GitHub release, just without Authenticode signing.
+
 ### Run the test suite
 
 ```powershell
