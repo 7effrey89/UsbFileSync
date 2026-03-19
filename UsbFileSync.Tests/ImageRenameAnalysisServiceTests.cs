@@ -19,9 +19,11 @@ public sealed class ImageRenameAnalysisServiceTests : IDisposable
     [Fact]
     public void Analyze_FiltersToConfiguredCameraPatternsAndExtensions()
     {
-        WriteFile("IMG_1234.JPG", new DateTime(2024, 3, 5, 10, 11, 12, DateTimeKind.Utc));
-        WriteFile("notes.jpg", new DateTime(2024, 3, 5, 10, 11, 12, DateTimeKind.Utc));
-        WriteFile("IMG_5555.png", new DateTime(2024, 3, 5, 10, 11, 12, DateTimeKind.Utc));
+        var timestampUtc = new DateTime(2024, 3, 5, 10, 11, 12, DateTimeKind.Utc);
+        var expectedTimestamp = FormatExpectedTimestamp(timestampUtc);
+        WriteFile("IMG_1234.JPG", timestampUtc);
+        WriteFile("notes.jpg", timestampUtc);
+        WriteFile("IMG_5555.png", timestampUtc);
 
         var service = new ImageRenameAnalysisService();
 
@@ -36,7 +38,7 @@ public sealed class ImageRenameAnalysisServiceTests : IDisposable
 
         var plan = Assert.Single(result.RenameSuggestions.Where(candidate => candidate.IsMatchedByFileNameMask));
         Assert.Equal("IMG_1234.JPG", plan.CurrentFileName);
-        Assert.Equal("20240305_101112_IMG_1234.jpg", plan.ProposedFileName);
+        Assert.Equal($"{expectedTimestamp}_IMG_1234.jpg", plan.ProposedFileName);
         Assert.Equal(2, result.CandidateFileCount);
         Assert.Equal(1, result.MatchedMaskCandidateCount);
         Assert.Equal(0, result.CompletedCandidateCount);
@@ -46,9 +48,10 @@ public sealed class ImageRenameAnalysisServiceTests : IDisposable
     public void Analyze_AddsSequencerWhenTargetsWouldCollide()
     {
         var timestamp = new DateTime(2024, 3, 5, 10, 11, 12, DateTimeKind.Utc);
+        var expectedTimestamp = FormatExpectedTimestamp(timestamp);
         WriteFile("IMG_0001.jpg", timestamp);
         WriteFile("IMG_0002.jpg", timestamp);
-        WriteFile("20240305_101112.jpg", timestamp);
+        WriteFile($"{expectedTimestamp}.jpg", timestamp);
 
         var service = new ImageRenameAnalysisService();
 
@@ -66,13 +69,13 @@ public sealed class ImageRenameAnalysisServiceTests : IDisposable
             first =>
             {
                 Assert.Equal("IMG_0001.jpg", first.CurrentFileName);
-                Assert.Equal("20240305_101112_001.jpg", first.ProposedFileName);
+                Assert.Equal($"{expectedTimestamp}_001.jpg", first.ProposedFileName);
                 Assert.True(first.UsedCollisionSuffix);
             },
             second =>
             {
                 Assert.Equal("IMG_0002.jpg", second.CurrentFileName);
-                Assert.Equal("20240305_101112_002.jpg", second.ProposedFileName);
+                Assert.Equal($"{expectedTimestamp}_002.jpg", second.ProposedFileName);
                 Assert.True(second.UsedCollisionSuffix);
             });
     }
@@ -81,6 +84,7 @@ public sealed class ImageRenameAnalysisServiceTests : IDisposable
     public void ApplyRenames_MovesFilesToPlannedNames()
     {
         var timestamp = new DateTime(2024, 3, 5, 10, 11, 12, DateTimeKind.Utc);
+        var expectedTimestamp = FormatExpectedTimestamp(timestamp);
         WriteFile("DCIM/IMG_1234.jpg", timestamp);
 
         var volume = new WindowsMountedVolume(_rootPath);
@@ -98,14 +102,16 @@ public sealed class ImageRenameAnalysisServiceTests : IDisposable
 
         Assert.Equal(1, applied);
         Assert.False(File.Exists(Path.Combine(_rootPath, "DCIM", "IMG_1234.jpg")));
-        Assert.True(File.Exists(Path.Combine(_rootPath, "DCIM", "20240305_101112_IMG_1234.jpg")));
+        Assert.True(File.Exists(Path.Combine(_rootPath, "DCIM", $"{expectedTimestamp}_IMG_1234.jpg")));
     }
 
     [Fact]
     public void Analyze_IncludesFilesOutsideTheConfiguredMaskScope()
     {
-        WriteFile("IMG_1234.jpg", new DateTime(2024, 3, 5, 10, 11, 12, DateTimeKind.Utc));
-        WriteFile("notes.jpg", new DateTime(2024, 3, 5, 10, 11, 12, DateTimeKind.Utc));
+        var timestampUtc = new DateTime(2024, 3, 5, 10, 11, 12, DateTimeKind.Utc);
+        var expectedTimestamp = FormatExpectedTimestamp(timestampUtc);
+        WriteFile("IMG_1234.jpg", timestampUtc);
+        WriteFile("notes.jpg", timestampUtc);
 
         var service = new ImageRenameAnalysisService();
 
@@ -137,14 +143,16 @@ public sealed class ImageRenameAnalysisServiceTests : IDisposable
                 Assert.False(unmatched.IsMatchedByFileNameMask);
                 Assert.False(unmatched.IsCompleted);
                 Assert.Equal(string.Empty, unmatched.MatchedFileNameMask);
-                Assert.Equal("20240305_101112_notes.jpg", unmatched.ProposedFileName);
+                Assert.Equal($"{expectedTimestamp}_notes.jpg", unmatched.ProposedFileName);
             });
     }
 
     [Fact]
     public void Analyze_UsesResolvedCityForCityPattern()
     {
-        WriteFile("IMG_1234.jpg", new DateTime(2024, 3, 5, 10, 11, 12, DateTimeKind.Utc));
+        var timestampUtc = new DateTime(2024, 3, 5, 10, 11, 12, DateTimeKind.Utc);
+        var expectedTimestamp = FormatExpectedTimestamp(timestampUtc);
+        WriteFile("IMG_1234.jpg", timestampUtc);
         var cityResolver = new StubImageRenameCityResolver("Berlin");
         var service = new ImageRenameAnalysisService(cityResolver);
 
@@ -158,7 +166,7 @@ public sealed class ImageRenameAnalysisServiceTests : IDisposable
             [".jpg"]);
 
         var plan = Assert.Single(result.RenameSuggestions);
-        Assert.Equal("20240305_101112_IMG_1234_Berlin.jpg", plan.ProposedFileName);
+        Assert.Equal($"{expectedTimestamp}_IMG_1234_Berlin.jpg", plan.ProposedFileName);
         Assert.Equal(["IMG_1234.jpg"], cityResolver.RequestedPaths);
     }
 
@@ -347,6 +355,9 @@ public sealed class ImageRenameAnalysisServiceTests : IDisposable
         File.WriteAllText(fullPath, "image");
         File.SetLastWriteTimeUtc(fullPath, lastWriteTimeUtc);
     }
+
+    private static string FormatExpectedTimestamp(DateTime timestampUtc) =>
+        ImageRenameDefaults.FormatTimestamp(timestampUtc.ToLocalTime());
 
     private static byte[] CreateExifJpegWithGps(
         uint latitudeDegrees,
