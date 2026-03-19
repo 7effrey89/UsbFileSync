@@ -9,6 +9,8 @@ public sealed class SyncConfiguration
 {
     public string SourcePath { get; init; } = string.Empty;
 
+    public string DriveToolsPath { get; init; } = string.Empty;
+
     [JsonIgnore]
     public IVolumeSource? SourceVolume { get; init; }
 
@@ -34,7 +36,11 @@ public sealed class SyncConfiguration
 
     public bool IncludeSubfolders { get; init; } = true;
 
+    public bool DriveToolsIncludeSubfolders { get; init; } = true;
+
     public bool HideMacOsSystemFiles { get; init; } = true;
+
+    public bool PreventDeletingAllFilesInDuplicateGroup { get; init; } = true;
 
     public IReadOnlyList<string> ExcludedPathPatterns { get; init; } = Array.Empty<string>();
 
@@ -45,6 +51,14 @@ public sealed class SyncConfiguration
     public bool UseCustomCloudProviderCredentials { get; init; }
 
     public IReadOnlyList<CloudProviderAppRegistration> CloudProviderAppRegistrations { get; init; } = Array.Empty<CloudProviderAppRegistration>();
+
+    public ImageRenamePatternKind ImageRenamePattern { get; init; } = ImageRenamePatternKind.TimestampOriginalFileName;
+
+    public ImageRenameCityLanguagePreference ImageRenameCityLanguagePreference { get; init; } = ImageRenameCityLanguagePreference.EnglishThenLocal;
+
+    public IReadOnlyList<string> ImageRenameFileNamePatterns { get; init; } = ImageRenameDefaults.GetDefaultCameraFileNameMasks();
+
+    public IReadOnlyList<string> ImageRenameExtensions { get; init; } = ImageRenameDefaults.GetDefaultExtensions();
 
     public IReadOnlyList<string> GetDestinationPaths()
     {

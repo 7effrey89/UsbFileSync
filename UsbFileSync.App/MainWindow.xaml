@@ -24,6 +24,7 @@
         <SolidColorBrush x:Key="AccentBrushMuted" Color="#DCEBFA" />
         <SolidColorBrush x:Key="SubtleTextBrush" Color="#616161" />
         <SolidColorBrush x:Key="HeaderTextBrush" Color="#1F1F1F" />
+        <SolidColorBrush x:Key="ConflictTextBrush" Color="#C42B1C" />
         <SolidColorBrush x:Key="SectionBackgroundBrush" Color="#FAFAFA" />
         <SolidColorBrush x:Key="TabBorderBrush" Color="#DADADA" />
         <SolidColorBrush x:Key="TabHoverBrush" Color="#F6F9FC" />
@@ -228,6 +229,17 @@
             <Setter Property="MinWidth" Value="38" />
             <Setter Property="Padding" Value="6,4" />
             <Setter Property="Margin" Value="0" />
+        </Style>
+        <Style x:Key="PrimaryActionButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+            <Setter Property="Foreground" Value="#FFFFFF" />
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.6" />
+                </Trigger>
+            </Style.Triggers>
         </Style>
         <DataTemplate x:Key="PreviewFilterableColumnHeaderTemplate" DataType="{x:Type viewModels:PreviewColumnHeader}">
             <DockPanel LastChildFill="False">
@@ -507,6 +519,123 @@
                       IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                       IsEnabled="{Binding CanSelect}" />
         </DataTemplate>
+        <DataTemplate x:Key="ImageRenameSelectionCellTemplate">
+            <CheckBox HorizontalAlignment="Center"
+                      VerticalAlignment="Center"
+                      IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                      IsEnabled="{Binding CanSelect}" />
+        </DataTemplate>
+        <ContextMenu x:Key="ImageRenameContextMenu" x:Shared="False">
+            <MenuItem Header="Open file"
+                      Command="{Binding PlacementTarget.Tag.OpenPreviewFileCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+            <MenuItem Header="Open file folder"
+                      Command="{Binding PlacementTarget.Tag.OpenPreviewContainingFolderCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+            <Separator />
+            <MenuItem Header="Show preview"
+                      IsEnabled="{Binding PlacementTarget.DataContext.HasOpenPath, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      Tag="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      Click="OnShowComparisonClicked" />
+        </ContextMenu>
+        <Style x:Key="ImageRenameRowStyle" TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+            <Setter Property="Tag" Value="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}" />
+            <Setter Property="ContextMenu" Value="{StaticResource ImageRenameContextMenu}" />
+        </Style>
+        <DataTemplate x:Key="ImageRenameCurrentNameCellTemplate">
+            <Grid>
+                <Button Background="Transparent"
+                        BorderThickness="0"
+                        Padding="0"
+                        HorizontalAlignment="Left"
+                        Cursor="Hand"
+                        IsEnabled="{Binding HasOpenPath}"
+                        Command="{Binding DataContext.OpenPreviewContainingFolderCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                        CommandParameter="{Binding}">
+                    <Button.ContextMenu>
+                        <StaticResource ResourceKey="ImageRenameContextMenu" />
+                    </Button.ContextMenu>
+                    <Button.Tag>
+                        <Binding Path="DataContext" RelativeSource="{RelativeSource AncestorType=Window}" />
+                    </Button.Tag>
+                    <StackPanel Orientation="Horizontal">
+                        <Grid Margin="0,0,8,0" Width="16" Height="16" VerticalAlignment="Center">
+                            <Image Source="{Binding IconSource}" Stretch="Uniform" Width="16" Height="16" />
+                            <TextBlock FontFamily="Segoe MDL2 Assets"
+                                       Text="{Binding IconGlyph}"
+                                       VerticalAlignment="Center"
+                                       HorizontalAlignment="Center"
+                                       Foreground="#5A5A5A">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IconSource}" Value="{x:Null}">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Grid>
+                        <TextBlock Text="{Binding CurrentFileName}"
+                                   TextTrimming="CharacterEllipsis"
+                                   TextDecorations="Underline"
+                                   Foreground="{Binding PathBrush}"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+            </Grid>
+        </DataTemplate>
+        <DataTemplate x:Key="ImageRenameFullPathCellTemplate">
+            <Grid>
+                <Button Background="Transparent"
+                        BorderThickness="0"
+                        Padding="0"
+                        HorizontalAlignment="Left"
+                        Cursor="Hand"
+                        IsEnabled="{Binding HasOpenPath}"
+                        Command="{Binding DataContext.OpenPreviewContainingFolderCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                        CommandParameter="{Binding}">
+                    <Button.ContextMenu>
+                        <StaticResource ResourceKey="ImageRenameContextMenu" />
+                    </Button.ContextMenu>
+                    <Button.Tag>
+                        <Binding Path="DataContext" RelativeSource="{RelativeSource AncestorType=Window}" />
+                    </Button.Tag>
+                    <TextBlock Text="{Binding DisplayPath}"
+                               TextTrimming="CharacterEllipsis"
+                               TextDecorations="Underline"
+                               Foreground="{Binding PathBrush}"
+                               VerticalAlignment="Center" />
+                </Button>
+            </Grid>
+        </DataTemplate>
+        <DataTemplate x:Key="ImageRenameActionChevronCellTemplate">
+            <Viewbox HorizontalAlignment="Left"
+                     Stretch="Uniform"
+                     StretchDirection="DownOnly">
+                <Grid Width="120" Height="28" Clip="M0,2 L108,2 L120,14 L108,26 L0,26 L12,14 Z">
+                    <Rectangle Fill="{Binding RenameChevronTrackBrush}" />
+                    <Rectangle Width="{Binding RenameChevronFillWidth}"
+                               Fill="{Binding RenameChevronFillBrush}"
+                               HorizontalAlignment="Left" />
+                    <Path Data="M108,2 L120,14 L108,26"
+                          Stroke="{Binding RenameChevronTipBrush}"
+                          StrokeThickness="2"
+                          StrokeStartLineCap="Round"
+                          StrokeEndLineCap="Round"
+                          StrokeLineJoin="Round"
+                          Fill="Transparent" />
+                    <TextBlock Text="{Binding RenameChevronText}"
+                               FontSize="12"
+                               FontWeight="Bold"
+                               Foreground="{Binding RenameChevronTextBrush}"
+                               VerticalAlignment="Center"
+                               HorizontalAlignment="Center" />
+                </Grid>
+            </Viewbox>
+        </DataTemplate>
         <DataTemplate x:Key="PreviewProgressCellTemplate">
             <Viewbox HorizontalAlignment="Left"
                      Stretch="Uniform"
@@ -572,6 +701,171 @@
             <TextBlock Text="{Binding Action}"
                        VerticalAlignment="Center"
                        TextTrimming="CharacterEllipsis" />
+        </DataTemplate>
+        <ContextMenu x:Key="DriveToolDuplicateContextMenu" x:Shared="False">
+            <MenuItem Header="Open file"
+                      Command="{Binding PlacementTarget.Tag.OpenPreviewFileCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+            <MenuItem Header="Open file folder"
+                      Command="{Binding PlacementTarget.Tag.OpenPreviewContainingFolderCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+            <Separator />
+            <MenuItem Header="Show preview"
+                      IsEnabled="{Binding PlacementTarget.DataContext.HasOpenPath, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      Tag="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      Click="OnShowComparisonClicked" />
+            <MenuItem Header="Rename"
+                      IsEnabled="{Binding PlacementTarget.DataContext.HasOpenPath, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      Tag="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      Click="OnRenameDriveToolDuplicateClicked" />
+            <MenuItem Header="Move"
+                      IsEnabled="{Binding PlacementTarget.DataContext.HasOpenPath, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      Tag="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      Click="OnMoveDriveToolDuplicateClicked" />
+        </ContextMenu>
+        <Style x:Key="ModeToggleButtonStyle" TargetType="ToggleButton">
+            <Setter Property="Background" Value="#FFFFFF" />
+            <Setter Property="Foreground" Value="{StaticResource HeaderTextBrush}" />
+            <Setter Property="BorderBrush" Value="#CFCFCF" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="18,10" />
+            <Setter Property="MinWidth" Value="150" />
+            <Setter Property="Margin" Value="0,0,12,0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="18"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsChecked" Value="True">
+                    <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+                    <Setter Property="Foreground" Value="#FFFFFF" />
+                    <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.6" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="DriveToolDuplicateRowStyle" TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+            <Setter Property="Tag" Value="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}" />
+            <Setter Property="ContextMenu" Value="{StaticResource DriveToolDuplicateContextMenu}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsGroupHeader}" Value="True">
+                    <Setter Property="Background" Value="{StaticResource SectionBackgroundBrush}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="DriveToolDuplicateCellStyle" TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
+            <Setter Property="Padding" Value="14,2,18,2" />
+        </Style>
+        <DataTemplate x:Key="DriveToolDuplicateNameCellTemplate">
+            <StackPanel Orientation="Horizontal" Margin="{Binding NameMargin}">
+                <TextBlock Text="{Binding NamePrefix}"
+                           Width="48"
+                           Foreground="{Binding NamePrefixBrush}"
+                           FontWeight="{Binding NameFontWeight}"
+                           VerticalAlignment="Center" />
+                <TextBlock Text="{Binding DisplayName}"
+                           Foreground="{Binding NameBrush}"
+                           FontWeight="{Binding NameFontWeight}"
+                           TextTrimming="CharacterEllipsis"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+        </DataTemplate>
+        <DataTemplate x:Key="DriveToolDuplicatePathCellTemplate">
+            <Grid>
+                <Button Background="Transparent"
+                        BorderThickness="0"
+                        Padding="0"
+                        HorizontalAlignment="Left"
+                        Cursor="Hand"
+                        IsEnabled="{Binding HasOpenPath}"
+                        Command="{Binding DataContext.OpenPreviewContainingFolderCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                        CommandParameter="{Binding}">
+                    <Button.ContextMenu>
+                        <StaticResource ResourceKey="DriveToolDuplicateContextMenu" />
+                    </Button.ContextMenu>
+                    <Button.Tag>
+                        <Binding Path="DataContext" RelativeSource="{RelativeSource AncestorType=Window}" />
+                    </Button.Tag>
+                    <StackPanel Orientation="Horizontal">
+                        <Grid Margin="0,0,8,0" Width="16" Height="16" VerticalAlignment="Center">
+                            <Image Source="{Binding IconSource}" Stretch="Uniform" Width="16" Height="16" />
+                            <TextBlock FontFamily="Segoe MDL2 Assets"
+                                       Text="{Binding IconGlyph}"
+                                       VerticalAlignment="Center"
+                                       HorizontalAlignment="Center"
+                                       Foreground="#5A5A5A">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IconSource}" Value="{x:Null}">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding HasOpenPath}" Value="False">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <Grid.Style>
+                                <Style TargetType="Grid">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasOpenPath}" Value="False">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Grid.Style>
+                        </Grid>
+                        <TextBlock Text="{Binding DisplayPath}"
+                                   TextTrimming="CharacterEllipsis"
+                                   TextDecorations="Underline"
+                                   Foreground="{Binding PathBrush}"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <TextBlock Text="{Binding DisplayPath}"
+                           TextTrimming="CharacterEllipsis"
+                           Foreground="{StaticResource SubtleTextBrush}"
+                           VerticalAlignment="Center">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding HasOpenPath}" Value="False">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </Grid>
+        </DataTemplate>
+        <DataTemplate x:Key="DriveToolDuplicateSelectionCellTemplate">
+            <CheckBox HorizontalAlignment="Center"
+                      VerticalAlignment="Center"
+                      IsChecked="{Binding SelectionState, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                      IsEnabled="{Binding CanToggleSelection}" />
+        </DataTemplate>
+        <DataTemplate x:Key="DriveToolDuplicateActionCellTemplate">
+            <TextBlock Text="{Binding ActionText}"
+                       FontWeight="{Binding NameFontWeight}"
+                       VerticalAlignment="Center"
+                       Foreground="{Binding ActionBrush}" />
         </DataTemplate>
     </Window.Resources>
 
@@ -732,11 +1026,26 @@
         <Grid Margin="20">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <Grid Grid.Row="0" Margin="0,0,0,16">
+            <Border Grid.Row="0" Style="{StaticResource CardBorderStyle}" Padding="14,12" Margin="0,0,0,16">
+                <StackPanel Orientation="Horizontal">
+                    <ToggleButton Style="{StaticResource ModeToggleButtonStyle}"
+                                  IsChecked="{Binding IsSyncWorkspaceSelected}"
+                                  Content="Sync Mode" />
+                    <ToggleButton Style="{StaticResource ModeToggleButtonStyle}"
+                                  Margin="0"
+                                  IsChecked="{Binding IsDriveToolsWorkspaceSelected}"
+                                  Content="Drive Tools" />
+                </StackPanel>
+            </Border>
+
+            <Grid Grid.Row="1"
+                  Margin="0,0,0,16"
+                  Visibility="{Binding IsSyncWorkspaceVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition x:Name="SourceLocationColumnDefinition" Width="1.25*" />
                     <ColumnDefinition x:Name="SyncSettingsColumnDefinition" Width="400" />
@@ -849,10 +1158,10 @@
 
                             <Button Grid.Column="0" HorizontalAlignment="Stretch" Command="{Binding AnalyzeCommand}" Content="Analyze" />
                             <ToggleButton Grid.Column="2"
-                                          HorizontalAlignment="Stretch"
-                                          IsChecked="{Binding IsSyncRunning, Mode=OneWay}"
-                                          Command="{Binding ToggleSyncCommand}"
-                                          Content="{Binding SyncButtonText}" />
+                                           HorizontalAlignment="Stretch"
+                                           IsChecked="{Binding IsSyncRunning, Mode=OneWay}"
+                                           Command="{Binding ToggleSyncCommand}"
+                                           Content="{Binding SyncButtonText}" />
                         </Grid>
                     </StackPanel>
                 </Border>
@@ -935,7 +1244,139 @@
                 </Border>
             </Grid>
 
-            <Grid Grid.Row="1">
+            <Grid Grid.Row="1"
+                  Margin="0,0,0,16"
+                  Visibility="{Binding IsDriveToolsWorkspaceVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="1.3*" />
+                    <ColumnDefinition Width="0.9*" />
+                    <ColumnDefinition Width="1*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0" Style="{StaticResource CardBorderStyle}" Padding="18" Margin="0,0,12,0">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource SectionLabelStyle}" Text="DRIVE TOOLS LOCATION" />
+                        <TextBlock Text="Drive or folder" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBox x:Name="DriveToolsPathTextBox"
+                                     Grid.Column="0"
+                                     IsReadOnly="True"
+                                     Text="{Binding DriveToolsPathDisplayText, Mode=OneWay}"
+                                     ToolTip="{Binding DriveToolsPath}"
+                                     GotKeyboardFocus="OnDriveToolsPathTextBoxGotKeyboardFocus"
+                                     LostKeyboardFocus="OnDriveToolsPathTextBoxLostKeyboardFocus" />
+                            <Button Grid.Column="1"
+                                    Margin="10,8,0,0"
+                                    Padding="14,7"
+                                    Command="{Binding BrowseDriveToolsPathCommand}"
+                                    Content="Browse..." />
+                        </Grid>
+                        <TextBlock Margin="0,10,0,0"
+                                   Foreground="{StaticResource SubtleTextBrush}"
+                                   Text="{Binding DriveToolsLocationDescription}"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="1" Style="{StaticResource CardBorderStyle}" Padding="18" Margin="0,0,12,0">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource SectionLabelStyle}" Text="DRIVE TOOLS" />
+                        <ToggleButton Style="{StaticResource ModeToggleButtonStyle}"
+                                      IsChecked="{Binding IsDuplicateDriveToolSelected}"
+                                      Margin="0,8,0,10"
+                                      Content="Duplicate Analysis" />
+                        <ToggleButton Style="{StaticResource ModeToggleButtonStyle}"
+                                      IsChecked="{Binding IsImageRenameDriveToolSelected}"
+                                      Margin="0"
+                                      Content="Image Rename" />
+                        <TextBlock Margin="0,16,0,0"
+                                   Foreground="{StaticResource SubtleTextBrush}"
+                                   Text="Drive Tools stays focused on one drive at a time so file-management features do not interfere with sync planning."
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="2" Style="{StaticResource CardBorderStyle}" Padding="18">
+                    <Grid>
+                        <Grid Visibility="{Binding IsDuplicateDriveToolVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource SectionLabelStyle}" Text="DUPLICATE ANALYSIS" />
+                                <CheckBox Margin="0,6,0,14"
+                                          Content="Include subfolders"
+                                          IsChecked="{Binding DriveToolsIncludeSubfolders}" />
+                                <CheckBox Margin="0,0,0,14"
+                                          Content="Prevent deleting all files in a duplicate group"
+                                          IsChecked="{Binding PreventDeletingAllFilesInDuplicateGroup}" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="10" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button Grid.Column="0"
+                                            HorizontalAlignment="Stretch"
+                                            Command="{Binding FindDuplicatesCommand}"
+                                            Content="Analyze duplicates" />
+                                    <Button Grid.Column="2"
+                                            Style="{StaticResource PrimaryActionButtonStyle}"
+                                            HorizontalAlignment="Stretch"
+                                            Command="{Binding DeleteSelectedDuplicatesCommand}"
+                                            Content="Delete selected" />
+                                </Grid>
+                                <TextBlock Margin="0,12,0,0"
+                                           Foreground="{StaticResource SubtleTextBrush}"
+                                           Text="UsbFileSync first groups files by size, then verifies exact matches with SHA-256 before presenting any checksum group."
+                                           TextWrapping="Wrap" />
+                                <TextBlock Margin="0,10,0,0"
+                                           Foreground="{StaticResource ConflictTextBrush}"
+                                           FontWeight="SemiBold"
+                                           Visibility="{Binding IsDriveToolDuplicateDeletionWarningVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                           Text="{Binding DriveToolDuplicateDeletionWarningText}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Grid>
+                        <Grid Visibility="{Binding IsImageRenameDriveToolVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource SectionLabelStyle}" Text="IMAGE RENAME ANALYSIS" />
+                                <CheckBox Margin="0,6,0,14"
+                                          Content="Include subfolders"
+                                          IsChecked="{Binding DriveToolsIncludeSubfolders}" />
+                                <TextBlock Text="Configured rename pattern" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}" />
+                                <Border Margin="0,10,0,0" Style="{StaticResource CardBorderStyle}" Padding="12" Background="{StaticResource SectionBackgroundBrush}">
+                                    <TextBlock Text="{Binding ImageRenamePatternDisplayName}"
+                                               FontFamily="Consolas"
+                                               FontSize="15"
+                                               Foreground="{StaticResource HeaderTextBrush}" />
+                                </Border>
+                                <Grid Margin="0,14,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="10" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button Grid.Column="0"
+                                            HorizontalAlignment="Stretch"
+                                            Command="{Binding AnalyzeImageRenameCommand}"
+                                            Content="Analyze" />
+                                    <Button Grid.Column="2"
+                                            Style="{StaticResource PrimaryActionButtonStyle}"
+                                            HorizontalAlignment="Stretch"
+                                            Command="{Binding ApplyImageRenameCommand}"
+                                            Content="Rename files" />
+                                </Grid>
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <Grid Grid.Row="2"
+                  Visibility="{Binding IsSyncWorkspaceVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <Grid.RowDefinitions>
                     <RowDefinition x:Name="PreviewPaneRowDefinition" Height="*" MinHeight="280" />
                     <RowDefinition x:Name="DashboardSplitterRowDefinition" Height="12" />
@@ -949,10 +1390,16 @@
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
 
-                        <StackPanel Grid.Row="0" Margin="0,0,0,12">
-                            <TextBlock Text="Synchronization preview" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}" />
-                            <TextBlock Margin="0,6,0,0" Text="Use the tabs to filter the preview table by new, changed, deleted, unchanged, or all items." Foreground="{StaticResource SubtleTextBrush}" />
-                        </StackPanel>
+                        <Grid Grid.Row="0" Margin="0,0,0,12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Synchronization preview" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}" />
+                                <TextBlock Margin="0,6,0,0" Text="Use the tabs to filter the preview table by new, changed, deleted, unchanged, or all items." Foreground="{StaticResource SubtleTextBrush}" />
+                            </StackPanel>
+                        </Grid>
 
                         <Grid Grid.Row="1">
                             <TabControl x:Name="PreviewTabControl">
@@ -1253,6 +1700,227 @@
             </Grid>
 
             <Border Grid.Row="2"
+                    Style="{StaticResource CardBorderStyle}"
+                    Padding="16"
+                    MinHeight="280"
+                    Visibility="{Binding IsDriveToolsWorkspaceVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Grid>
+                    <Grid Visibility="{Binding IsDuplicateDriveToolVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Grid.Row="0" Margin="0,0,0,12">
+                            <TextBlock Text="Duplicate analysis preview" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}" />
+                            <TextBlock Margin="0,6,0,0"
+                                       Text="Each SHA-256 summary row is followed by the matching file copies. Leave one file unchecked in each group, then select the copies you want to delete."
+                                       Foreground="{StaticResource SubtleTextBrush}"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <DataGrid Grid.Row="1"
+                                  ItemsSource="{Binding DriveToolDuplicateRows}"
+                                  RowStyle="{StaticResource DriveToolDuplicateRowStyle}"
+                                  CellStyle="{StaticResource DriveToolDuplicateCellStyle}"
+                                  AutoGenerateColumns="False"
+                                  CanUserAddRows="False"
+                                  IsReadOnly="True"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                  ScrollViewer.VerticalScrollBarVisibility="Auto">
+                            <DataGrid.Columns>
+                                <DataGridTemplateColumn Width="36" CellTemplate="{StaticResource DriveToolDuplicateSelectionCellTemplate}" HeaderStyle="{StaticResource PreviewSelectionColumnHeaderStyle}">
+                                    <DataGridTemplateColumn.HeaderTemplate>
+                                        <DataTemplate>
+                                            <CheckBox IsThreeState="True"
+                                                      HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center"
+                                                      IsChecked="{Binding DataContext.AreAllDriveToolDuplicatesSelected, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.HeaderTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="Item" CellTemplate="{StaticResource DriveToolDuplicateNameCellTemplate}" Width="280" />
+                                <DataGridTemplateColumn Header="Location / notes" CellTemplate="{StaticResource DriveToolDuplicatePathCellTemplate}" Width="360" />
+                                <DataGridTextColumn Header="Checksum" Binding="{Binding ChecksumText}" Width="260" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
+                                <DataGridTextColumn Header="File type" Binding="{Binding FileType}" Width="90" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
+                                <DataGridTextColumn Header="Size" Binding="{Binding SizeText}" Width="95" ElementStyle="{StaticResource CenteredDataGridTextStyle}" />
+                                <DataGridTemplateColumn Header="Action" CellTemplate="{StaticResource DriveToolDuplicateActionCellTemplate}" Width="110" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+
+                    <Grid Visibility="{Binding IsImageRenameDriveToolVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Grid.Row="0" Margin="0,0,0,12">
+                            <TextBlock Text="Image rename analysis" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}" />
+                            <TextBlock Margin="0,6,0,0"
+                                       Text="Use the tabs to review File Pattern Match, No Match, Completed, or All rename candidates."
+                                       Foreground="{StaticResource SubtleTextBrush}"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <Border Grid.Row="1" Style="{StaticResource CardBorderStyle}" Padding="16">
+                            <TabControl>
+                                    <TabItem>
+                                        <TabItem.Header>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="✓"
+                                                           Margin="0,0,6,0"
+                                                           FontWeight="Bold"
+                                                           Foreground="#128C44" />
+                                                <TextBlock Text="{Binding ImageRenameMatchedRowCount, StringFormat=File Pattern Match ({0})}" />
+                                            </StackPanel>
+                                        </TabItem.Header>
+                                        <DataGrid ItemsSource="{Binding ImageRenameMatchedRows}"
+                                                  AutoGenerateColumns="False"
+                                                  CanUserAddRows="False"
+                                                  IsReadOnly="False"
+                                                  RowStyle="{StaticResource ImageRenameRowStyle}"
+                                                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                                  ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                            <DataGrid.Columns>
+                                                <DataGridTemplateColumn Width="36" CellTemplate="{StaticResource ImageRenameSelectionCellTemplate}" HeaderStyle="{StaticResource PreviewSelectionColumnHeaderStyle}">
+                                                    <DataGridTemplateColumn.HeaderTemplate>
+                                                        <DataTemplate>
+                                                            <CheckBox HorizontalAlignment="Center"
+                                                                      VerticalAlignment="Center"
+                                                                      IsChecked="{Binding DataContext.AreAllImageRenameMatchedRowsSelected, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.HeaderTemplate>
+                                                </DataGridTemplateColumn>
+                                                <DataGridTemplateColumn Header="Current Name" CellTemplate="{StaticResource ImageRenameCurrentNameCellTemplate}" Width="240" />
+                                                <DataGridTemplateColumn Header="Rename" CellTemplate="{StaticResource ImageRenameActionChevronCellTemplate}" Width="130" />
+                                                <DataGridTextColumn Header="New Name" Binding="{Binding ProposedFileName}" Width="240" IsReadOnly="True" />
+                                                <DataGridTextColumn Header="File Pattern" Binding="{Binding FilePatternText}" Width="160" IsReadOnly="True" />
+                                                <DataGridTextColumn Header="Timestamp" Binding="{Binding TimestampText}" Width="150" IsReadOnly="True" />
+                                                <DataGridTextColumn Header="Status" Binding="{Binding StatusText}" Width="95" IsReadOnly="True" />
+                                                <DataGridTemplateColumn Header="Full path" CellTemplate="{StaticResource ImageRenameFullPathCellTemplate}" Width="*" />
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                    </TabItem>
+                                    <TabItem>
+                                        <TabItem.Header>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="○"
+                                                           Margin="0,0,6,0"
+                                                           FontWeight="Bold"
+                                                           Foreground="#7A7574" />
+                                                <TextBlock Text="{Binding ImageRenameNoMatchRowCount, StringFormat=No Match ({0})}" />
+                                            </StackPanel>
+                                        </TabItem.Header>
+                                        <DataGrid ItemsSource="{Binding ImageRenameNoMatchRows}"
+                                                  AutoGenerateColumns="False"
+                                                  CanUserAddRows="False"
+                                                  IsReadOnly="False"
+                                                  RowStyle="{StaticResource ImageRenameRowStyle}"
+                                                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                                  ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                            <DataGrid.Columns>
+                                                <DataGridTemplateColumn Width="36" CellTemplate="{StaticResource ImageRenameSelectionCellTemplate}" HeaderStyle="{StaticResource PreviewSelectionColumnHeaderStyle}">
+                                                    <DataGridTemplateColumn.HeaderTemplate>
+                                                        <DataTemplate>
+                                                            <CheckBox HorizontalAlignment="Center"
+                                                                      VerticalAlignment="Center"
+                                                                      IsChecked="{Binding DataContext.AreAllImageRenameNoMatchRowsSelected, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.HeaderTemplate>
+                                                </DataGridTemplateColumn>
+                                                <DataGridTemplateColumn Header="Current Name" CellTemplate="{StaticResource ImageRenameCurrentNameCellTemplate}" Width="240" />
+                                                <DataGridTemplateColumn Header="Rename" CellTemplate="{StaticResource ImageRenameActionChevronCellTemplate}" Width="130" />
+                                                <DataGridTextColumn Header="New Name" Binding="{Binding ProposedFileName}" Width="240" IsReadOnly="True" />
+                                                <DataGridTextColumn Header="File Pattern" Binding="{Binding FilePatternText}" Width="160" IsReadOnly="True" />
+                                                <DataGridTextColumn Header="Timestamp" Binding="{Binding TimestampText}" Width="150" IsReadOnly="True" />
+                                                <DataGridTextColumn Header="Status" Binding="{Binding StatusText}" Width="95" IsReadOnly="True" />
+                                                <DataGridTemplateColumn Header="Full path" CellTemplate="{StaticResource ImageRenameFullPathCellTemplate}" Width="*" />
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                    </TabItem>
+                                    <TabItem>
+                                        <TabItem.Header>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="✔"
+                                                           Margin="0,0,6,0"
+                                                           FontWeight="Bold"
+                                                           Foreground="#626262" />
+                                                <TextBlock Text="{Binding ImageRenameCompletedRowCount, StringFormat=Completed ({0})}" />
+                                            </StackPanel>
+                                        </TabItem.Header>
+                                        <DataGrid ItemsSource="{Binding ImageRenameCompletedRows}"
+                                                  AutoGenerateColumns="False"
+                                                  CanUserAddRows="False"
+                                                  IsReadOnly="False"
+                                                  RowStyle="{StaticResource ImageRenameRowStyle}"
+                                                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                                  ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                            <DataGrid.Columns>
+                                                <DataGridTemplateColumn Width="36" CellTemplate="{StaticResource ImageRenameSelectionCellTemplate}" HeaderStyle="{StaticResource PreviewSelectionColumnHeaderStyle}">
+                                                    <DataGridTemplateColumn.HeaderTemplate>
+                                                        <DataTemplate>
+                                                            <CheckBox HorizontalAlignment="Center"
+                                                                      VerticalAlignment="Center"
+                                                                      IsChecked="False"
+                                                                      IsEnabled="False" />
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.HeaderTemplate>
+                                                </DataGridTemplateColumn>
+                                                <DataGridTemplateColumn Header="Current Name" CellTemplate="{StaticResource ImageRenameCurrentNameCellTemplate}" Width="240" />
+                                                <DataGridTemplateColumn Header="Rename" CellTemplate="{StaticResource ImageRenameActionChevronCellTemplate}" Width="130" />
+                                                <DataGridTextColumn Header="New Name" Binding="{Binding ProposedFileName}" Width="240" IsReadOnly="True" />
+                                                <DataGridTextColumn Header="File Pattern" Binding="{Binding FilePatternText}" Width="160" IsReadOnly="True" />
+                                                <DataGridTextColumn Header="Timestamp" Binding="{Binding TimestampText}" Width="150" IsReadOnly="True" />
+                                                <DataGridTextColumn Header="Status" Binding="{Binding StatusText}" Width="95" IsReadOnly="True" />
+                                                <DataGridTemplateColumn Header="Full path" CellTemplate="{StaticResource ImageRenameFullPathCellTemplate}" Width="*" />
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                    </TabItem>
+                                    <TabItem>
+                                        <TabItem.Header>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="•"
+                                                           Margin="0,0,6,0"
+                                                           FontWeight="Bold"
+                                                           Foreground="#5A5A5A" />
+                                                <TextBlock Text="{Binding ImageRenameAllRowCount, StringFormat=All ({0})}" />
+                                            </StackPanel>
+                                        </TabItem.Header>
+                                        <DataGrid ItemsSource="{Binding ImageRenameAllRows}"
+                                                  AutoGenerateColumns="False"
+                                                  CanUserAddRows="False"
+                                                  IsReadOnly="False"
+                                                  RowStyle="{StaticResource ImageRenameRowStyle}"
+                                                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                                  ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                            <DataGrid.Columns>
+                                                <DataGridTemplateColumn Width="36" CellTemplate="{StaticResource ImageRenameSelectionCellTemplate}" HeaderStyle="{StaticResource PreviewSelectionColumnHeaderStyle}">
+                                                    <DataGridTemplateColumn.HeaderTemplate>
+                                                        <DataTemplate>
+                                                            <CheckBox HorizontalAlignment="Center"
+                                                                      VerticalAlignment="Center"
+                                                                      IsChecked="{Binding DataContext.AreAllImageRenameAllRowsSelected, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.HeaderTemplate>
+                                                </DataGridTemplateColumn>
+                                                <DataGridTemplateColumn Header="Current Name" CellTemplate="{StaticResource ImageRenameCurrentNameCellTemplate}" Width="240" />
+                                                <DataGridTemplateColumn Header="Rename" CellTemplate="{StaticResource ImageRenameActionChevronCellTemplate}" Width="130" />
+                                                <DataGridTextColumn Header="New Name" Binding="{Binding ProposedFileName}" Width="240" IsReadOnly="True" />
+                                                <DataGridTextColumn Header="File Pattern" Binding="{Binding FilePatternText}" Width="160" IsReadOnly="True" />
+                                                <DataGridTextColumn Header="Timestamp" Binding="{Binding TimestampText}" Width="150" IsReadOnly="True" />
+                                                <DataGridTextColumn Header="Status" Binding="{Binding StatusText}" Width="95" IsReadOnly="True" />
+                                                <DataGridTemplateColumn Header="Full path" CellTemplate="{StaticResource ImageRenameFullPathCellTemplate}" Width="*" />
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                    </TabItem>
+                                </TabControl>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="3"
                     Margin="0,16,0,0"
                     Padding="14,10">
                 <Border.Style>
@@ -1282,7 +1950,7 @@
                 </TextBlock>
             </Border>
 
-            <Border Grid.RowSpan="3"
+            <Border Grid.RowSpan="4"
                     Background="#CCFFFFFF"
                     Visibility="{Binding IsBusyOverlayVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                     Panel.ZIndex="20">

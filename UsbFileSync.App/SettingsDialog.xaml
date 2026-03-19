@@ -60,6 +60,152 @@
                 </StackPanel>
 
                 <StackPanel Margin="0,18,0,0">
+                    <TextBlock Text="Image rename pattern" FontSize="15" FontWeight="SemiBold" />
+                    <TextBlock Margin="0,8,0,0"
+                               Text="Choose the filename layout used by Drive Tools &gt; Image Rename. The optional city suffix is skipped when location metadata is unavailable."
+                               TextWrapping="Wrap"
+                               Foreground="#616161" />
+                    <ComboBox x:Name="ImageRenamePatternComboBox"
+                              Margin="0,12,0,0"
+                              Width="420"
+                              HorizontalAlignment="Left"
+                              DisplayMemberPath="DisplayName"
+                              SelectedValuePath="Kind" />
+                </StackPanel>
+
+                <StackPanel Margin="0,18,0,0">
+                    <TextBlock Text="City name language order" FontSize="15" FontWeight="SemiBold" />
+                    <TextBlock Margin="0,8,0,0"
+                               Text="Choose whether the _City suffix should prefer English names or the provider's local language first when both are available."
+                               TextWrapping="Wrap"
+                               Foreground="#616161" />
+                    <ComboBox x:Name="ImageRenameCityLanguagePreferenceComboBox"
+                              Margin="0,12,0,0"
+                              Width="260"
+                              HorizontalAlignment="Left"
+                              DisplayMemberPath="DisplayName"
+                              SelectedValuePath="Value" />
+                </StackPanel>
+
+                <StackPanel Margin="0,18,0,0">
+                    <TextBlock Text="Image rename camera filename scope" FontSize="15" FontWeight="SemiBold" />
+                    <TextBlock Margin="0,8,0,0"
+                               Text="UsbFileSync only renames common camera-style filenames. Choose the default camera File Patterns to include, then add your own File Patterns below if needed. Use ? for one character and * for multiple characters."
+                               TextWrapping="Wrap"
+                               Foreground="#616161" />
+                    <ItemsControl x:Name="ImageRenamePatternOptionsItemsControl" Margin="0,12,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <CheckBox Margin="0,4,0,0"
+                                          Content="{Binding Label}"
+                                          IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Margin="0,12,0,0"
+                               Text="Custom File Patterns"
+                               FontWeight="SemiBold" />
+                    <TextBlock Margin="0,8,0,0"
+                               Text="Add one custom File Pattern per row, then check the rows you want Image Rename to use."
+                               TextWrapping="Wrap"
+                               Foreground="#616161" />
+                    <ItemsControl x:Name="ImageRenameCustomPatternItemsControl" Margin="0,10,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,4,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="10" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="10" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <CheckBox Grid.Column="0"
+                                              VerticalAlignment="Center"
+                                              IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBox Grid.Column="2"
+                                             VerticalContentAlignment="Center"
+                                             Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}" />
+                                    <Button Grid.Column="4"
+                                            Width="74"
+                                            Content="Remove"
+                                            Tag="{Binding}"
+                                            Click="OnRemoveImageRenameCustomPatternClicked" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <Button Width="170"
+                            Margin="0,10,0,0"
+                            HorizontalAlignment="Left"
+                            Content="Add custom File Pattern"
+                            Click="OnAddImageRenameCustomPatternClicked" />
+                    <TextBlock Margin="0,8,0,0"
+                               Text="Example custom File Patterns: GOPR????, MVI_????, or VID_*."
+                               TextWrapping="Wrap"
+                               Foreground="#616161" />
+                </StackPanel>
+
+                <StackPanel Margin="0,18,0,0">
+                    <TextBlock Text="Image rename file formats" FontSize="15" FontWeight="SemiBold" />
+                    <TextBlock Margin="0,8,0,0"
+                               Text="Choose which file extensions Image Rename should consider. Defaults target common camera photo and video formats."
+                               TextWrapping="Wrap"
+                               Foreground="#616161" />
+                    <ItemsControl x:Name="ImageRenameExtensionOptionsItemsControl" Margin="0,12,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <CheckBox Margin="0,4,0,0"
+                                          Content="{Binding Label}"
+                                          IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Margin="0,12,0,0"
+                               Text="Custom file extensions"
+                               FontWeight="SemiBold" />
+                    <TextBlock Margin="0,8,0,0"
+                               Text="Add one custom extension per row, then check the rows you want Image Rename to include."
+                               TextWrapping="Wrap"
+                               Foreground="#616161" />
+                    <ItemsControl x:Name="ImageRenameCustomExtensionItemsControl" Margin="0,10,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,4,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="10" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="10" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <CheckBox Grid.Column="0"
+                                              VerticalAlignment="Center"
+                                              IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBox Grid.Column="2"
+                                             VerticalContentAlignment="Center"
+                                             Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}" />
+                                    <Button Grid.Column="4"
+                                            Width="74"
+                                            Content="Remove"
+                                            Tag="{Binding}"
+                                            Click="OnRemoveImageRenameCustomExtensionClicked" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <Button Width="185"
+                            Margin="0,10,0,0"
+                            HorizontalAlignment="Left"
+                            Content="Add custom extension"
+                            Click="OnAddImageRenameCustomExtensionClicked" />
+                    <TextBlock Margin="0,8,0,0"
+                               Text="Enter custom extensions such as .orf or .arw."
+                               TextWrapping="Wrap"
+                               Foreground="#616161" />
+                </StackPanel>
+
+                <StackPanel Margin="0,18,0,0">
                     <TextBlock Text="Cloud provider credentials" FontSize="15" FontWeight="SemiBold" />
                     <TextBlock Margin="0,8,0,0"
                                Text="UsbFileSync uses built-in provider credentials by default. Turn on the advanced setting below if you want to override those defaults with your own provider app registrations."

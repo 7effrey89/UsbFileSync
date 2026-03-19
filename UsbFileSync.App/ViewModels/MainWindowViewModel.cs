@@ -30,10 +30,24 @@ public enum PreviewSelectionTarget
     FullPath,
 }
 
+public enum WorkspaceMode
+{
+    Sync,
+    DriveTools,
+}
+
+public enum DriveToolKind
+{
+    Duplicates,
+    ImageRename,
+}
+
 internal enum BusyOperationKind
 {
     None,
     Analyze,
+    FindDuplicates,
+    AnalyzeImageRename,
     Sync,
 }
 
@@ -49,8 +63,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     }
 
     private readonly SyncService _syncService;
+    private readonly DuplicateFileAnalysisService _duplicateFileAnalysisService;
+    private ImageRenameAnalysisService _imageRenameAnalysisService;
     private readonly ISyncSettingsStore? _settingsStore;
     private readonly IFolderPickerService _folderPickerService;
+    private readonly IUserDialogService _userDialogService;
     private readonly ISourceVolumeService _sourceVolumeService;
     private readonly ISourceVolumeService _destinationVolumeService;
     private readonly ISyncExecutionClient _syncExecutionClient;
@@ -64,6 +81,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private readonly Dictionary<string, SyncPreviewRowViewModel> _previewRowsByItemKey = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<PreviewTabKind, ICollectionView> _previewViews = new();
     private readonly Dictionary<PreviewColumnKey, HashSet<string>> _activePreviewFilters = new();
+    private readonly Dictionary<string, DuplicateFileEntry> _driveToolDuplicateEntriesByItemKey = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<ImageRenamePlanItem> _imageRenamePlanItems = [];
     private CancellationTokenSource? _persistConfigurationCancellationTokenSource;
     private CancellationTokenSource? _busyOperationCancellationTokenSource;
     private CancellationTokenSource? _syncCancellationTokenSource;
@@ -76,15 +95,24 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private double? _busyOverlaySmoothedEtaSeconds;
     private string _sourcePath = string.Empty;
     private string _destinationPath = string.Empty;
+    private string _driveToolsPath = string.Empty;
     private SyncMode _selectedMode = SyncMode.OneWay;
+    private WorkspaceMode _selectedWorkspaceMode;
+    private DriveToolKind _selectedDriveTool = DriveToolKind.Duplicates;
     private int _parallelCopyCount = 1;
     private bool _detectMoves = true;
     private bool _dryRun = true;
     private bool _verifyChecksums;
     private bool _moveMode;
     private bool _includeSubfolders = true;
+    private bool _driveToolsIncludeSubfolders = true;
+    private bool _preventDeletingAllFilesInDuplicateGroup = true;
     private bool _hideMacOsSystemFiles = true;
+    private ImageRenamePatternKind _imageRenamePattern = ImageRenamePatternKind.TimestampOriginalFileName;
     private IReadOnlyList<string> _excludedPathPatterns = Array.Empty<string>();
+    private IReadOnlyList<string> _imageRenameFileNamePatterns = ImageRenameDefaults.GetDefaultCameraFileNameMasks();
+    private IReadOnlyList<string> _imageRenameExtensions = ImageRenameDefaults.GetDefaultExtensions();
+    private ImageRenameCityLanguagePreference _imageRenameCityLanguagePreference = ImageRenameCityLanguagePreference.EnglishThenLocal;
     private bool _useCustomCloudProviderCredentials;
     private Dictionary<string, string> _previewProviderMappings = PreviewProviderDefaults.CreateSerializableMapping();
     private IReadOnlyList<CloudProviderAppRegistration> _cloudProviderAppRegistrations = Array.Empty<CloudProviderAppRegistration>();
@@ -96,6 +124,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _isStatusSuccess;
     private bool _isSourcePathFocused;
     private bool _isDestinationPathFocused;
+    private bool _isDriveToolsPathFocused;
     private BusyOperationKind _busyOperationKind;
     private string _busyOverlayTitle = "Working...";
     private string _busyOverlayDescription = "Please wait.";
@@ -114,24 +143,29 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private string _previewFilterSearchText = string.Empty;
     private ActivityLogFilter _selectedActivityLogFilter = ActivityLogFilter.All;
     private bool _suppressSelectionUpdates;
+    private bool _hasDriveToolDuplicateSelectionConflict;
+    private HashSet<string> _conflictingDriveToolDuplicateGroupKeys = new(StringComparer.OrdinalIgnoreCase);
 
     public MainWindowViewModel()
         : this(
             new SyncService(),
-            CreateDefaultSettingsStore(),
-            new WindowsFolderPickerService(),
-            new WindowsFileLauncherService(),
-            null,
-            SyncVolumeServiceFactory.CreateSourceVolumeService(),
-            SyncVolumeServiceFactory.CreateDestinationVolumeService(),
-            new WorkerSyncExecutionClient())
+            settingsStore: CreateDefaultSettingsStore(),
+            folderPickerService: new WindowsFolderPickerService(),
+            userDialogService: new WindowsUserDialogService(),
+            fileLauncherService: new WindowsFileLauncherService(),
+            sourceVolumeService: SyncVolumeServiceFactory.CreateSourceVolumeService(),
+            destinationVolumeService: SyncVolumeServiceFactory.CreateDestinationVolumeService(),
+            syncExecutionClient: new WorkerSyncExecutionClient())
     {
     }
 
     public MainWindowViewModel(
         SyncService syncService,
+        DuplicateFileAnalysisService? duplicateFileAnalysisService = null,
+        ImageRenameAnalysisService? imageRenameAnalysisService = null,
         ISyncSettingsStore? settingsStore = null,
         IFolderPickerService? folderPickerService = null,
+        IUserDialogService? userDialogService = null,
         IFileLauncherService? fileLauncherService = null,
         IDriveDisplayNameService? driveDisplayNameService = null,
         ISourceVolumeService? sourceVolumeService = null,
@@ -139,8 +173,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ISyncExecutionClient? syncExecutionClient = null)
     {
         _syncService = syncService;
+        _duplicateFileAnalysisService = duplicateFileAnalysisService ?? new DuplicateFileAnalysisService();
+        _imageRenameAnalysisService = imageRenameAnalysisService ?? new ImageRenameAnalysisService();
         _settingsStore = settingsStore;
         _folderPickerService = folderPickerService ?? new WindowsFolderPickerService();
+        _userDialogService = userDialogService ?? new WindowsUserDialogService();
         _sourceVolumeService = sourceVolumeService ?? SyncVolumeServiceFactory.CreateSourceVolumeService();
         _destinationVolumeService = destinationVolumeService ?? SyncVolumeServiceFactory.CreateDestinationVolumeService();
         _syncExecutionClient = syncExecutionClient ?? new InProcessSyncExecutionClient(syncService);
@@ -156,6 +193,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         DeletedFiles = new BulkObservableCollection<SyncPreviewRowViewModel>();
         UnchangedFiles = new BulkObservableCollection<SyncPreviewRowViewModel>();
         AllFiles = new BulkObservableCollection<SyncPreviewRowViewModel>();
+        DriveToolDuplicateRows = new BulkObservableCollection<DriveToolDuplicateRowViewModel>();
+        ImageRenameMatchedRows = new BulkObservableCollection<ImageRenameRowViewModel>();
+        ImageRenameNoMatchRows = new BulkObservableCollection<ImageRenameRowViewModel>();
+        ImageRenameAllRows = new BulkObservableCollection<ImageRenameRowViewModel>();
+        ImageRenameCompletedRows = new BulkObservableCollection<ImageRenameRowViewModel>();
         if (_hasWpfApplication)
         {
             _previewViews[PreviewTabKind.NewFiles] = CreatePreviewView(NewFiles);
@@ -176,10 +218,15 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ActivityLogView.Filter = ShouldIncludeActivityLogEntry;
         RemainingQueue = new BulkObservableCollection<QueueActionViewModel>();
         AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, CanExecuteSyncCommands);
+        FindDuplicatesCommand = new AsyncRelayCommand(FindDuplicatesAsync, CanExecuteDuplicateAnalyzeCommand);
+        AnalyzeImageRenameCommand = new AsyncRelayCommand(AnalyzeImageRenameAsync, CanExecuteImageRenameAnalyzeCommand);
+        DeleteSelectedDuplicatesCommand = new AsyncRelayCommand(DeleteSelectedDuplicatesAsync, CanDeleteSelectedDuplicates);
+        ApplyImageRenameCommand = new AsyncRelayCommand(ApplyImageRenameAsync, CanApplyImageRename);
         ToggleSyncCommand = new RelayCommand(ToggleSync, CanExecuteToggleSyncCommand);
         CancelBusyOperationCommand = new RelayCommand(CancelBusyOperation, CanCancelBusyOperation);
         UseCompletedAnalyzeResultsCommand = new RelayCommand(UseCompletedAnalyzeResults, CanUseCompletedAnalyzeResults);
         BrowseSourcePathCommand = new RelayCommand(BrowseSourcePath);
+        BrowseDriveToolsPathCommand = new RelayCommand(BrowseDriveToolsPath);
         AddDestinationPathCommand = new RelayCommand(AddDestinationPath);
         BrowseDestinationPathCommand = new ParameterizedRelayCommand(BrowseDestinationPath);
         RemoveDestinationPathCommand = new ParameterizedRelayCommand(RemoveDestinationPath, CanRemoveDestinationPath);
@@ -208,6 +255,16 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public ObservableCollection<SyncPreviewRowViewModel> UnchangedFiles { get; }
 
     public ObservableCollection<SyncPreviewRowViewModel> AllFiles { get; }
+
+    public ObservableCollection<DriveToolDuplicateRowViewModel> DriveToolDuplicateRows { get; }
+
+    public ObservableCollection<ImageRenameRowViewModel> ImageRenameMatchedRows { get; }
+
+    public ObservableCollection<ImageRenameRowViewModel> ImageRenameNoMatchRows { get; }
+
+    public ObservableCollection<ImageRenameRowViewModel> ImageRenameAllRows { get; }
+
+    public ObservableCollection<ImageRenameRowViewModel> ImageRenameCompletedRows { get; }
 
     public ObservableCollection<SyncLogEntryViewModel> ActivityLog { get; }
 
@@ -277,6 +334,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public AsyncRelayCommand AnalyzeCommand { get; }
 
+    public AsyncRelayCommand FindDuplicatesCommand { get; }
+
+    public AsyncRelayCommand AnalyzeImageRenameCommand { get; }
+
+    public AsyncRelayCommand DeleteSelectedDuplicatesCommand { get; }
+
+    public AsyncRelayCommand ApplyImageRenameCommand { get; }
+
     public RelayCommand ToggleSyncCommand { get; }
 
     public RelayCommand CancelBusyOperationCommand { get; }
@@ -284,6 +349,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public RelayCommand UseCompletedAnalyzeResultsCommand { get; }
 
     public RelayCommand BrowseSourcePathCommand { get; }
+
+    public RelayCommand BrowseDriveToolsPathCommand { get; }
 
     public RelayCommand AddDestinationPathCommand { get; }
 
@@ -329,6 +396,19 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    public string DriveToolsPath
+    {
+        get => _driveToolsPath;
+        set
+        {
+            if (SetProperty(ref _driveToolsPath, value))
+            {
+                RaisePropertyChanged(nameof(DriveToolsPathDisplayText));
+                HandleDriveToolsConfigurationChanged();
+            }
+        }
+    }
+
     public string SourcePathDisplayText => _isSourcePathFocused
         ? SourcePath
         : _driveDisplayNameService.FormatPathForDisplay(SourcePath);
@@ -337,7 +417,99 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ? DestinationPath
         : _driveDisplayNameService.FormatPathForDisplay(DestinationPath);
 
+    public string DriveToolsPathDisplayText => _isDriveToolsPathFocused
+        ? DriveToolsPath
+        : _driveDisplayNameService.FormatPathForDisplay(DriveToolsPath);
+
     public bool HasAdditionalDestinationPaths => AdditionalDestinationPaths.Count > 0;
+
+    public WorkspaceMode SelectedWorkspaceMode
+    {
+        get => _selectedWorkspaceMode;
+        set
+        {
+            if (SetProperty(ref _selectedWorkspaceMode, value))
+            {
+                RaisePropertyChanged(nameof(IsSyncWorkspaceSelected));
+                RaisePropertyChanged(nameof(IsDriveToolsWorkspaceSelected));
+                RaisePropertyChanged(nameof(IsSyncWorkspaceVisible));
+                RaisePropertyChanged(nameof(IsDriveToolsWorkspaceVisible));
+                HandleDriveToolsConfigurationChanged();
+            }
+        }
+    }
+
+    public bool IsSyncWorkspaceSelected
+    {
+        get => SelectedWorkspaceMode == WorkspaceMode.Sync;
+        set
+        {
+            if (value)
+            {
+                SelectedWorkspaceMode = WorkspaceMode.Sync;
+            }
+        }
+    }
+
+    public bool IsDriveToolsWorkspaceSelected
+    {
+        get => SelectedWorkspaceMode == WorkspaceMode.DriveTools;
+        set
+        {
+            if (value)
+            {
+                SelectedWorkspaceMode = WorkspaceMode.DriveTools;
+            }
+        }
+    }
+
+    public bool IsSyncWorkspaceVisible => SelectedWorkspaceMode == WorkspaceMode.Sync;
+
+    public bool IsDriveToolsWorkspaceVisible => SelectedWorkspaceMode == WorkspaceMode.DriveTools;
+
+    public DriveToolKind SelectedDriveTool
+    {
+        get => _selectedDriveTool;
+        set
+        {
+            if (SetProperty(ref _selectedDriveTool, value))
+            {
+                RaisePropertyChanged(nameof(IsDuplicateDriveToolSelected));
+                RaisePropertyChanged(nameof(IsImageRenameDriveToolSelected));
+                RaisePropertyChanged(nameof(IsDuplicateDriveToolVisible));
+                RaisePropertyChanged(nameof(IsImageRenameDriveToolVisible));
+                HandleDriveToolsConfigurationChanged();
+            }
+        }
+    }
+
+    public bool IsDuplicateDriveToolSelected
+    {
+        get => SelectedDriveTool == DriveToolKind.Duplicates;
+        set
+        {
+            if (value)
+            {
+                SelectedDriveTool = DriveToolKind.Duplicates;
+            }
+        }
+    }
+
+    public bool IsImageRenameDriveToolSelected
+    {
+        get => SelectedDriveTool == DriveToolKind.ImageRename;
+        set
+        {
+            if (value)
+            {
+                SelectedDriveTool = DriveToolKind.ImageRename;
+            }
+        }
+    }
+
+    public bool IsDuplicateDriveToolVisible => SelectedDriveTool == DriveToolKind.Duplicates;
+
+    public bool IsImageRenameDriveToolVisible => SelectedDriveTool == DriveToolKind.ImageRename;
 
     public SyncMode SelectedMode
     {
@@ -386,6 +558,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         SyncMode.TwoWay => "Changes on this side are also reconciled back to the source location.",
         _ => "This side receives created folders, new files, and overwrite updates.",
     };
+
+    public string DriveToolsLocationDescription => "Drive Tools works against one drive or folder at a time for duplicate cleanup and camera filename rename workflows.";
 
     public bool IsDetectMovesAvailable => SelectedMode == SyncMode.OneWay;
 
@@ -449,6 +623,38 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    public bool DriveToolsIncludeSubfolders
+    {
+        get => _driveToolsIncludeSubfolders;
+        set
+        {
+            if (SetProperty(ref _driveToolsIncludeSubfolders, value))
+            {
+                HandleDriveToolsConfigurationChanged();
+            }
+        }
+    }
+
+    public bool PreventDeletingAllFilesInDuplicateGroup
+    {
+        get => _preventDeletingAllFilesInDuplicateGroup;
+        set
+        {
+            if (SetProperty(ref _preventDeletingAllFilesInDuplicateGroup, value))
+            {
+                RefreshDriveToolDuplicateSelectionSafety(showDialog: false);
+                RaisePropertyChanged(nameof(IsDriveToolDuplicateDeletionWarningVisible));
+                RaisePropertyChanged(nameof(DriveToolDuplicateDeletionWarningText));
+                DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
+
+                if (!_isLoadingSavedConfiguration)
+                {
+                    ScheduleConfigurationPersist();
+                }
+            }
+        }
+    }
+
     public bool HideMacOsSystemFiles
     {
         get => _hideMacOsSystemFiles;
@@ -462,6 +668,39 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     }
 
     public IReadOnlyList<string> GetExcludedPathPatterns() => _excludedPathPatterns.ToList();
+
+    public ImageRenamePatternKind ImageRenamePattern
+    {
+        get => _imageRenamePattern;
+        set
+        {
+            if (SetProperty(ref _imageRenamePattern, value))
+            {
+                RaisePropertyChanged(nameof(ImageRenamePatternDisplayName));
+                HandleConfigurationChanged();
+            }
+        }
+    }
+
+    public IReadOnlyList<string> GetImageRenameFileNamePatterns() => _imageRenameFileNamePatterns.ToList();
+
+    public IReadOnlyList<string> GetImageRenameExtensions() => _imageRenameExtensions.ToList();
+
+    public ImageRenameCityLanguagePreference ImageRenameCityLanguagePreference
+    {
+        get => _imageRenameCityLanguagePreference;
+        private set
+        {
+            if (SetProperty(ref _imageRenameCityLanguagePreference, value))
+            {
+                HandleConfigurationChanged();
+            }
+        }
+    }
+
+    public string ImageRenamePatternDisplayName =>
+        ImageRenameDefaults.PatternOptions.FirstOrDefault(option => option.Kind == ImageRenamePattern)?.DisplayName
+        ?? "yyyyMMdd_HHmmss_original_filename.jpg";
 
     public bool UseCustomCloudProviderCredentials
     {
@@ -484,6 +723,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             {
                 RaisePropertyChanged(nameof(IsBusyOverlayVisible));
                 AnalyzeCommand.RaiseCanExecuteChanged();
+                FindDuplicatesCommand.RaiseCanExecuteChanged();
+                AnalyzeImageRenameCommand.RaiseCanExecuteChanged();
+                DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
+                ApplyImageRenameCommand.RaiseCanExecuteChanged();
                 ToggleSyncCommand.RaiseCanExecuteChanged();
                 CancelBusyOperationCommand.RaiseCanExecuteChanged();
                 UseCompletedAnalyzeResultsCommand.RaiseCanExecuteChanged();
@@ -493,7 +736,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public bool IsBusyOverlayVisible =>
         IsBusy &&
-        _busyOperationKind == BusyOperationKind.Analyze &&
+        (_busyOperationKind == BusyOperationKind.Analyze || _busyOperationKind == BusyOperationKind.FindDuplicates || _busyOperationKind == BusyOperationKind.AnalyzeImageRename) &&
         !_isBusyOverlayDismissed;
 
     public bool IsBusyOverlayProgressIndeterminate
@@ -553,6 +796,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             {
                 RaisePropertyChanged(nameof(SyncButtonText));
                 AnalyzeCommand.RaiseCanExecuteChanged();
+                FindDuplicatesCommand.RaiseCanExecuteChanged();
+                AnalyzeImageRenameCommand.RaiseCanExecuteChanged();
+                DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
+                ApplyImageRenameCommand.RaiseCanExecuteChanged();
                 ToggleSyncCommand.RaiseCanExecuteChanged();
             }
         }
@@ -612,6 +859,20 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public int UnchangedFilesCount => UnchangedFiles.Count;
 
+    public int DriveToolDuplicateRowCount => DriveToolDuplicateRows.Count;
+
+    public int DriveToolDuplicateGroupCount => DriveToolDuplicateRows.Count(row => row.IsGroupHeader);
+
+    public int ImageRenameMatchedRowCount => ImageRenameMatchedRows.Count;
+
+    public int ImageRenameNoMatchRowCount => ImageRenameNoMatchRows.Count;
+
+    public int ImageRenameAllRowCount => ImageRenameAllRows.Count;
+
+    public int ImageRenameCompletedRowCount => ImageRenameCompletedRows.Count;
+
+    public int ImageRenameRowCount => ImageRenameAllRows.Count;
+
     public int AllFilesCount => AllFiles.Count;
 
     public bool? AreAllNewFilesSelected
@@ -638,15 +899,60 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         set => SetSelection(PreviewTabKind.UnchangedFiles, value);
     }
 
+    public bool? AreAllDriveToolDuplicatesSelected
+    {
+        get => GetDriveToolDuplicateSelectionState();
+        set => SetDriveToolDuplicateSelection(value);
+    }
+
     public bool? AreAllFilesSelected
     {
         get => GetSelectionState(PreviewTabKind.AllFiles);
         set => SetSelection(PreviewTabKind.AllFiles, value);
     }
 
+    public bool? AreAllImageRenameMatchedRowsSelected
+    {
+        get => GetImageRenameSelectionState(ImageRenameMatchedRows);
+        set => SetImageRenameSelection(ImageRenameMatchedRows, value);
+    }
+
+    public bool? AreAllImageRenameNoMatchRowsSelected
+    {
+        get => GetImageRenameSelectionState(ImageRenameNoMatchRows);
+        set => SetImageRenameSelection(ImageRenameNoMatchRows, value);
+    }
+
+    public bool? AreAllImageRenameAllRowsSelected
+    {
+        get => GetImageRenameSelectionState(ImageRenameAllRows);
+        set => SetImageRenameSelection(ImageRenameAllRows, value);
+    }
+
     public string QueueSummary => RemainingQueue.Count == 0
         ? "Queue empty"
         : $"{RemainingQueue.Count} queued item(s) remaining";
+
+    public bool HasDriveToolDuplicateSelectionConflict
+    {
+        get => _hasDriveToolDuplicateSelectionConflict;
+        private set
+        {
+            if (SetProperty(ref _hasDriveToolDuplicateSelectionConflict, value))
+            {
+                RaisePropertyChanged(nameof(IsDriveToolDuplicateDeletionWarningVisible));
+                RaisePropertyChanged(nameof(DriveToolDuplicateDeletionWarningText));
+                DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    public bool IsDriveToolDuplicateDeletionWarningVisible =>
+        PreventDeletingAllFilesInDuplicateGroup && HasDriveToolDuplicateSelectionConflict;
+
+    public string DriveToolDuplicateDeletionWarningText => IsDriveToolDuplicateDeletionWarningVisible
+        ? "Deletion is blocked because every file in at least one duplicate group is selected. Leave one file unchecked in each highlighted group, or turn off the safety checkbox."
+        : string.Empty;
 
     public int ParallelCopyCount
     {
@@ -679,6 +985,15 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         if (!string.IsNullOrWhiteSpace(selectedPath))
         {
             SourcePath = selectedPath;
+        }
+    }
+
+    private void BrowseDriveToolsPath()
+    {
+        var selectedPath = WindowsSourceLocationPickerService.PickSourceLocation(DriveToolsPath, _folderPickerService, GetCurrentSourceVolumeService());
+        if (!string.IsNullOrWhiteSpace(selectedPath))
+        {
+            DriveToolsPath = selectedPath;
         }
     }
 
@@ -726,25 +1041,25 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void OpenPreviewItem(object? parameter)
     {
-        if (parameter is SyncPreviewRowViewModel row && !string.IsNullOrWhiteSpace(row.OpenPath))
+        if (TryGetOpenPath(parameter, out var path))
         {
-            _fileLauncherService.OpenItem(row.OpenPath);
+            _fileLauncherService.OpenItem(path);
         }
     }
 
     private void OpenPreviewContainingFolder(object? parameter)
     {
-        if (parameter is SyncPreviewRowViewModel row && !string.IsNullOrWhiteSpace(row.OpenPath))
+        if (TryGetOpenPath(parameter, out var path))
         {
-            _fileLauncherService.OpenContainingFolder(row.OpenPath);
+            _fileLauncherService.OpenContainingFolder(path);
         }
     }
 
     private void OpenPreviewFile(object? parameter)
     {
-        if (parameter is SyncPreviewRowViewModel row && File.Exists(row.OpenPath))
+        if (TryGetExistingOpenPath(parameter, out var path))
         {
-            _fileLauncherService.OpenFile(row.OpenPath);
+            _fileLauncherService.OpenFile(path);
         }
     }
 
@@ -772,11 +1087,21 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
-    private static bool CanOpenPreviewItem(object? parameter) =>
-        parameter is SyncPreviewRowViewModel row && !string.IsNullOrWhiteSpace(row.OpenPath);
+    private static bool CanOpenPreviewItem(object? parameter) => parameter switch
+    {
+        SyncPreviewRowViewModel row => !string.IsNullOrWhiteSpace(row.OpenPath),
+        DriveToolDuplicateRowViewModel row => row.HasOpenPath,
+        ImageRenameRowViewModel row => row.HasOpenPath,
+        _ => false,
+    };
 
-    private static bool CanOpenPreviewFile(object? parameter) =>
-        parameter is SyncPreviewRowViewModel row && File.Exists(row.OpenPath);
+    private static bool CanOpenPreviewFile(object? parameter) => parameter switch
+    {
+        SyncPreviewRowViewModel row => File.Exists(row.OpenPath),
+        DriveToolDuplicateRowViewModel row => row.HasOpenPath && File.Exists(row.OpenPath),
+        ImageRenameRowViewModel row => row.HasOpenPath && File.Exists(row.OpenPath),
+        _ => false,
+    };
 
     private static bool CanOpenDestinationPreviewItem(object? parameter) =>
         parameter is SyncPreviewRowViewModel row && !string.IsNullOrWhiteSpace(row.OpenDestinationPath);
@@ -786,9 +1111,43 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private bool CanExecuteSyncCommands() => !IsBusy && !IsSyncRunning && IsConfigurationComplete();
 
+    private bool CanExecuteDuplicateAnalyzeCommand() =>
+        !IsBusy &&
+        !IsSyncRunning &&
+        SelectedWorkspaceMode == WorkspaceMode.DriveTools &&
+        SelectedDriveTool == DriveToolKind.Duplicates &&
+        !string.IsNullOrWhiteSpace(DriveToolsPath);
+
+    private bool CanExecuteImageRenameAnalyzeCommand() =>
+        !IsBusy &&
+        !IsSyncRunning &&
+        SelectedWorkspaceMode == WorkspaceMode.DriveTools &&
+        SelectedDriveTool == DriveToolKind.ImageRename &&
+        !string.IsNullOrWhiteSpace(DriveToolsPath);
+
     private bool CanExecuteToggleSyncCommand() => IsSyncRunning || (!IsBusy && IsConfigurationComplete());
 
     private bool CanCancelBusyOperation() => _busyOperationCancellationTokenSource is { IsCancellationRequested: false };
+
+    private bool CanDeleteSelectedDuplicates() =>
+        !IsBusy &&
+        !IsSyncRunning &&
+        SelectedWorkspaceMode == WorkspaceMode.DriveTools &&
+        SelectedDriveTool == DriveToolKind.Duplicates &&
+        (!PreventDeletingAllFilesInDuplicateGroup || !HasDriveToolDuplicateSelectionConflict) &&
+        DriveToolDuplicateRows.Any(row => row.CanSelect && row.IsSelected);
+
+    private bool CanApplyImageRename() =>
+        !IsBusy &&
+        !IsSyncRunning &&
+        SelectedWorkspaceMode == WorkspaceMode.DriveTools &&
+        SelectedDriveTool == DriveToolKind.ImageRename &&
+        GetSelectedImageRenamePlans().Count > 0;
+
+    internal bool CanModifyDriveToolDuplicate(object? parameter) =>
+        !IsBusy &&
+        !IsSyncRunning &&
+        parameter is DriveToolDuplicateRowViewModel { HasOpenPath: true };
 
     private bool CanUseCompletedAnalyzeResults() =>
         IsBusy &&
@@ -828,6 +1187,18 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 StatusMessage = "Cancelling preview generation...";
                 AddLog("Analyze", "Cancel requested while building the preview.", SyncLogSeverity.Warning);
                 break;
+            case BusyOperationKind.FindDuplicates:
+                _isBusyOverlayDismissed = true;
+                RaisePropertyChanged(nameof(IsBusyOverlayVisible));
+                StatusMessage = "Cancelling duplicate analysis...";
+                AddLog("Duplicate Finder", "Cancel requested while analyzing duplicate candidates.", SyncLogSeverity.Warning);
+                break;
+            case BusyOperationKind.AnalyzeImageRename:
+                _isBusyOverlayDismissed = true;
+                RaisePropertyChanged(nameof(IsBusyOverlayVisible));
+                StatusMessage = "Cancelling image rename analysis...";
+                AddLog("Image Rename", "Cancel requested while analyzing image rename candidates.", SyncLogSeverity.Warning);
+                break;
             case BusyOperationKind.Sync:
                 StatusMessage = "Stopping synchronization...";
                 AddLog("Sync", "Stop requested by user.");
@@ -860,6 +1231,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             new SyncConfiguration
             {
                 SourcePath = SourcePath,
+                DriveToolsPath = DriveToolsPath,
                 DestinationPath = resolvedDestinationPaths.FirstOrDefault() ?? string.Empty,
                 DestinationPaths = resolvedDestinationPaths.ToList(),
                 Mode = SelectedMode,
@@ -868,8 +1240,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 VerifyChecksums = VerifyChecksums,
                 MoveMode = MoveMode,
                 IncludeSubfolders = IncludeSubfolders,
+                DriveToolsIncludeSubfolders = DriveToolsIncludeSubfolders,
+                PreventDeletingAllFilesInDuplicateGroup = PreventDeletingAllFilesInDuplicateGroup,
                 HideMacOsSystemFiles = HideMacOsSystemFiles,
                 ExcludedPathPatterns = _excludedPathPatterns.ToList(),
+                ImageRenamePattern = ImageRenamePattern,
+                ImageRenameCityLanguagePreference = ImageRenameCityLanguagePreference,
+                ImageRenameFileNamePatterns = _imageRenameFileNamePatterns.ToList(),
+                ImageRenameExtensions = _imageRenameExtensions.ToList(),
                 ParallelCopyCount = ParallelCopyCount,
                 PreviewProviderMappings = new Dictionary<string, string>(_previewProviderMappings, StringComparer.OrdinalIgnoreCase),
                 UseCustomCloudProviderCredentials = UseCustomCloudProviderCredentials,
@@ -905,6 +1283,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public IReadOnlyDictionary<string, string> GetPreviewProviderMappings() =>
         new Dictionary<string, string>(_previewProviderMappings, StringComparer.OrdinalIgnoreCase);
 
+    internal string? BrowseForDriveToolMoveTarget(string? initialPath) =>
+        _folderPickerService.PickFolder("Choose a destination folder for the duplicate file", initialPath);
+
     public void UpdateExcludedPathPatterns(IReadOnlyList<string> excludedPathPatterns)
     {
         _excludedPathPatterns = (excludedPathPatterns ?? Array.Empty<string>())
@@ -918,6 +1299,45 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             _excludedPathPatterns.Count == 0
                 ? "Path exclusion patterns cleared."
                 : $"Path exclusion patterns updated for {_excludedPathPatterns.Count} pattern(s).");
+    }
+
+    public void UpdateImageRenamePattern(ImageRenamePatternKind imageRenamePattern)
+    {
+        ImageRenamePattern = imageRenamePattern;
+        AddLog("Settings", $"Image rename pattern set to {ImageRenamePatternDisplayName}.");
+    }
+
+    public void UpdateImageRenameCityLanguagePreference(ImageRenameCityLanguagePreference imageRenameCityLanguagePreference)
+    {
+        ImageRenameCityLanguagePreference = imageRenameCityLanguagePreference;
+        _imageRenameAnalysisService = new ImageRenameAnalysisService(imageRenameCityLanguagePreference);
+        AddLog(
+            "Settings",
+            imageRenameCityLanguagePreference == ImageRenameCityLanguagePreference.LocalThenEnglish
+                ? "Image rename city suffixes will prefer local place names, then fall back to English."
+                : "Image rename city suffixes will prefer English place names, then fall back to local names.");
+    }
+
+    public void UpdateImageRenameFileNamePatterns(IReadOnlyList<string> imageRenameFileNamePatterns)
+    {
+        _imageRenameFileNamePatterns = (imageRenameFileNamePatterns ?? Array.Empty<string>())
+            .Select(ImageRenameDefaults.NormalizeFileNameMask)
+            .Where(pattern => !string.IsNullOrWhiteSpace(pattern))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        HandleConfigurationChanged();
+        AddLog("Settings", $"Image rename filename scope updated for {_imageRenameFileNamePatterns.Count} File Pattern entry(s).");
+    }
+
+    public void UpdateImageRenameExtensions(IReadOnlyList<string> imageRenameExtensions)
+    {
+        _imageRenameExtensions = (imageRenameExtensions ?? Array.Empty<string>())
+            .Select(ImageRenameDefaults.NormalizeExtension)
+            .Where(extension => !string.IsNullOrWhiteSpace(extension))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        HandleConfigurationChanged();
+        AddLog("Settings", $"Image rename file format scope updated for {_imageRenameExtensions.Count} extension(s).");
     }
 
     public IReadOnlyList<CloudProviderAppRegistration> GetCloudProviderAppRegistrations() =>
@@ -991,6 +1411,34 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         UpdateSelectionForRows(rows, row => MatchesPattern(row, normalizedKeyword, target));
+        return rows.Count(row => row.IsSelected);
+    }
+
+    public void SelectAllDriveToolDuplicates()
+    {
+        UpdateDriveToolDuplicateSelection(_ => true);
+    }
+
+    public void InvertDriveToolDuplicateSelection()
+    {
+        UpdateDriveToolDuplicateSelection(row => !row.IsSelected);
+    }
+
+    public int SelectDriveToolDuplicatesByPattern(string keyword, PreviewSelectionTarget target)
+    {
+        var normalizedKeyword = keyword?.Trim();
+        if (string.IsNullOrWhiteSpace(normalizedKeyword))
+        {
+            return 0;
+        }
+
+        var rows = GetSelectableDriveToolDuplicateRows();
+        if (rows.Count == 0)
+        {
+            return 0;
+        }
+
+        UpdateDriveToolDuplicateSelection(row => MatchesDriveToolPattern(row, normalizedKeyword, target));
         return rows.Count(row => row.IsSelected);
     }
 
@@ -1112,6 +1560,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    public void SetDriveToolsPathFocused(bool isFocused)
+    {
+        if (SetProperty(ref _isDriveToolsPathFocused, isFocused))
+        {
+            RaisePropertyChanged(nameof(DriveToolsPathDisplayText));
+        }
+    }
+
     public void SetAdditionalDestinationPathFocused(object? parameter, bool isFocused)
     {
         if (parameter is DestinationPathEntryViewModel entry)
@@ -1122,6 +1578,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private async Task AnalyzeAsync()
     {
+        ReplaceDriveToolDuplicateEntries([]);
+        ReplaceDriveToolDuplicateRows([]);
+
         if (!TryValidateConfiguration(requireAccessibleDestinationPath: false, out var destinationPathsToAnalyze, out var skippedDestinationPaths))
         {
             AddLog("Error", StatusMessage, SyncLogSeverity.Error);
@@ -1233,6 +1692,203 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             var analysisResult = await analysisTask.ConfigureAwait(true);
             cancellationTokenSource.Token.ThrowIfCancellationRequested();
             await ApplyAnalyzePreviewResultAsync(analysisResult, cancellationTokenSource.Token).ConfigureAwait(true);
+        }, cancellationTokenSource.Token).ConfigureAwait(true);
+
+        ClearBusyOperation(cancellationTokenSource);
+        cancellationTokenSource.Dispose();
+    }
+
+    private async Task FindDuplicatesAsync()
+    {
+        if (!TryResolveSingleVolume(DriveToolsPath, "Drive Tools", out var sourceVolume, out var validationMessage))
+        {
+            StatusMessage = validationMessage;
+            AddLog("Error", StatusMessage, SyncLogSeverity.Error);
+            return;
+        }
+
+        var cancellationTokenSource = new CancellationTokenSource();
+        SetBusyOperation(cancellationTokenSource, BusyOperationKind.FindDuplicates);
+        BusyOverlayProgressValue = 0;
+
+        await RunBusyOperationAsync(async () =>
+        {
+            await EnsureBusyOverlayCanRenderAsync().ConfigureAwait(true);
+
+            var analysisResult = await Task.Run(async () =>
+                await _duplicateFileAnalysisService.AnalyzeAsync(
+                    sourceVolume!,
+                    HideMacOsSystemFiles,
+                    _excludedPathPatterns,
+                    DriveToolsIncludeSubfolders,
+                    cancellationTokenSource.Token,
+                    progress: new Progress<DuplicateAnalyzeProgress>(progress => RunOnDispatcher(() => UpdateDuplicateAnalyzeOverlay(progress)))).ConfigureAwait(false),
+                CancellationToken.None).ConfigureAwait(true);
+
+            cancellationTokenSource.Token.ThrowIfCancellationRequested();
+            ApplyDuplicateAnalysisResult(analysisResult);
+        }, cancellationTokenSource.Token).ConfigureAwait(true);
+
+        ClearBusyOperation(cancellationTokenSource);
+        cancellationTokenSource.Dispose();
+    }
+
+    private async Task AnalyzeImageRenameAsync()
+    {
+        if (!TryResolveSingleVolume(DriveToolsPath, "Drive Tools", out var sourceVolume, out var validationMessage))
+        {
+            StatusMessage = validationMessage;
+            AddLog("Error", StatusMessage, SyncLogSeverity.Error);
+            return;
+        }
+
+        var cancellationTokenSource = new CancellationTokenSource();
+        SetBusyOperation(cancellationTokenSource, BusyOperationKind.AnalyzeImageRename);
+        BusyOverlayProgressValue = 0;
+
+        await RunBusyOperationAsync(async () =>
+        {
+            await EnsureBusyOverlayCanRenderAsync().ConfigureAwait(true);
+
+            var analysisResult = await Task.Run(() =>
+                _imageRenameAnalysisService.Analyze(
+                    sourceVolume!,
+                    HideMacOsSystemFiles,
+                    _excludedPathPatterns,
+                    DriveToolsIncludeSubfolders,
+                    ImageRenamePattern,
+                    _imageRenameFileNamePatterns,
+                    _imageRenameExtensions,
+                    cancellationTokenSource.Token,
+                    progress: new Progress<ImageRenameAnalyzeProgress>(progress => RunOnDispatcher(() => UpdateImageRenameAnalyzeOverlay(progress)))),
+                CancellationToken.None).ConfigureAwait(true);
+
+            cancellationTokenSource.Token.ThrowIfCancellationRequested();
+            ApplyImageRenameAnalysisResult(analysisResult);
+        }, cancellationTokenSource.Token).ConfigureAwait(true);
+
+        ClearBusyOperation(cancellationTokenSource);
+        cancellationTokenSource.Dispose();
+    }
+
+    private async Task ApplyImageRenameAsync()
+    {
+        if (_imageRenamePlanItems.Count == 0)
+        {
+            StatusMessage = "Analyze image rename candidates before applying file renames.";
+            return;
+        }
+
+        var selectedPlans = GetSelectedImageRenamePlans();
+        if (selectedPlans.Count == 0)
+        {
+            StatusMessage = "Select at least one image rename row before applying file renames.";
+            return;
+        }
+
+        if (!TryResolveSingleVolume(DriveToolsPath, "Drive Tools", out var sourceVolume, out var validationMessage))
+        {
+            StatusMessage = validationMessage;
+            AddLog("Error", StatusMessage, SyncLogSeverity.Error);
+            return;
+        }
+
+        if (sourceVolume!.IsReadOnly)
+        {
+            StatusMessage = "The selected Drive Tools location is read-only, so image files cannot be renamed.";
+            AddLog("Image Rename", StatusMessage, SyncLogSeverity.Warning);
+            return;
+        }
+
+        var cancellationTokenSource = new CancellationTokenSource();
+        SetBusyOperation(cancellationTokenSource, BusyOperationKind.Sync);
+
+        await RunBusyOperationAsync(async () =>
+        {
+            var appliedCount = await Task.Run(() =>
+                _imageRenameAnalysisService.ApplyRenames(sourceVolume, selectedPlans, cancellationTokenSource.Token),
+                cancellationTokenSource.Token).ConfigureAwait(true);
+
+            MarkAppliedImageRenameRows(selectedPlans);
+            SetStatusMessage(
+                appliedCount == 1
+                    ? "Renamed 1 image file."
+                    : $"Renamed {appliedCount} image file(s).",
+                isSuccess: true);
+            CurrentTransferItem = appliedCount == 1 ? "1 image renamed." : $"{appliedCount} images renamed.";
+            CurrentTransferDetails = $"{ImageRenameCompletedRowCount} completed or renamed file(s) remain visible in the current analysis.";
+            CurrentTransferProgressValue = 0;
+            AddLog("Image Rename", StatusMessage, SyncLogSeverity.Verbose);
+        }, cancellationTokenSource.Token).ConfigureAwait(true);
+
+        ClearBusyOperation(cancellationTokenSource);
+        cancellationTokenSource.Dispose();
+    }
+
+    private async Task DeleteSelectedDuplicatesAsync()
+    {
+        RefreshDriveToolDuplicateSelectionSafety(showDialog: false);
+
+        var selectedCandidates = DriveToolDuplicateRows
+            .Where(row => row.CanSelect && row.IsSelected)
+            .Select(row => row.FileEntry)
+            .OfType<DuplicateFileEntry>()
+            .ToList();
+
+        if (selectedCandidates.Count == 0)
+        {
+            StatusMessage = "Select at least one duplicate file to delete.";
+            return;
+        }
+
+        if (PreventDeletingAllFilesInDuplicateGroup && HasDriveToolDuplicateSelectionConflict)
+        {
+            StatusMessage = "Leave at least one file unchecked in each red-marked checksum group before deleting.";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
+            return;
+        }
+
+        if (!TryResolveSingleVolume(DriveToolsPath, "Drive Tools", out var sourceVolume, out var validationMessage))
+        {
+            StatusMessage = validationMessage;
+            AddLog("Error", StatusMessage, SyncLogSeverity.Error);
+            return;
+        }
+
+        if (sourceVolume!.IsReadOnly)
+        {
+            StatusMessage = "The selected source location is read-only, so duplicate files cannot be deleted.";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
+            return;
+        }
+
+        var cancellationTokenSource = new CancellationTokenSource();
+        SetBusyOperation(cancellationTokenSource, BusyOperationKind.Sync);
+
+        await RunBusyOperationAsync(async () =>
+        {
+            var deletedCount = await Task.Run(() =>
+                _duplicateFileAnalysisService.DeleteDuplicates(sourceVolume, selectedCandidates, cancellationTokenSource.Token),
+                cancellationTokenSource.Token).ConfigureAwait(true);
+
+            var deletedKeys = selectedCandidates
+                .Select(candidate => candidate.ItemKey)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            ReplaceDriveToolDuplicateEntries(_driveToolDuplicateEntriesByItemKey.Values.Where(candidate => !deletedKeys.Contains(candidate.ItemKey)));
+            ReplaceDriveToolDuplicateRows(DriveToolDuplicateRows.Where(row => row.IsGroupHeader || !deletedKeys.Contains(row.ItemKey)).ToList());
+            RemoveEmptyDriveToolDuplicateGroups();
+            SetStatusMessage(
+                deletedCount == 1
+                    ? "Deleted 1 duplicate file."
+                    : $"Deleted {deletedCount} duplicate files.",
+                isSuccess: true);
+            CurrentTransferItem = deletedCount == 1 ? "1 duplicate removed." : $"{deletedCount} duplicates removed.";
+            CurrentTransferDetails = DriveToolDuplicateGroupCount == 0
+                ? "No duplicate candidates remain."
+                : $"{DriveToolDuplicateGroupCount} checksum group(s) remain.";
+            CurrentTransferProgressValue = 0;
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Verbose);
         }, cancellationTokenSource.Token).ConfigureAwait(true);
 
         ClearBusyOperation(cancellationTokenSource);
@@ -1407,7 +2063,24 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private void HandleConfigurationChanged()
     {
         AnalyzeCommand.RaiseCanExecuteChanged();
+        FindDuplicatesCommand.RaiseCanExecuteChanged();
+        DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
         ToggleSyncCommand.RaiseCanExecuteChanged();
+
+        if (_isLoadingSavedConfiguration)
+        {
+            return;
+        }
+
+        ScheduleConfigurationPersist();
+    }
+
+    private void HandleDriveToolsConfigurationChanged()
+    {
+        FindDuplicatesCommand.RaiseCanExecuteChanged();
+        AnalyzeImageRenameCommand.RaiseCanExecuteChanged();
+        DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
+        ApplyImageRenameCommand.RaiseCanExecuteChanged();
 
         if (_isLoadingSavedConfiguration)
         {
@@ -1692,6 +2365,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
             _isLoadingSavedConfiguration = true;
             SourcePath = savedConfiguration.SourcePath;
+            DriveToolsPath = savedConfiguration.DriveToolsPath;
             LoadDestinationPaths(savedConfiguration.GetDestinationPaths());
             SelectedMode = savedConfiguration.Mode;
             DetectMoves = savedConfiguration.DetectMoves;
@@ -1699,10 +2373,25 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             VerifyChecksums = savedConfiguration.VerifyChecksums;
             MoveMode = savedConfiguration.MoveMode;
             IncludeSubfolders = savedConfiguration.IncludeSubfolders;
+            DriveToolsIncludeSubfolders = savedConfiguration.DriveToolsIncludeSubfolders;
+            PreventDeletingAllFilesInDuplicateGroup = savedConfiguration.PreventDeletingAllFilesInDuplicateGroup;
             HideMacOsSystemFiles = savedConfiguration.HideMacOsSystemFiles;
             _excludedPathPatterns = (savedConfiguration.ExcludedPathPatterns ?? Array.Empty<string>())
                 .Where(pattern => !string.IsNullOrWhiteSpace(pattern))
                 .Select(pattern => pattern.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            ImageRenamePattern = savedConfiguration.ImageRenamePattern;
+            ImageRenameCityLanguagePreference = savedConfiguration.ImageRenameCityLanguagePreference;
+            _imageRenameAnalysisService = new ImageRenameAnalysisService(ImageRenameCityLanguagePreference);
+            _imageRenameFileNamePatterns = (savedConfiguration.ImageRenameFileNamePatterns ?? ImageRenameDefaults.GetDefaultCameraFileNameMasks())
+                .Select(ImageRenameDefaults.NormalizeFileNameMask)
+                .Where(pattern => !string.IsNullOrWhiteSpace(pattern))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            _imageRenameExtensions = (savedConfiguration.ImageRenameExtensions ?? ImageRenameDefaults.GetDefaultExtensions())
+                .Select(ImageRenameDefaults.NormalizeExtension)
+                .Where(extension => !string.IsNullOrWhiteSpace(extension))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
             ParallelCopyCount = savedConfiguration.ParallelCopyCount;
@@ -1847,12 +2536,16 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             StatusMessage = _busyOperationKind switch
             {
                 BusyOperationKind.Analyze => "Preview loading cancelled.",
+                BusyOperationKind.FindDuplicates => "Duplicate analysis cancelled.",
+                BusyOperationKind.AnalyzeImageRename => "Image rename analysis cancelled.",
                 BusyOperationKind.Sync => "Synchronization stopped.",
                 _ => "Operation cancelled.",
             };
             CurrentTransferItem = _busyOperationKind switch
             {
                 BusyOperationKind.Analyze => "Preview generation cancelled.",
+                BusyOperationKind.FindDuplicates => "Duplicate analysis cancelled.",
+                BusyOperationKind.AnalyzeImageRename => "Image rename analysis cancelled.",
                 BusyOperationKind.Sync => "No active transfer.",
                 _ => CurrentTransferItem,
             };
@@ -1865,9 +2558,13 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
             AddLog(
                 "Warning",
-                _busyOperationKind == BusyOperationKind.Analyze
-                    ? "Preview generation cancelled."
-                    : "Synchronization cancelled.",
+                _busyOperationKind switch
+                {
+                    BusyOperationKind.Analyze => "Preview generation cancelled.",
+                    BusyOperationKind.FindDuplicates => "Duplicate analysis cancelled.",
+                    BusyOperationKind.AnalyzeImageRename => "Image rename analysis cancelled.",
+                    _ => "Synchronization cancelled.",
+                },
                 SyncLogSeverity.Warning);
         }
         catch (Exception exception)
@@ -1916,6 +2613,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         var actions = analysisResult.Actions;
         var preview = analysisResult.Preview;
 
+        ReplaceDriveToolDuplicateEntries([]);
+        ReplaceDriveToolDuplicateRows([]);
+        ReplaceImageRenameRows([], [], [], []);
+        _imageRenamePlanItems.Clear();
         ReplaceActions(actions);
         await ReplacePreviewAsync(preview, cancellationToken).ConfigureAwait(true);
         ReplaceQueue(GetSelectedActions());
@@ -1927,6 +2628,259 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         CurrentTransferItem = actions.Count == 0 ? "No file operations required." : isPartial ? "Partial preview ready." : "Preview ready.";
         CurrentTransferDetails = QueueSummary;
         AddLog("Analyze", StatusMessage, isPartial ? SyncLogSeverity.Warning : SyncLogSeverity.Verbose);
+    }
+
+    private void ApplyDuplicateAnalysisResult(DuplicateAnalysisResult analysisResult)
+    {
+        var duplicateRows = CreateDriveToolDuplicateRows(analysisResult.Groups);
+        ReplaceDriveToolDuplicateEntries(analysisResult.Groups.SelectMany(group => group.Files));
+        ReplaceDriveToolDuplicateRows(duplicateRows);
+        ReplaceImageRenameRows([], [], [], []);
+        _imageRenamePlanItems.Clear();
+        ReplaceActions([]);
+        ReplaceQueue([]);
+
+        var duplicateCount = analysisResult.Groups.Sum(group => group.Files.Count);
+        var message = duplicateCount == 0
+            ? "No duplicated files were found in the selected source location."
+            : $"Found {duplicateCount} duplicate file(s) across {analysisResult.DuplicateGroupCount} checksum-matched group(s). Leave one copy unchecked in each group, then select the copies you want UsbFileSync to delete.";
+        SetStatusMessage(message, isSuccess: duplicateCount == 0);
+        CurrentTransferItem = duplicateCount == 0 ? "Duplicate analysis complete." : "Duplicate results ready.";
+        CurrentTransferDetails = duplicateCount == 0
+            ? "No redundant files found."
+            : $"{analysisResult.DuplicateGroupCount} duplicate group(s) confirmed with SHA-256.";
+        CurrentTransferProgressValue = 0;
+        AddLog("Duplicate Finder", StatusMessage, duplicateCount == 0 ? SyncLogSeverity.Verbose : SyncLogSeverity.Warning);
+    }
+
+    private void ApplyImageRenameAnalysisResult(ImageRenameAnalysisResult analysisResult)
+    {
+        var allRows = new List<ImageRenameRowViewModel>();
+        var matchedRows = new List<ImageRenameRowViewModel>();
+        var noMatchRows = new List<ImageRenameRowViewModel>();
+        var completedRows = new List<ImageRenameRowViewModel>();
+        foreach (var plan in analysisResult.RenameSuggestions)
+        {
+            var row = new ImageRenameRowViewModel(
+                plan,
+                isSelected: plan.IsMatchedByFileNameMask && !plan.IsCompleted,
+                driveDisplayNameService: _driveDisplayNameService);
+            allRows.Add(row);
+            if (plan.IsCompleted)
+            {
+                completedRows.Add(row);
+            }
+
+            if (!row.ShowsInPrimaryCategory)
+            {
+                continue;
+            }
+
+            if (plan.IsMatchedByFileNameMask)
+            {
+                matchedRows.Add(row);
+            }
+            else
+            {
+                noMatchRows.Add(row);
+            }
+        }
+
+        ReplaceDriveToolDuplicateEntries([]);
+        ReplaceDriveToolDuplicateRows([]);
+        ReplaceImageRenameRows(matchedRows, noMatchRows, allRows, completedRows);
+        _imageRenamePlanItems.Clear();
+        _imageRenamePlanItems.AddRange(analysisResult.RenameSuggestions);
+        ReplaceActions([]);
+        ReplaceQueue([]);
+
+        var renameSuggestionCount = analysisResult.RenameSuggestions.Count;
+        var pendingRenameCount = analysisResult.RenameSuggestions.Count(plan => !plan.IsCompleted);
+        var optionalCandidateCount = Math.Max(0, analysisResult.CandidateFileCount - analysisResult.MatchedMaskCandidateCount - analysisResult.CompletedCandidateCount);
+        var message = renameSuggestionCount == 0
+            ? $"No image rename candidates were staged across {analysisResult.ScannedFileCount} scanned file(s)."
+            : pendingRenameCount == 0
+                ? $"All {analysisResult.CompletedCandidateCount} analyzed media file(s) already align with the current rename format."
+            : $"Prepared {renameSuggestionCount} analyzed media row(s) from {analysisResult.CandidateFileCount} candidate file(s). {analysisResult.MatchedMaskCandidateCount} matched the current file pattern scope, {analysisResult.CompletedCandidateCount} are already completed, and {optionalCandidateCount} remain optional in All.";
+        SetStatusMessage(message, isSuccess: renameSuggestionCount > 0);
+        CurrentTransferItem = pendingRenameCount == 0 ? "Image rename analysis complete." : "Image rename results ready.";
+        CurrentTransferDetails = renameSuggestionCount == 0
+            ? "No eligible media files were found for the current rename pattern."
+            : pendingRenameCount == 0
+                ? $"{completedRows.Count} completed file(s) already match the configured rename format."
+            : $"{matchedRows.Count} file pattern match(es) preselected, {noMatchRows.Count} no-match row(s) remain optional, and {completedRows.Count} completed file(s) stay visible but locked.";
+        CurrentTransferProgressValue = 0;
+        AddLog("Image Rename", StatusMessage, renameSuggestionCount == 0 ? SyncLogSeverity.Verbose : SyncLogSeverity.Warning);
+    }
+
+    private IReadOnlyList<DriveToolDuplicateRowViewModel> CreateDriveToolDuplicateRows(IEnumerable<DuplicateFileGroup> groups)
+    {
+        var rows = new List<DriveToolDuplicateRowViewModel>();
+        foreach (var group in groups
+            .Where(group => group.Files.Count > 0)
+            .OrderBy(group => group.Files[0].RelativePath, StringComparer.OrdinalIgnoreCase))
+        {
+            var firstFile = group.Files[0];
+            rows.Add(new DriveToolDuplicateRowViewModel(
+                itemKey: $"summary|{group.GroupKey}",
+                groupKey: group.GroupKey,
+                isGroupHeader: true,
+                displayName: "Duplicate group",
+                displayPath: $"{group.Files.Count} matching file(s)",
+                checksumText: group.ChecksumSha256,
+                fileType: Path.GetExtension(firstFile.FullPath).TrimStart('.').ToUpperInvariant() is { Length: > 0 } extension ? extension : "File",
+                sizeText: FormatDriveToolSize(group.Length),
+                groupSelectionChanged: OnDriveToolDuplicateGroupSelectionChanged));
+
+            foreach (var file in group.Files)
+            {
+                rows.Add(new DriveToolDuplicateRowViewModel(
+                    itemKey: file.ItemKey,
+                    groupKey: group.GroupKey,
+                    isGroupHeader: false,
+                    displayName: Path.GetFileName(file.FullPath),
+                    displayPath: _driveDisplayNameService.FormatDestinationPathForDisplay(file.FullPath),
+                    checksumText: string.Empty,
+                    fileType: string.Empty,
+                    sizeText: string.Empty,
+                    fileEntry: file));
+            }
+        }
+
+        return rows;
+    }
+
+    private void ReplaceDriveToolDuplicateEntries(IEnumerable<DuplicateFileEntry> candidates)
+    {
+        _driveToolDuplicateEntriesByItemKey.Clear();
+        foreach (var candidate in candidates)
+        {
+            _driveToolDuplicateEntriesByItemKey[candidate.ItemKey] = candidate;
+        }
+
+        DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
+    }
+
+    private void ReplaceDriveToolDuplicateRows(IReadOnlyList<DriveToolDuplicateRowViewModel> rows)
+    {
+        RunOnDispatcher(() =>
+        {
+            foreach (var existingRow in DriveToolDuplicateRows)
+            {
+                existingRow.PropertyChanged -= OnDriveToolDuplicateRowPropertyChanged;
+            }
+
+            ReplaceCollection(DriveToolDuplicateRows, rows);
+            foreach (var row in DriveToolDuplicateRows)
+            {
+                row.PropertyChanged += OnDriveToolDuplicateRowPropertyChanged;
+            }
+            RaisePropertyChanged(nameof(DriveToolDuplicateRowCount));
+            RaisePropertyChanged(nameof(DriveToolDuplicateGroupCount));
+            RaisePropertyChanged(nameof(AreAllDriveToolDuplicatesSelected));
+            UpdateDriveToolDuplicateGroupSelectionStates();
+            RefreshDriveToolDuplicateSelectionSafety(showDialog: false);
+            DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
+        });
+    }
+
+    private void ReplaceImageRenameRows(
+        IReadOnlyList<ImageRenameRowViewModel> matchedRows,
+        IReadOnlyList<ImageRenameRowViewModel> noMatchRows,
+        IReadOnlyList<ImageRenameRowViewModel> allRows,
+        IReadOnlyList<ImageRenameRowViewModel> completedRows)
+    {
+        RunOnDispatcher(() =>
+        {
+            foreach (var existingRow in ImageRenameMatchedRows.Concat(ImageRenameNoMatchRows).Concat(ImageRenameAllRows).Concat(ImageRenameCompletedRows).Distinct())
+            {
+                existingRow.PropertyChanged -= OnImageRenameRowPropertyChanged;
+            }
+
+            ReplaceCollection(ImageRenameMatchedRows, matchedRows);
+            ReplaceCollection(ImageRenameNoMatchRows, noMatchRows);
+            ReplaceCollection(ImageRenameAllRows, allRows);
+            ReplaceCollection(ImageRenameCompletedRows, completedRows);
+            foreach (var row in ImageRenameMatchedRows.Concat(ImageRenameNoMatchRows).Concat(ImageRenameAllRows).Concat(ImageRenameCompletedRows).Distinct())
+            {
+                row.PropertyChanged += OnImageRenameRowPropertyChanged;
+            }
+            RaisePropertyChanged(nameof(ImageRenameRowCount));
+            RaisePropertyChanged(nameof(ImageRenameMatchedRowCount));
+            RaisePropertyChanged(nameof(ImageRenameNoMatchRowCount));
+            RaisePropertyChanged(nameof(ImageRenameAllRowCount));
+            RaisePropertyChanged(nameof(ImageRenameCompletedRowCount));
+            RaisePropertyChanged(nameof(AreAllImageRenameMatchedRowsSelected));
+            RaisePropertyChanged(nameof(AreAllImageRenameNoMatchRowsSelected));
+            RaisePropertyChanged(nameof(AreAllImageRenameAllRowsSelected));
+            AnalyzeImageRenameCommand.RaiseCanExecuteChanged();
+            ApplyImageRenameCommand.RaiseCanExecuteChanged();
+        });
+    }
+
+    private void RemoveEmptyDriveToolDuplicateGroups()
+    {
+        var rowsToKeep = new List<DriveToolDuplicateRowViewModel>();
+        DriveToolDuplicateRowViewModel? pendingHeader = null;
+        var currentGroupChildren = new List<DriveToolDuplicateRowViewModel>();
+
+        void FlushCurrentGroup()
+        {
+            if (pendingHeader is null || currentGroupChildren.Count < 2)
+            {
+                return;
+            }
+
+            rowsToKeep.Add(pendingHeader);
+            rowsToKeep.AddRange(currentGroupChildren);
+        }
+
+        foreach (var row in DriveToolDuplicateRows)
+        {
+            if (row.IsGroupHeader)
+            {
+                FlushCurrentGroup();
+                pendingHeader = row;
+                currentGroupChildren.Clear();
+                continue;
+            }
+
+            currentGroupChildren.Add(row);
+        }
+
+        FlushCurrentGroup();
+        ReplaceDriveToolDuplicateRows(rowsToKeep);
+    }
+
+    private bool TryResolveSingleVolume(string path, string label, out IVolumeSource? sourceVolume, out string validationMessage)
+    {
+        sourceVolume = null;
+        if (!TryValidateSyncPath(path, label, requireExistingDirectory: true, out validationMessage))
+        {
+            return false;
+        }
+
+        var sourceVolumeService = GetCurrentSourceVolumeService();
+        if (sourceVolumeService.TryCreateVolume(path, out sourceVolume, out var failureReason) &&
+            sourceVolume is not null)
+        {
+            validationMessage = string.Empty;
+            return true;
+        }
+
+        try
+        {
+            sourceVolume = new WindowsMountedVolume(path);
+            validationMessage = string.Empty;
+            return true;
+        }
+        catch (Exception)
+        {
+            validationMessage = string.IsNullOrWhiteSpace(failureReason)
+                ? $"{label} path could not be opened."
+                : $"{label} volume could not be opened. {failureReason}";
+            return false;
+        }
     }
 
     private static string BuildAnalyzeCompletionMessage(int actionCount, bool isPartial, int completedDestinations, int totalDestinations)
@@ -1971,6 +2925,80 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         UpdateAnalyzeEta(completedSteps, totalSteps);
     }
 
+    private void UpdateDuplicateAnalyzeOverlay(DuplicateAnalyzeProgress progress)
+    {
+        switch (progress.Phase)
+        {
+            case DuplicateAnalyzePhase.Scanning:
+                BusyOverlayDescription = "Scanning files and grouping same-size duplicate candidates.";
+                OnAnalyzeProgress(ToAnalyzeProgress(progress), completedSteps: 0, totalSteps: 2, _busyOperationStopwatch.Elapsed, analyzeTimingHistory: null, historicalDurationAfterCurrentDestination: TimeSpan.Zero);
+                return;
+            case DuplicateAnalyzePhase.Hashing:
+                IsBusyOverlayProgressIndeterminate = false;
+                BusyOverlayProgressValue = progress.TotalFilesToHash == 0
+                    ? 100
+                    : Math.Clamp(50d + ((progress.HashedFiles * 50d) / progress.TotalFilesToHash), 0d, 100d);
+                BusyOverlayDescription = progress.TotalFilesToHash == 0
+                    ? "No checksum candidates required hashing."
+                    : $"Hashing {progress.HashedFiles:N0} of {progress.TotalFilesToHash:N0} duplicate candidates...";
+
+                var counters = $"{progress.FilesScanned:N0} files scanned";
+                if (progress.DirectoriesScanned > 0)
+                {
+                    counters += $" | {progress.DirectoriesScanned:N0} folders scanned";
+                }
+
+                if (progress.TotalFilesToHash > 0)
+                {
+                    counters += $" | {progress.HashedFiles:N0}/{progress.TotalFilesToHash:N0} hashed";
+                }
+
+                counters += progress.DuplicateGroupsFound == 0
+                    ? " | No duplicate groups confirmed yet"
+                    : $" | {progress.DuplicateGroupsFound:N0} duplicate group(s) confirmed";
+                BusyOverlayCountersText = counters;
+                BusyOverlayPathText = AbbreviateAnalyzeProgressPath(progress.RootPath, progress.CurrentPath);
+                UpdateAnalyzeEta(progress.TotalFilesToHash == 0 ? 2 : 1 + ((double)progress.HashedFiles / progress.TotalFilesToHash), 2);
+                return;
+        }
+    }
+
+    private void UpdateImageRenameAnalyzeOverlay(ImageRenameAnalyzeProgress progress)
+    {
+        switch (progress.Phase)
+        {
+            case ImageRenameAnalyzePhase.Scanning:
+                BusyOverlayDescription = "Scanning media files and reserving the source inventory for rename planning.";
+                OnAnalyzeProgress(ToAnalyzeProgress(progress), completedSteps: 0, totalSteps: 2, _busyOperationStopwatch.Elapsed, analyzeTimingHistory: null, historicalDurationAfterCurrentDestination: TimeSpan.Zero);
+                return;
+            case ImageRenameAnalyzePhase.Planning:
+                IsBusyOverlayProgressIndeterminate = false;
+                BusyOverlayProgressValue = progress.TotalFiles == 0
+                    ? 100
+                    : Math.Clamp(50d + ((progress.ProcessedFiles * 50d) / progress.TotalFiles), 0d, 100d);
+                BusyOverlayDescription = progress.TotalFiles == 0
+                    ? "No eligible media files were found for the current rename settings."
+                    : $"Planning rename rows for {progress.ProcessedFiles:N0} of {progress.TotalFiles:N0} scanned files...";
+
+                var counters = $"{progress.FilesScanned:N0} files scanned";
+                if (progress.DirectoriesScanned > 0)
+                {
+                    counters += $" | {progress.DirectoriesScanned:N0} folders scanned";
+                }
+
+                if (progress.TotalFiles > 0)
+                {
+                    counters += $" | {progress.CandidateFiles:N0} candidate(s)";
+                }
+
+                counters += $" | {progress.PlannedRows:N0} row(s) staged | {progress.CompletedRows:N0} completed";
+                BusyOverlayCountersText = counters;
+                BusyOverlayPathText = AbbreviateAnalyzeProgressPath(progress.RootPath, progress.CurrentPath);
+                UpdateAnalyzeEta(progress.TotalFiles == 0 ? 2 : 1 + ((double)progress.ProcessedFiles / progress.TotalFiles), 2);
+                return;
+        }
+    }
+
     private void OnAnalyzeProgress(
         AnalyzeProgress progress,
         int completedSteps,
@@ -2003,6 +3031,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         // historical data, because the scanner reports its live queue depth.
         var totalDiscovered = 1 + progress.DirectoriesScanned;
         var processed = totalDiscovered - progress.PendingDirectories;
+        var completedUnits = (double)completedSteps;
         if (totalDiscovered > 1 && processed > 0)
         {
             if (IsBusyOverlayProgressIndeterminate)
@@ -2013,13 +3042,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             var normalizedTotalSteps = Math.Max(1, totalSteps);
             var stepWeight = 100d / normalizedTotalSteps;
             var withinStepFraction = Math.Clamp((double)processed / totalDiscovered, 0, 0.95);
+            completedUnits += withinStepFraction;
             var interpolatedProgress = (completedSteps * stepWeight) + (stepWeight * withinStepFraction);
             BusyOverlayProgressValue = Math.Clamp(interpolatedProgress, 0, 99);
         }
 
         if (!TryUpdateAnalyzeEtaFromHistory(analyzeElapsed, analyzeTimingHistory, historicalDurationAfterCurrentDestination))
         {
-            UpdateAnalyzeEta(completedSteps, totalSteps);
+            UpdateAnalyzeEta(completedUnits, totalSteps);
         }
     }
 
@@ -2054,45 +3084,44 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         return true;
     }
 
-    private void UpdateAnalyzeEta(int completedSteps, int totalSteps)
+    private void UpdateAnalyzeEta(double completedUnits, double totalUnits)
     {
-        if (_busyOperationKind != BusyOperationKind.Analyze)
+        if (!IsAnalyzeStyleBusyOperation())
         {
             BusyOverlayEtaText = string.Empty;
             return;
         }
 
-        if (BusyOverlayProgressValue >= 100 || completedSteps >= totalSteps)
+        if (BusyOverlayProgressValue >= 100 || completedUnits >= totalUnits)
         {
-            BusyOverlayEtaText = string.Empty;
+            BusyOverlayEtaText = BuildBusyOverlayElapsedEtaText();
             return;
         }
 
-        var minimumCompletedSteps = totalSteps <= 2 ? 1 : 2;
-        if (BusyOverlayProgressValue < AnalyzeEtaMinimumProgressPercent || completedSteps < minimumCompletedSteps)
+        if (BusyOverlayProgressValue < AnalyzeEtaMinimumProgressPercent || completedUnits <= 0)
         {
-            BusyOverlayEtaText = "Estimated time: estimating...";
+            BusyOverlayEtaText = BuildBusyOverlayElapsedEtaText("Estimated time: estimating...");
             return;
         }
 
         var elapsedSeconds = _busyOperationStopwatch.Elapsed.TotalSeconds;
         if (elapsedSeconds <= 0)
         {
-            BusyOverlayEtaText = "Estimated time: estimating...";
+            BusyOverlayEtaText = BuildBusyOverlayElapsedEtaText("Estimated time: estimating...");
             return;
         }
 
-        var remainingSteps = Math.Max(0, totalSteps - completedSteps);
-        if (remainingSteps == 0)
+        var remainingUnits = Math.Max(0, totalUnits - completedUnits);
+        if (remainingUnits <= 0)
         {
-            BusyOverlayEtaText = string.Empty;
+            BusyOverlayEtaText = BuildBusyOverlayElapsedEtaText();
             return;
         }
 
-        var rawEtaSeconds = (elapsedSeconds / completedSteps) * remainingSteps;
+        var rawEtaSeconds = (elapsedSeconds / completedUnits) * remainingUnits;
         if (double.IsNaN(rawEtaSeconds) || double.IsInfinity(rawEtaSeconds) || rawEtaSeconds < 0)
         {
-            BusyOverlayEtaText = "Estimated time: estimating...";
+            BusyOverlayEtaText = BuildBusyOverlayElapsedEtaText("Estimated time: estimating...");
             return;
         }
 
@@ -2105,8 +3134,37 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             ? rawEtaSeconds
             : (_busyOverlaySmoothedEtaSeconds.Value * (1 - AnalyzeEtaSmoothingFactor)) + (rawEtaSeconds * AnalyzeEtaSmoothingFactor);
 
-        BusyOverlayEtaText = $"Estimated time: {FormatApproximateDuration(TimeSpan.FromSeconds(_busyOverlaySmoothedEtaSeconds.Value))}";
+        BusyOverlayEtaText = BuildBusyOverlayElapsedEtaText($"Estimated time: {FormatApproximateDuration(TimeSpan.FromSeconds(_busyOverlaySmoothedEtaSeconds.Value))}");
     }
+
+    private bool IsAnalyzeStyleBusyOperation() =>
+        _busyOperationKind is BusyOperationKind.Analyze or BusyOperationKind.FindDuplicates or BusyOperationKind.AnalyzeImageRename;
+
+    private string BuildBusyOverlayElapsedEtaText(string? etaText = null)
+    {
+        if (!IsAnalyzeStyleBusyOperation())
+        {
+            return string.Empty;
+        }
+
+        var elapsedText = $"Elapsed: {FormatApproximateDuration(_busyOperationStopwatch.Elapsed)}";
+        return string.IsNullOrWhiteSpace(etaText)
+            ? elapsedText
+            : $"{elapsedText} | {etaText}";
+    }
+
+    private string AbbreviateAnalyzeProgressPath(string rootPath, string currentPath)
+    {
+        var formattedRootPath = FormatPathForProgress(rootPath);
+        var formattedCurrentPath = FormatPathForProgress(currentPath);
+        return AbbreviateAnalyzePath(formattedCurrentPath, formattedRootPath);
+    }
+
+    private static AnalyzeProgress ToAnalyzeProgress(DuplicateAnalyzeProgress progress) =>
+        new(progress.RootPath, progress.CurrentPath, progress.FilesScanned, progress.DirectoriesScanned, progress.PendingDirectories);
+
+    private static AnalyzeProgress ToAnalyzeProgress(ImageRenameAnalyzeProgress progress) =>
+        new(progress.RootPath, progress.CurrentPath, progress.FilesScanned, progress.DirectoriesScanned, progress.PendingDirectories);
 
     private TimeSpan GetHistoricalRemainingAnalyzeDuration(IReadOnlyList<string> destinationPathsToAnalyze, int currentIndex)
     {
@@ -2354,6 +3412,12 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             .ToList();
     }
 
+    private IReadOnlyList<ImageRenamePlanItem> GetSelectedImageRenamePlans() =>
+        ImageRenameAllRows
+            .Where(row => row.CanSelect && row.IsSelected)
+            .Select(row => row.PlanItem)
+            .ToList();
+
     private bool? GetSelectionState(PreviewTabKind tabKind)
     {
         var selectableRows = GetVisibleRowsForTab(tabKind)
@@ -2378,9 +3442,56 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         return null;
     }
 
+    private static bool? GetImageRenameSelectionState(IEnumerable<ImageRenameRowViewModel> rows)
+    {
+        var selectableRows = rows
+            .Where(row => row.CanSelect)
+            .ToList();
+        if (selectableRows.Count == 0)
+        {
+            return false;
+        }
+
+        var selectedCount = selectableRows.Count(row => row.IsSelected);
+        if (selectedCount == 0)
+        {
+            return false;
+        }
+
+        return selectedCount == selectableRows.Count
+            ? true
+            : null;
+    }
+
     private void SetSelection(PreviewTabKind tabKind, bool? isSelected)
     {
         UpdateSelectionForRows(GetVisibleRowsForTab(tabKind), _ => isSelected ?? false);
+    }
+
+    private void SetImageRenameSelection(IEnumerable<ImageRenameRowViewModel> rows, bool? isSelected)
+    {
+        if (isSelected is null)
+        {
+            return;
+        }
+
+        _suppressSelectionUpdates = true;
+        try
+        {
+            foreach (var row in rows)
+            {
+                if (row.CanSelect)
+                {
+                    row.IsSelected = isSelected.Value;
+                }
+            }
+        }
+        finally
+        {
+            _suppressSelectionUpdates = false;
+        }
+
+        RaiseImageRenameSelectionStateChanged();
     }
 
     private void OnPreviewRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -2449,6 +3560,59 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         UpdateSelectedQueue();
     }
 
+    private bool? GetDriveToolDuplicateSelectionState()
+    {
+        var selectableRows = GetSelectableDriveToolDuplicateRows();
+        if (selectableRows.Count == 0)
+        {
+            return false;
+        }
+
+        var selectedCount = selectableRows.Count(row => row.IsSelected);
+        if (selectedCount == 0)
+        {
+            return false;
+        }
+
+        return selectedCount == selectableRows.Count ? true : null;
+    }
+
+    private void SetDriveToolDuplicateSelection(bool? isSelected)
+    {
+        UpdateDriveToolDuplicateSelection(_ => isSelected ?? false);
+    }
+
+    private List<DriveToolDuplicateRowViewModel> GetSelectableDriveToolDuplicateRows() =>
+        DriveToolDuplicateRows.Where(row => row.CanSelect).ToList();
+
+    private void UpdateDriveToolDuplicateSelection(Func<DriveToolDuplicateRowViewModel, bool> selectionFactory)
+    {
+        var selectableRows = GetSelectableDriveToolDuplicateRows();
+        if (selectableRows.Count == 0)
+        {
+            return;
+        }
+
+        _suppressSelectionUpdates = true;
+        foreach (var row in selectableRows)
+        {
+            row.IsSelected = selectionFactory(row);
+        }
+        _suppressSelectionUpdates = false;
+
+        UpdateDriveToolDuplicateGroupSelectionStates();
+        RefreshDriveToolDuplicateSelectionSafety(showDialog: true);
+        RaisePropertyChanged(nameof(AreAllDriveToolDuplicatesSelected));
+        DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
+    }
+
+    private static bool MatchesDriveToolPattern(DriveToolDuplicateRowViewModel row, string keyword, PreviewSelectionTarget target) => target switch
+    {
+        PreviewSelectionTarget.FileName => ContainsKeyword(row.FileName, keyword),
+        PreviewSelectionTarget.FileFolder => ContainsKeyword(Path.GetDirectoryName(row.DisplayPath), keyword),
+        _ => ContainsKeyword(row.DisplayPath, keyword),
+    };
+
     private static bool MatchesPattern(SyncPreviewRowViewModel row, string keyword, PreviewSelectionTarget target)
     {
         return target switch
@@ -2491,6 +3655,393 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         !string.IsNullOrWhiteSpace(value) &&
         value.Contains(keyword, StringComparison.OrdinalIgnoreCase);
 
+    private static string FormatDriveToolSize(long size)
+    {
+        if (size < 1024)
+        {
+            return $"{size} B";
+        }
+
+        var units = new[] { "KB", "MB", "GB", "TB" };
+        double value = size;
+        var unitIndex = -1;
+        while (value >= 1024 && unitIndex < units.Length - 1)
+        {
+            value /= 1024;
+            unitIndex++;
+        }
+
+        return $"{value:0.##} {units[Math.Max(unitIndex, 0)]}";
+    }
+
+    private void OnDriveToolDuplicateRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(DriveToolDuplicateRowViewModel.IsSelected) ||
+            e.PropertyName == nameof(DriveToolDuplicateRowViewModel.CanSelect))
+        {
+            if (!_suppressSelectionUpdates)
+            {
+                UpdateDriveToolDuplicateGroupSelectionStates();
+                RefreshDriveToolDuplicateSelectionSafety(showDialog: true);
+            }
+
+            RaisePropertyChanged(nameof(AreAllDriveToolDuplicatesSelected));
+            DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    private void OnImageRenameRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!_suppressSelectionUpdates &&
+            (e.PropertyName == nameof(ImageRenameRowViewModel.IsSelected) ||
+             e.PropertyName == nameof(ImageRenameRowViewModel.CanSelect)))
+        {
+            RaiseImageRenameSelectionStateChanged();
+        }
+    }
+
+    private void OnDriveToolDuplicateGroupSelectionChanged(DriveToolDuplicateRowViewModel groupHeader, bool? isSelected)
+    {
+        SetDriveToolDuplicateGroupSelection(groupHeader, isSelected);
+    }
+
+    internal void SetDriveToolDuplicateGroupSelection(DriveToolDuplicateRowViewModel groupHeader, bool? isSelected)
+    {
+        if (!groupHeader.IsGroupHeader)
+        {
+            return;
+        }
+
+        var groupRows = DriveToolDuplicateRows
+            .Where(row => !row.IsGroupHeader && string.Equals(row.GroupKey, groupHeader.GroupKey, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (groupRows.Count == 0)
+        {
+            groupHeader.SetGroupSelectionState(false);
+            return;
+        }
+
+        _suppressSelectionUpdates = true;
+        try
+        {
+            if (isSelected == true)
+            {
+                if (groupRows[0].IsSelected)
+                {
+                    groupRows[0].IsSelected = false;
+                }
+
+                for (var index = 1; index < groupRows.Count; index++)
+                {
+                    if (!groupRows[index].IsSelected)
+                    {
+                        groupRows[index].IsSelected = true;
+                    }
+                }
+            }
+            else
+            {
+                foreach (var row in groupRows)
+                {
+                    if (row.IsSelected)
+                    {
+                        row.IsSelected = false;
+                    }
+                }
+            }
+        }
+        finally
+        {
+            _suppressSelectionUpdates = false;
+        }
+
+        UpdateDriveToolDuplicateGroupSelectionStates();
+        RefreshDriveToolDuplicateSelectionSafety(showDialog: true);
+        RaisePropertyChanged(nameof(AreAllDriveToolDuplicatesSelected));
+        DeleteSelectedDuplicatesCommand.RaiseCanExecuteChanged();
+    }
+
+    private void UpdateDriveToolDuplicateGroupSelectionStates()
+    {
+        foreach (var group in DriveToolDuplicateRows.GroupBy(row => row.GroupKey, StringComparer.OrdinalIgnoreCase))
+        {
+            var groupHeader = group.FirstOrDefault(row => row.IsGroupHeader);
+            if (groupHeader is null)
+            {
+                continue;
+            }
+
+            var groupRows = group.Where(row => !row.IsGroupHeader).ToList();
+            if (groupRows.Count == 0)
+            {
+                groupHeader.SetGroupSelectionState(false);
+                continue;
+            }
+
+            var firstRow = groupRows[0];
+            var remainingRows = groupRows.Skip(1).ToList();
+            var hasAnySelected = groupRows.Any(row => row.IsSelected);
+            var matchesHeaderSelectionPattern = !firstRow.IsSelected && remainingRows.All(row => row.IsSelected);
+
+            groupHeader.SetGroupSelectionState(
+                !hasAnySelected ? false :
+                matchesHeaderSelectionPattern ? true :
+                null);
+        }
+    }
+
+    internal SyncPreviewRowViewModel? CreatePreviewDialogRow(object? parameter)
+    {
+        if (parameter is SyncPreviewRowViewModel previewRow)
+        {
+            return previewRow;
+        }
+
+        if (parameter is not DriveToolDuplicateRowViewModel duplicateRow ||
+            duplicateRow.FileEntry is null ||
+            string.IsNullOrWhiteSpace(duplicateRow.OpenPath))
+        {
+            if (parameter is not ImageRenameRowViewModel imageRenameRow ||
+                string.IsNullOrWhiteSpace(imageRenameRow.OpenPath))
+            {
+                return null;
+            }
+
+            return new SyncPreviewRowViewModel(
+                new SyncPreviewItem(
+                    ItemKey: imageRenameRow.ItemKey,
+                    RelativePath: imageRenameRow.PlanItem.SourceRelativePath,
+                    IsDirectory: false,
+                    SourceFullPath: imageRenameRow.OpenPath,
+                    SourceLength: null,
+                    SourceLastWriteTimeUtc: imageRenameRow.PlanItem.TimestampLocal.ToUniversalTime(),
+                    DestinationFullPath: string.Empty,
+                    DestinationLength: null,
+                    DestinationLastWriteTimeUtc: null,
+                    Direction: string.Empty,
+                    Status: imageRenameRow.StatusText,
+                    Category: SyncPreviewCategory.UnchangedFiles,
+                    PlannedActionType: null,
+                    DriveLocationPath: DriveToolsPath),
+                driveDisplayNameService: _driveDisplayNameService);
+        }
+
+        return new SyncPreviewRowViewModel(
+            new SyncPreviewItem(
+                ItemKey: duplicateRow.ItemKey,
+                RelativePath: duplicateRow.FileEntry.RelativePath,
+                IsDirectory: false,
+                SourceFullPath: duplicateRow.FileEntry.FullPath,
+                SourceLength: duplicateRow.FileEntry.Length,
+                SourceLastWriteTimeUtc: duplicateRow.FileEntry.LastWriteTimeUtc,
+                DestinationFullPath: string.Empty,
+                DestinationLength: null,
+                DestinationLastWriteTimeUtc: null,
+                Direction: string.Empty,
+                Status: "Duplicate",
+                Category: SyncPreviewCategory.UnchangedFiles,
+                PlannedActionType: null,
+                DriveLocationPath: DriveToolsPath),
+            driveDisplayNameService: _driveDisplayNameService);
+    }
+
+    private static bool TryGetOpenPath(object? parameter, out string path)
+    {
+        path = parameter switch
+        {
+            SyncPreviewRowViewModel row => row.OpenPath,
+            DriveToolDuplicateRowViewModel row => row.OpenPath,
+            ImageRenameRowViewModel row => row.OpenPath,
+            _ => string.Empty,
+        };
+
+        return !string.IsNullOrWhiteSpace(path);
+    }
+
+    private static bool TryGetExistingOpenPath(object? parameter, out string path)
+    {
+        if (TryGetOpenPath(parameter, out path) && File.Exists(path))
+        {
+            return true;
+        }
+
+        path = string.Empty;
+        return false;
+    }
+
+    private void RefreshDriveToolDuplicateSelectionSafety(bool showDialog)
+    {
+        var groups = DriveToolDuplicateRows
+            .Where(row => row.CanSelect)
+            .GroupBy(row => row.GroupKey, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var conflictingGroupKeys = groups
+            .Where(group => group.Any() && group.All(row => row.IsSelected))
+            .Select(group => group.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var newlyConflictedGroupCount = conflictingGroupKeys
+            .Except(_conflictingDriveToolDuplicateGroupKeys, StringComparer.OrdinalIgnoreCase)
+            .Count();
+
+        foreach (var row in DriveToolDuplicateRows.Where(row => row.IsGroupHeader))
+        {
+            row.HasSelectionConflict = conflictingGroupKeys.Contains(row.GroupKey);
+        }
+
+        _conflictingDriveToolDuplicateGroupKeys = conflictingGroupKeys;
+        HasDriveToolDuplicateSelectionConflict = conflictingGroupKeys.Count > 0;
+
+        if (showDialog && newlyConflictedGroupCount > 0)
+        {
+            _userDialogService.ShowWarning(
+                "All files selected",
+                newlyConflictedGroupCount == 1
+                    ? "All files in one duplicate group are selected for deletion."
+                    : $"All files in {newlyConflictedGroupCount} duplicate groups are selected for deletion.");
+        }
+    }
+
+    private static bool TryGetModifiableDriveToolDuplicate(object? parameter, out DriveToolDuplicateRowViewModel? duplicateRow)
+    {
+        if (parameter is DriveToolDuplicateRowViewModel { FileEntry: not null, HasOpenPath: true } row)
+        {
+            duplicateRow = row;
+            return true;
+        }
+
+        duplicateRow = null;
+        return false;
+    }
+
+    internal async Task<bool> RenameDriveToolDuplicateAsync(object? parameter, string newFileName)
+    {
+        if (!TryGetModifiableDriveToolDuplicate(parameter, out var duplicateRow))
+        {
+            return false;
+        }
+
+        ArgumentNullException.ThrowIfNull(duplicateRow);
+
+        var trimmedFileName = newFileName?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(trimmedFileName))
+        {
+            StatusMessage = "Enter a file name before renaming.";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
+            return false;
+        }
+
+        if (trimmedFileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        {
+            StatusMessage = "The new file name contains invalid characters.";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
+            return false;
+        }
+
+        var sourcePath = duplicateRow.OpenPath;
+        var targetDirectory = Path.GetDirectoryName(sourcePath) ?? DriveToolsPath;
+        var targetPath = Path.Combine(targetDirectory, trimmedFileName);
+        if (string.Equals(sourcePath, targetPath, StringComparison.OrdinalIgnoreCase))
+        {
+            StatusMessage = "The file already has that name.";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
+            return false;
+        }
+
+        if (File.Exists(targetPath))
+        {
+            StatusMessage = "A file with that name already exists in the target folder.";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
+            return false;
+        }
+
+        try
+        {
+            File.Move(sourcePath, targetPath);
+            SetStatusMessage($"Renamed '{duplicateRow.FileName}' to '{trimmedFileName}'.", isSuccess: true);
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Verbose);
+            await FindDuplicatesAsync().ConfigureAwait(true);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            StatusMessage = $"Could not rename '{duplicateRow.FileName}'. {exception.Message}";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Error);
+            return false;
+        }
+    }
+
+    internal async Task<bool> MoveDriveToolDuplicateAsync(object? parameter, string destinationFolder)
+    {
+        if (!TryGetModifiableDriveToolDuplicate(parameter, out var duplicateRow))
+        {
+            return false;
+        }
+
+        ArgumentNullException.ThrowIfNull(duplicateRow);
+
+        var trimmedDestinationFolder = destinationFolder?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(trimmedDestinationFolder))
+        {
+            StatusMessage = "Select a destination folder before moving the file.";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
+            return false;
+        }
+
+        string normalizedDestinationFolder;
+        try
+        {
+            normalizedDestinationFolder = Path.GetFullPath(trimmedDestinationFolder);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            StatusMessage = $"The selected destination folder is invalid. {exception.Message}";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
+            return false;
+        }
+
+        if (!Path.IsPathFullyQualified(normalizedDestinationFolder))
+        {
+            StatusMessage = "Select a fully qualified destination folder before moving the file.";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
+            return false;
+        }
+
+        var sourcePath = duplicateRow.OpenPath;
+        var targetPath = Path.Combine(normalizedDestinationFolder, duplicateRow.FileName);
+        if (string.Equals(sourcePath, targetPath, StringComparison.OrdinalIgnoreCase))
+        {
+            StatusMessage = "The file is already in that folder.";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
+            return false;
+        }
+
+        if (File.Exists(targetPath))
+        {
+            StatusMessage = "A file with the same name already exists in the destination folder.";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Warning);
+            return false;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(normalizedDestinationFolder);
+            File.Move(sourcePath, targetPath);
+            SetStatusMessage($"Moved '{duplicateRow.FileName}' to '{normalizedDestinationFolder}'.", isSuccess: true);
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Verbose);
+            await FindDuplicatesAsync().ConfigureAwait(true);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            StatusMessage = $"Could not move '{duplicateRow.FileName}'. {exception.Message}";
+            AddLog("Duplicate Finder", StatusMessage, SyncLogSeverity.Error);
+            return false;
+        }
+    }
+
     private void UpdateSelectedQueue()
     {
         ReplaceQueue(GetSelectedActions());
@@ -2504,6 +4055,54 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         RaisePropertyChanged(nameof(AreAllDeletedFilesSelected));
         RaisePropertyChanged(nameof(AreAllUnchangedFilesSelected));
         RaisePropertyChanged(nameof(AreAllFilesSelected));
+    }
+
+    private void RaiseImageRenameSelectionStateChanged()
+    {
+        RaisePropertyChanged(nameof(AreAllImageRenameMatchedRowsSelected));
+        RaisePropertyChanged(nameof(AreAllImageRenameNoMatchRowsSelected));
+        RaisePropertyChanged(nameof(AreAllImageRenameAllRowsSelected));
+        ApplyImageRenameCommand.RaiseCanExecuteChanged();
+    }
+
+    private void MarkAppliedImageRenameRows(IReadOnlyList<ImageRenamePlanItem> selectedPlans)
+    {
+        var selectedKeys = selectedPlans
+            .Select(plan => plan.SourceRelativePath)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (selectedKeys.Count == 0)
+        {
+            return;
+        }
+
+        RunOnDispatcher(() =>
+        {
+            _suppressSelectionUpdates = true;
+            try
+            {
+                foreach (var row in ImageRenameAllRows.Where(row => selectedKeys.Contains(row.ItemKey)).ToList())
+                {
+                    row.MarkRenamed();
+                }
+            }
+            finally
+            {
+                _suppressSelectionUpdates = false;
+            }
+
+            var matchedRows = ImageRenameMatchedRows.ToList();
+            var noMatchRows = ImageRenameNoMatchRows.ToList();
+            var allRows = ImageRenameAllRows.ToList();
+            var completedRows = allRows
+                .Where(row => row.IsCompleted)
+                .ToList();
+
+            ReplaceImageRenameRows(matchedRows, noMatchRows, allRows, completedRows);
+            _imageRenamePlanItems.Clear();
+            _imageRenamePlanItems.AddRange(allRows.Select(row => row.PlanItem));
+            RaiseImageRenameSelectionStateChanged();
+        });
     }
 
     private ICollectionView CreatePreviewView(ObservableCollection<SyncPreviewRowViewModel> rows)
@@ -2732,12 +4331,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _currentAnalyzeTotalDestinationCount = 0;
         _busyOperationStopwatch.Restart();
         _busyOverlaySmoothedEtaSeconds = null;
-        IsBusyOverlayProgressIndeterminate = busyOperationKind == BusyOperationKind.Analyze;
+        IsBusyOverlayProgressIndeterminate = busyOperationKind is BusyOperationKind.Analyze or BusyOperationKind.FindDuplicates or BusyOperationKind.AnalyzeImageRename;
         RaisePropertyChanged(nameof(IsBusyOverlayVisible));
         RaisePropertyChanged(nameof(IsUseCompletedAnalyzeResultsVisible));
         (BusyOverlayTitle, BusyOverlayDescription) = busyOperationKind switch
         {
             BusyOperationKind.Analyze => ("Loading preview...", "Building the synchronization preview."),
+            BusyOperationKind.FindDuplicates => ("Finding duplicates...", "Hashing same-size files to confirm identical copies."),
+            BusyOperationKind.AnalyzeImageRename => ("Analyzing image rename...", "Preparing File Pattern matches, All rows, and Completed rows while reserving unique target names."),
             BusyOperationKind.Sync => ("Synchronizing...", "Applying the selected file operations."),
             _ => ("Working...", "Please wait."),
         };

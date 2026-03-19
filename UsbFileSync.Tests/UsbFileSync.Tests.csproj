@@ -43,6 +43,7 @@
     <Compile Remove="DropboxVolumeSourceTests.cs" />
     <Compile Remove="ExtVolumeServiceTests.cs" />
     <Compile Remove="GoogleDriveVolumeSourceTests.cs" />
+    <Compile Remove="ImageRenameRowViewModelTests.cs" />
     <Compile Remove="ImagePreviewZoomCalculatorTests.cs" />
     <Compile Remove="MainWindowViewModelTests.cs" />
     <Compile Remove="OneDriveAuthenticationServiceTests.cs" />

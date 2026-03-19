@@ -38,6 +38,7 @@ The HFS+ backend intentionally enforces read-only behavior so the application do
 - Safe cancellation for file copy operations.
 - Optional SHA-256 checksum validation for each copied file.
 - Optional `Move Mode` that deletes the original file only after the copy in the planned sync direction has been verified.
+- A dedicated **Drive Tools** workspace for single-drive file-management tasks, with grouped duplicate analysis plus camera-style image rename analysis and apply actions.
 - Configurable parallel file copy count, including `0` for adaptive auto parallelism.
 - Source and destination volumes are scanned concurrently during the analyze phase, so the time to index a source and destination on separate drives overlaps rather than being sequential. Each volume is also scanned in a single pass that collects both files and directories together, halving the number of directory traversals. Within each volume, multiple worker threads enumerate different directories in parallel so the OS I/O scheduler and SSD parallelism are fully utilised. File metadata (size, timestamps) is retrieved from the underlying `FindFirstFile`/`FindNextFile` OS call in a single pass, eliminating redundant per-file stat lookups.
 - Settings persistence between runs.
@@ -177,8 +178,9 @@ The main window includes:
 - Sync mode selection.
 - `Detect moves`, `Dry run`, `Subfolders`, `Checksums`, and `Move Mode` options with hover tooltips that explain their behavior.
 - `Analyze` and `Synchronize` actions.
+- Top-level `Sync Mode` and `Drive Tools` buttons so sync planning and single-drive file management stay clearly separated.
 - A large synchronization preview table.
-- Filter tabs for `New Files`, `Changed`, `Deleted`, `Unchanged`, and `All`.
+- Filter tabs for `New Files`, `Changed`, `Deleted`, `Unchanged`, and `All` inside `Sync Mode`, plus a dedicated grouped duplicate preview table inside `Drive Tools`.
 - Shared selection checkboxes across filtered tabs, including select-all checkboxes in each preview header.
 - Edit menu actions for `Select All In Tab`, `Select By Pattern`, and `Invert Selection` against the active preview tab.
 - Action, status, sync action, transfer speed, source metadata, and destination metadata columns, with the same column set available across all preview tabs.
@@ -200,9 +202,33 @@ The settings dialog currently supports:
 - `0` enables auto mode, which estimates a starting parallelism and adjusts it during the copy batch.
 - `Hide macOS system files in HFS+ preview and sync planning`: filters common filesystem metadata such as `.Spotlight-V100`, `.fseventsd`, `.journal`, and `HFS+ Private Data` out of the HFS+ sync view.
 - `Path exclusion patterns`: one pattern per line for excluding heavy folders or subtrees from preview analysis and synchronization planning. Single-segment patterns such as `node_modules` or `.venv` match anywhere in the tree; multi-segment relative patterns such as `src/generated` are also supported.
+- `City name language order`: for `Drive Tools > Image Rename` patterns that include `_City`, choose whether reverse geocoding should prefer English city names then local names, or local names then English.
 - `Cloud provider credentials`: built-in provider credentials are the default mode planned for API-backed cloud integration, while an advanced `Use custom provider credentials` setting lets you keep your own Google Drive, Dropbox, and OneDrive client IDs as an override. Google Drive can now also store an optional client secret when Google requires it during token exchange. Dropbox still stores the app key. OneDrive stores a public-client application ID, always uses the fixed `common` tenant in the settings dialog, and can be tested directly from the settings dialog.
 
 Google Drive and OneDrive now support both source and destination flows on this branch when custom provider credentials are enabled. The settings dialog can test the configured cloud connection, and the source or destination picker can authenticate against the selected provider, browse folders, and use the selected cloud folder as either a readable source volume or a writable destination volume for synchronization.
+
+## Drive Tools
+
+Drive Tools is intentionally kept separate from the normal source-versus-destination synchronize analysis. Duplicate cleanup and camera filename renaming are single-location file-management tasks, so combining them with pairwise sync planning would make every analyze run slower and would blur the meaning of the existing sync preview tabs.
+
+UsbFileSync therefore uses a two-phase duplicate scan:
+
+1. **Rough grouping by file size** to avoid hashing files that cannot possibly match.
+2. **SHA-256 verification** only inside those same-size groups so every listed checksum group is byte-for-byte identical.
+
+Inside `Drive Tools > Duplicate Analysis`, UsbFileSync shows one summary row per checksum group, followed by indented rows for each matching file path in that group. By default, UsbFileSync enables a safety checkbox that blocks deletion when every file in a duplicate group is selected, highlights the conflicting group header in red, and explains the conflict below the duplicate-analysis actions. You can still right-click a duplicate row to open the file, open its folder, preview it in a single-pane preview dialog, rename it, or move it elsewhere before deleting anything. Its analyze overlay now mirrors Sync Mode more closely: it supports `Cancel` during both scanning and hashing, shows the current path, cumulative scan counts, hash progress, and a live elapsed plus estimated-time readout while the analysis is running.
+
+`Drive Tools > Image Rename` can now analyze and apply camera-style filename renames inside one folder or drive. The Settings dialog lets you choose among:
+
+- `yyyyMMdd_HHmmss_original_filename.jpg`
+- `yyyyMMdd_HHmmss_original_filename_City.jpg`
+- `yyyyMMdd_HHmmss.jpg`
+
+The image rename settings also include built-in camera filename File Patterns such as `DSC_????`, `IMG_????`, and `DJI_????`, support custom File Patterns and custom extensions through checkbox-enabled custom rows, and default to the common camera media formats `.jpg`, `.jpeg`, `.tif`, `.tiff`, `.heic`, `.mov`, `.3gp`, and `.mp4`. The image rename preview now splits results into `File Pattern Match`, `No Match`, `All`, and `Completed` tabs with first-column checkboxes where applicable, so File Pattern matches are preselected, No Match keeps optional out-of-scope candidates separate, All shows every analyzed media file, and Completed keeps already-aligned files plus newly renamed rows visible but locked. When you apply a subset of rows, UsbFileSync leaves the rest of the analysis in place and marks only the renamed rows as completed. If two files would land on the same target name, or a target name is already occupied, UsbFileSync automatically appends a `_001`-style sequencer before applying the rename. Its analyze overlay now also supports `Cancel` mid-scan, and shows the active file path plus cumulative scan, planning, elapsed, and estimated-time details while the rename plan is being prepared.
+
+## Photo Rename Guidance
+
+For the current picture-renaming workflow, the default naming convention is `yyyyMMdd_HHmmss_original_filename.ext`. UsbFileSync can also use `yyyyMMdd_HHmmss.ext`, and the `_City` option now tries to resolve a city name from supported image GPS metadata using reverse geocoding when coordinates are present, including JPEG, TIFF, HEIC, HEIF, AVIF, and PNG files that carry readable location metadata. The Settings dialog lets you choose whether city resolution should prefer English names then local names, or local names then English. Rename analysis preselects files that match the configured File Patterns, separates unmatched candidates into `No Match`, keeps every analyzed media file visible in `All`, and keeps already-aligned or newly renamed files visible in `Completed` without making them rename-selectable.
 
 If you want to prepare custom provider values for the advanced override, see [`docs/custom-cloud-provider-credentials.md`](docs/custom-cloud-provider-credentials.md) for step-by-step setup instructions for Google Drive, Dropbox, and OneDrive.
 

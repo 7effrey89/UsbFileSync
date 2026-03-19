@@ -678,6 +678,66 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public void LoadSavedConfiguration_RestoresDriveToolsPath()
+    {
+        var settingsStore = new StubSyncSettingsStore(new SyncConfiguration
+        {
+            SourcePath = "F:\\Primary",
+            DestinationPath = "E:\\Backup",
+            DriveToolsPath = "D:\\Photos",
+            DriveToolsIncludeSubfolders = false,
+        });
+
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: settingsStore, folderPickerService: new StubFolderPickerService(null));
+
+        Assert.Equal("D:\\Photos", viewModel.DriveToolsPath);
+        Assert.False(viewModel.DriveToolsIncludeSubfolders);
+    }
+
+    [Fact]
+    public void LoadSavedConfiguration_RestoresImageRenameCityLanguagePreference()
+    {
+        var settingsStore = new StubSyncSettingsStore(new SyncConfiguration
+        {
+            SourcePath = "F:\\Primary",
+            DestinationPath = "E:\\Backup",
+            ImageRenameCityLanguagePreference = ImageRenameCityLanguagePreference.LocalThenEnglish,
+        });
+
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: settingsStore, folderPickerService: new StubFolderPickerService(null));
+
+        Assert.Equal(ImageRenameCityLanguagePreference.LocalThenEnglish, viewModel.ImageRenameCityLanguagePreference);
+    }
+
+    [Fact]
+    public async Task DriveToolsPathChange_PersistsConfiguration()
+    {
+        var settingsStore = new RecordingSyncSettingsStore();
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: settingsStore, folderPickerService: new StubFolderPickerService(null));
+
+        viewModel.DriveToolsPath = "D:\\Photos";
+        viewModel.DriveToolsIncludeSubfolders = false;
+
+        await WaitForAsync(() => settingsStore.LastSavedConfiguration is not null).ConfigureAwait(true);
+
+        Assert.Equal("D:\\Photos", settingsStore.LastSavedConfiguration!.DriveToolsPath);
+        Assert.False(settingsStore.LastSavedConfiguration.DriveToolsIncludeSubfolders);
+    }
+
+    [Fact]
+    public async Task UpdateImageRenameCityLanguagePreference_PersistsConfiguration()
+    {
+        var settingsStore = new RecordingSyncSettingsStore();
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: settingsStore, folderPickerService: new StubFolderPickerService(null));
+
+        viewModel.UpdateImageRenameCityLanguagePreference(ImageRenameCityLanguagePreference.LocalThenEnglish);
+
+        await WaitForAsync(() => settingsStore.LastSavedConfiguration is not null).ConfigureAwait(true);
+
+        Assert.Equal(ImageRenameCityLanguagePreference.LocalThenEnglish, settingsStore.LastSavedConfiguration!.ImageRenameCityLanguagePreference);
+    }
+
+    [Fact]
     public void UpdateParallelCopyCount_AllowsAutoValue_AndLogsAutoMode()
     {
         using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null));
@@ -1444,6 +1504,406 @@ public sealed class MainWindowViewModelTests
         Assert.False(viewModel.NewFiles[0].IsSelected);
         Assert.True(viewModel.NewFiles[1].IsSelected);
         Assert.Single(viewModel.RemainingQueue);
+    }
+
+    [Fact]
+    public async Task FindDuplicatesCommand_LoadsGroupedDriveToolRows()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("photos\\keep.jpg", "duplicate-bytes");
+        workspace.WriteSourceFile("photos\\copy.jpg", "duplicate-bytes");
+        workspace.WriteSourceFile("photos\\same-size-different.jpg", "different-bytes");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            DriveToolsPath = workspace.SourcePath,
+        };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
+
+        viewModel.FindDuplicatesCommand.Execute(null);
+
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 3).ConfigureAwait(true);
+
+        Assert.Equal(1, viewModel.DriveToolDuplicateGroupCount);
+        var summaryRow = viewModel.DriveToolDuplicateRows[0];
+        Assert.True(summaryRow.IsGroupHeader);
+        Assert.False(string.IsNullOrWhiteSpace(summaryRow.ChecksumText));
+
+        var detailRows = viewModel.DriveToolDuplicateRows.Skip(1).ToList();
+        Assert.All(detailRows, row => Assert.False(row.IsGroupHeader));
+        Assert.Contains(detailRows, row => row.DisplayPath.Contains("keep.jpg", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(detailRows, row => row.DisplayPath.Contains("copy.jpg", StringComparison.OrdinalIgnoreCase));
+        Assert.Empty(viewModel.RemainingQueue);
+        Assert.Contains("checksum-matched group", viewModel.StatusMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DeleteSelectedDuplicatesCommand_RemovesCheckedDuplicateFiles()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("keep.txt", "duplicate-bytes");
+        workspace.WriteSourceFile("copy.txt", "duplicate-bytes");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            DriveToolsPath = workspace.SourcePath,
+        };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
+
+        viewModel.FindDuplicatesCommand.Execute(null);
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 3).ConfigureAwait(true);
+        viewModel.DriveToolDuplicateRows.Single(row => !row.IsGroupHeader && row.DisplayPath.Contains("copy.txt", StringComparison.OrdinalIgnoreCase)).IsSelected = true;
+
+        Assert.True(viewModel.DeleteSelectedDuplicatesCommand.CanExecute(null));
+
+        viewModel.DeleteSelectedDuplicatesCommand.Execute(null);
+
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 2).ConfigureAwait(true);
+
+        var remainingFiles = new[]
+        {
+            Path.Combine(workspace.SourcePath, "keep.txt"),
+            Path.Combine(workspace.SourcePath, "copy.txt"),
+        }.Where(File.Exists).ToList();
+
+        Assert.Single(remainingFiles);
+        Assert.Equal("Deleted 1 duplicate file.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task DeleteSelectedDuplicatesCommand_RequiresOneUncheckedFilePerGroup()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("keep.txt", "duplicate-bytes");
+        workspace.WriteSourceFile("copy.txt", "duplicate-bytes");
+        var dialogService = new StubUserDialogService();
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null), userDialogService: dialogService)
+        {
+            DriveToolsPath = workspace.SourcePath,
+        };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
+
+        viewModel.FindDuplicatesCommand.Execute(null);
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 3).ConfigureAwait(true);
+
+        foreach (var row in viewModel.DriveToolDuplicateRows.Where(row => row.CanSelect))
+        {
+            row.IsSelected = true;
+        }
+
+        Assert.Equal(1, dialogService.WarningCount);
+        Assert.True(viewModel.HasDriveToolDuplicateSelectionConflict);
+        Assert.True(viewModel.IsDriveToolDuplicateDeletionWarningVisible);
+        Assert.False(viewModel.DeleteSelectedDuplicatesCommand.CanExecute(null));
+        Assert.True(viewModel.DriveToolDuplicateRows.Single(row => row.IsGroupHeader).HasSelectionConflict);
+        Assert.True(File.Exists(Path.Combine(workspace.SourcePath, "keep.txt")));
+        Assert.True(File.Exists(Path.Combine(workspace.SourcePath, "copy.txt")));
+    }
+
+    [Fact]
+    public async Task DuplicateGroupHeaderSelection_SelectsAllRowsExceptFirst()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("keep.txt", "duplicate-bytes");
+        workspace.WriteSourceFile("copy-one.txt", "duplicate-bytes");
+        workspace.WriteSourceFile("copy-two.txt", "duplicate-bytes");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            DriveToolsPath = workspace.SourcePath,
+        };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
+
+        viewModel.FindDuplicatesCommand.Execute(null);
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 4).ConfigureAwait(true);
+
+        var summaryRow = viewModel.DriveToolDuplicateRows.Single(row => row.IsGroupHeader);
+        var detailRows = viewModel.DriveToolDuplicateRows.Where(row => !row.IsGroupHeader).ToList();
+
+        Assert.True(summaryRow.CanToggleSelection);
+        Assert.False(summaryRow.SelectionState ?? true);
+
+        summaryRow.SelectionState = true;
+
+        Assert.False(detailRows[0].IsSelected);
+        Assert.All(detailRows.Skip(1), row => Assert.True(row.IsSelected));
+        Assert.True(summaryRow.SelectionState);
+    }
+
+    [Fact]
+    public async Task DuplicateGroupHeaderSelection_ClearsGroupWhenUnchecked()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("keep.txt", "duplicate-bytes");
+        workspace.WriteSourceFile("copy-one.txt", "duplicate-bytes");
+        workspace.WriteSourceFile("copy-two.txt", "duplicate-bytes");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            DriveToolsPath = workspace.SourcePath,
+        };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
+
+        viewModel.FindDuplicatesCommand.Execute(null);
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 4).ConfigureAwait(true);
+
+        var summaryRow = viewModel.DriveToolDuplicateRows.Single(row => row.IsGroupHeader);
+        var detailRows = viewModel.DriveToolDuplicateRows.Where(row => !row.IsGroupHeader).ToList();
+
+        summaryRow.SelectionState = true;
+        summaryRow.SelectionState = false;
+
+        Assert.All(detailRows, row => Assert.False(row.IsSelected));
+        Assert.False(summaryRow.SelectionState ?? true);
+    }
+
+    [Fact]
+    public async Task DeleteSelectedDuplicatesCommand_AllowsDeletingEntireGroup_WhenSafetyDisabled()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("keep.txt", "duplicate-bytes");
+        workspace.WriteSourceFile("copy.txt", "duplicate-bytes");
+        var dialogService = new StubUserDialogService();
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null), userDialogService: dialogService)
+        {
+            DriveToolsPath = workspace.SourcePath,
+            PreventDeletingAllFilesInDuplicateGroup = false,
+        };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
+
+        viewModel.FindDuplicatesCommand.Execute(null);
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 3).ConfigureAwait(true);
+
+        foreach (var row in viewModel.DriveToolDuplicateRows.Where(row => row.CanSelect))
+        {
+            row.IsSelected = true;
+        }
+
+        Assert.Equal(1, dialogService.WarningCount);
+        Assert.True(viewModel.DeleteSelectedDuplicatesCommand.CanExecute(null));
+
+        viewModel.DeleteSelectedDuplicatesCommand.Execute(null);
+
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 0).ConfigureAwait(true);
+        Assert.False(File.Exists(Path.Combine(workspace.SourcePath, "keep.txt")));
+        Assert.False(File.Exists(Path.Combine(workspace.SourcePath, "copy.txt")));
+    }
+
+    [Fact]
+    public async Task DriveToolDuplicateRow_ActionText_TracksSelectionState()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("keep.txt", "duplicate-bytes");
+        workspace.WriteSourceFile("copy.txt", "duplicate-bytes");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            DriveToolsPath = workspace.SourcePath,
+        };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
+
+        viewModel.FindDuplicatesCommand.Execute(null);
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 3).ConfigureAwait(true);
+
+        var summaryRow = viewModel.DriveToolDuplicateRows.Single(row => row.IsGroupHeader);
+        Assert.Equal("Review", summaryRow.ActionText);
+
+        var duplicateRow = viewModel.DriveToolDuplicateRows.Single(row => !row.IsGroupHeader && row.DisplayPath.Contains("copy.txt", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("Keep", duplicateRow.ActionText);
+
+        duplicateRow.IsSelected = true;
+
+        Assert.Equal("Delete", duplicateRow.ActionText);
+    }
+
+    [Fact]
+    public async Task OpenPreviewContainingFolderCommand_UsesFileLauncherService_ForDriveToolDuplicateRows()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("keep.txt", "duplicate-bytes");
+        workspace.WriteSourceFile("copy.txt", "duplicate-bytes");
+        var launcher = new StubFileLauncherService();
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null), fileLauncherService: launcher)
+        {
+            DriveToolsPath = workspace.SourcePath,
+        };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
+
+        viewModel.FindDuplicatesCommand.Execute(null);
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 3).ConfigureAwait(true);
+
+        var duplicateRow = viewModel.DriveToolDuplicateRows.Single(row => !row.IsGroupHeader && row.DisplayPath.Contains("copy.txt", StringComparison.OrdinalIgnoreCase));
+        viewModel.OpenPreviewContainingFolderCommand.Execute(duplicateRow);
+
+        Assert.Equal("open-folder", launcher.LastOperation);
+        Assert.EndsWith("copy.txt", launcher.LastPath, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RenameDriveToolDuplicateAsync_RenamesFileAndRefreshesResults()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("keep.txt", "duplicate-bytes");
+        workspace.WriteSourceFile("copy.txt", "duplicate-bytes");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            DriveToolsPath = workspace.SourcePath,
+        };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
+
+        viewModel.FindDuplicatesCommand.Execute(null);
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 3).ConfigureAwait(true);
+
+        var duplicateRow = viewModel.DriveToolDuplicateRows.Single(row => !row.IsGroupHeader && row.DisplayPath.Contains("copy.txt", StringComparison.OrdinalIgnoreCase));
+        var renamed = await viewModel.RenameDriveToolDuplicateAsync(duplicateRow, "renamed.txt").ConfigureAwait(true);
+
+        Assert.True(renamed);
+        Assert.True(File.Exists(Path.Combine(workspace.SourcePath, "renamed.txt")));
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRows.Any(row => row.DisplayPath.Contains("renamed.txt", StringComparison.OrdinalIgnoreCase))).ConfigureAwait(true);
+    }
+
+    [Fact]
+    public async Task MoveDriveToolDuplicateAsync_MovesFileAndRefreshesResults()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("keep.txt", "duplicate-bytes");
+        workspace.WriteSourceFile("copy.txt", "duplicate-bytes");
+        var destinationFolder = Path.Combine(workspace.SourcePath, "Moved");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(destinationFolder))
+        {
+            DriveToolsPath = workspace.SourcePath,
+        };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
+
+        viewModel.FindDuplicatesCommand.Execute(null);
+        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 3).ConfigureAwait(true);
+
+        var duplicateRow = viewModel.DriveToolDuplicateRows.Single(row => !row.IsGroupHeader && row.DisplayPath.Contains("copy.txt", StringComparison.OrdinalIgnoreCase));
+        var moved = await viewModel.MoveDriveToolDuplicateAsync(duplicateRow, destinationFolder).ConfigureAwait(true);
+
+        Assert.True(moved);
+        Assert.True(Directory.Exists(destinationFolder));
+        Assert.True(File.Exists(Path.Combine(destinationFolder, "copy.txt")));
+        Assert.False(File.Exists(Path.Combine(workspace.SourcePath, "copy.txt")));
+        Assert.Equal("No duplicated files were found in the selected source location.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task AnalyzeImageRenameCommand_SplitsMatchedNoMatchAndCompletedRows()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("IMG_7035.JPG", "matched-photo");
+        workspace.WriteSourceFile("holiday.JPG", "optional-photo");
+        workspace.WriteSourceFile("20260319_120000_IMG_9905.JPG", "completed-photo");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            DriveToolsPath = workspace.SourcePath,
+        };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
+        viewModel.IsImageRenameDriveToolSelected = true;
+
+        viewModel.AnalyzeImageRenameCommand.Execute(null);
+
+        await WaitForAsync(() =>
+            viewModel.ImageRenameMatchedRowCount == 1 &&
+            viewModel.ImageRenameNoMatchRowCount == 1 &&
+            viewModel.ImageRenameCompletedRowCount == 1 &&
+            viewModel.ImageRenameAllRowCount == 3).ConfigureAwait(true);
+
+        Assert.Equal("IMG_????", viewModel.ImageRenameMatchedRows.Single().FilePatternText);
+        Assert.Equal("No File Pattern Match", viewModel.ImageRenameNoMatchRows.Single().FilePatternText);
+        Assert.Equal("Completed", viewModel.ImageRenameCompletedRows.Single().StatusText);
+    }
+
+    [Fact]
+    public async Task ApplyImageRenameCommand_RenamesOnlySelectedRow_AndKeepsAnalysisVisible()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("IMG_7035.JPG", "matched-photo");
+        workspace.WriteSourceFile("holiday.JPG", "optional-photo");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            DriveToolsPath = workspace.SourcePath,
+        };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
+        viewModel.IsImageRenameDriveToolSelected = true;
+
+        viewModel.AnalyzeImageRenameCommand.Execute(null);
+
+        await WaitForAsync(() =>
+            viewModel.ImageRenameMatchedRowCount == 1 &&
+            viewModel.ImageRenameNoMatchRowCount == 1 &&
+            viewModel.ImageRenameAllRowCount == 2 &&
+            !viewModel.IsBusy).ConfigureAwait(true);
+
+        var matchedRow = Assert.Single(viewModel.ImageRenameMatchedRows);
+        var noMatchRow = Assert.Single(viewModel.ImageRenameNoMatchRows);
+        matchedRow.IsSelected = true;
+        noMatchRow.IsSelected = false;
+
+        Assert.True(viewModel.ApplyImageRenameCommand.CanExecute(null));
+
+        viewModel.ApplyImageRenameCommand.Execute(null);
+
+        await WaitForAsync(() =>
+            viewModel.ImageRenameCompletedRowCount == 1 &&
+            viewModel.ImageRenameMatchedRowCount == 1 &&
+            viewModel.ImageRenameNoMatchRowCount == 1 &&
+            viewModel.ImageRenameAllRowCount == 2 &&
+            viewModel.ImageRenameMatchedRows.Single().StatusText == "Renamed" &&
+            !viewModel.IsBusy).ConfigureAwait(true);
+
+        matchedRow = Assert.Single(viewModel.ImageRenameMatchedRows);
+        noMatchRow = Assert.Single(viewModel.ImageRenameNoMatchRows);
+
+        Assert.Equal("Renamed", matchedRow.RenameChevronText);
+        Assert.Equal("Renamed", matchedRow.StatusText);
+        Assert.False(matchedRow.CanSelect);
+        Assert.False(matchedRow.IsSelected);
+        Assert.Equal("Rename", noMatchRow.RenameChevronText);
+        Assert.True(noMatchRow.CanSelect);
+        Assert.Equal(2, viewModel.ImageRenameAllRowCount);
+        Assert.Equal(1, viewModel.ImageRenameCompletedRowCount);
+        Assert.Contains("remain visible", viewModel.CurrentTransferDetails, StringComparison.OrdinalIgnoreCase);
+        Assert.True(File.Exists(Path.Combine(workspace.SourcePath, matchedRow.CurrentFileName)));
+    }
+
+    [Fact]
+    public void PreventDeletingAllFilesInDuplicateGroup_DefaultsToTrue()
+    {
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null));
+
+        Assert.True(viewModel.PreventDeletingAllFilesInDuplicateGroup);
+    }
+
+    [Fact]
+    public void LoadSavedConfiguration_RestoresDuplicateDeletionSafetySetting()
+    {
+        var settingsStore = new StubSyncSettingsStore(new SyncConfiguration
+        {
+            SourcePath = "F:\\Primary",
+            DestinationPath = "E:\\Backup",
+            PreventDeletingAllFilesInDuplicateGroup = false,
+        });
+
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: settingsStore, folderPickerService: new StubFolderPickerService(null));
+
+        Assert.False(viewModel.PreventDeletingAllFilesInDuplicateGroup);
+    }
+
+    [Fact]
+    public void FileComparisonDialogViewModel_UsesSinglePreviewMetadata_WhenDestinationPaneIsHidden()
+    {
+        var viewModel = new FileComparisonDialogViewModel(
+            sourcePath: string.Empty,
+            sourceSize: string.Empty,
+            sourceModified: string.Empty,
+            destinationPath: string.Empty,
+            destinationSize: string.Empty,
+            destinationModified: string.Empty,
+            previewProviderMappings: null,
+            showDestinationPane: false,
+            dialogTitle: "File Preview",
+            headerText: "Preview file");
+
+        Assert.False(viewModel.ShowDestinationPane);
+        Assert.Equal("File Preview", viewModel.DialogTitle);
+        Assert.Equal("Preview file", viewModel.HeaderText);
     }
 
     [Fact]
@@ -2355,6 +2815,34 @@ public sealed class MainWindowViewModelTests
 
         public void Save(SyncConfiguration configuration)
         {
+        }
+    }
+
+    private sealed class RecordingSyncSettingsStore : ISyncSettingsStore
+    {
+        public SyncConfiguration? LastSavedConfiguration { get; private set; }
+
+        public SyncConfiguration? Load() => null;
+
+        public void Save(SyncConfiguration configuration)
+        {
+            LastSavedConfiguration = configuration;
+        }
+    }
+
+    private sealed class StubUserDialogService : IUserDialogService
+    {
+        public int WarningCount { get; private set; }
+
+        public string LastTitle { get; private set; } = string.Empty;
+
+        public string LastMessage { get; private set; } = string.Empty;
+
+        public void ShowWarning(string title, string message)
+        {
+            WarningCount++;
+            LastTitle = title;
+            LastMessage = message;
         }
     }
 

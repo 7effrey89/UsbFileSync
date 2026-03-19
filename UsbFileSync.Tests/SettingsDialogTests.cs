@@ -99,6 +99,57 @@ public sealed class SettingsDialogTests
     }
 
     [Fact]
+    public void TryCreateImageRenameFileNamePatterns_IncludesDefaultsAndCustomMasks()
+    {
+        var defaults = new[]
+        {
+            new SelectableTextOptionViewModel { Label = "IMG_????", Value = "IMG_????", IsSelected = true },
+            new SelectableTextOptionViewModel { Label = "DSC_????", Value = "DSC_????", IsSelected = false },
+        };
+        var customEntries = new[]
+        {
+            new EditableSelectableTextOptionViewModel { Value = "gopr????", IsSelected = true },
+            new EditableSelectableTextOptionViewModel { Value = "IMG_????", IsSelected = true },
+            new EditableSelectableTextOptionViewModel { Value = "MVI_????", IsSelected = false },
+        };
+
+        var success = SettingsDialog.TryCreateImageRenameFileNamePatterns(defaults, customEntries, out var patterns, out var errorMessage);
+
+        Assert.True(success);
+        Assert.Equal(string.Empty, errorMessage);
+        Assert.Equal(["IMG_????", "GOPR????"], patterns);
+    }
+
+    [Fact]
+    public void TryCreateImageRenameExtensions_NormalizesAndDeduplicatesExtensions()
+    {
+        var defaults = new[]
+        {
+            new SelectableTextOptionViewModel { Label = ".jpg", Value = ".jpg", IsSelected = true },
+            new SelectableTextOptionViewModel { Label = ".jpeg", Value = ".jpeg", IsSelected = false },
+        };
+        var customEntries = new[]
+        {
+            new EditableSelectableTextOptionViewModel { Value = "jpeg", IsSelected = true },
+            new EditableSelectableTextOptionViewModel { Value = ".jpg", IsSelected = true },
+            new EditableSelectableTextOptionViewModel { Value = ".heic", IsSelected = false },
+        };
+
+        var success = SettingsDialog.TryCreateImageRenameExtensions(defaults, customEntries, out var extensions, out var errorMessage);
+
+        Assert.True(success);
+        Assert.Equal(string.Empty, errorMessage);
+        Assert.Equal([".jpg", ".jpeg"], extensions);
+    }
+
+    [Fact]
+    public void CityLanguagePreferenceOptions_ExposeBothSupportedOrders()
+    {
+        Assert.Contains(ImageRenameDefaults.CityLanguagePreferenceOptions, option => option.Value == ImageRenameCityLanguagePreference.EnglishThenLocal);
+        Assert.Contains(ImageRenameDefaults.CityLanguagePreferenceOptions, option => option.Value == ImageRenameCityLanguagePreference.LocalThenEnglish);
+    }
+
+    [Fact]
     public void TryCreateCloudProviderAppRegistrations_StoresConfiguredProvidersOnly()
     {
         var registrations = new[]
