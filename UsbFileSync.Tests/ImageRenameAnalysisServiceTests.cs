@@ -223,7 +223,7 @@ public sealed class ImageRenameAnalysisServiceTests : IDisposable
             ImageRenamePatternKind.TimestampOriginalFileName,
             ["IMG_????"],
             [".jpg"],
-            progress: new Progress<ImageRenameAnalyzeProgress>(progressEvents.Enqueue));
+            progress: new ImmediateProgress<ImageRenameAnalyzeProgress>(progressEvents.Enqueue));
 
         Assert.Contains(progressEvents, progress => progress.Phase == ImageRenameAnalyzePhase.Scanning);
         Assert.Contains(progressEvents, progress => progress.Phase == ImageRenameAnalyzePhase.Planning && progress.ProcessedFiles > 0);
@@ -460,6 +460,11 @@ public sealed class ImageRenameAnalysisServiceTests : IDisposable
             RequestedPaths.Add(relativePath);
             return city;
         }
+    }
+
+    private sealed class ImmediateProgress<T>(Action<T> handler) : IProgress<T>
+    {
+        public void Report(T value) => handler(value);
     }
 
     private sealed class SlowImageRenameVolumeSource : IVolumeSource

@@ -47,7 +47,7 @@ public sealed class DuplicateFileAnalysisServiceTests
             hideMacOsSystemFiles: true,
             excludedPathPatterns: null,
             includeSubfolders: true,
-            progress: new Progress<DuplicateAnalyzeProgress>(progressEvents.Enqueue));
+            progress: new ImmediateProgress<DuplicateAnalyzeProgress>(progressEvents.Enqueue));
 
         Assert.Contains(progressEvents, progress => progress.Phase == DuplicateAnalyzePhase.Scanning);
         Assert.Contains(progressEvents, progress => progress.Phase == DuplicateAnalyzePhase.Hashing && progress.HashedFiles > 0);
@@ -106,5 +106,10 @@ public sealed class DuplicateFileAnalysisServiceTests
                 Directory.Delete(RootPath, recursive: true);
             }
         }
+    }
+
+    private sealed class ImmediateProgress<T>(Action<T> handler) : IProgress<T>
+    {
+        public void Report(T value) => handler(value);
     }
 }
