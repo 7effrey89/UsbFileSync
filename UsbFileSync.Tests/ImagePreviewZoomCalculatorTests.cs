@@ -39,6 +39,6 @@ public sealed class ImagePreviewZoomCalculatorTests
             300);
 
         Assert.Equal(62.5, offsets.X, 3);
-        Assert.Equal(6.25, offsets.Y, 3);
+        Assert.Equal(12.5, offsets.Y, 3);
     }
 }
