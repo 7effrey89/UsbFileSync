@@ -63,6 +63,7 @@ public static class SyncVolumeServiceFactory
         return new SyncConfiguration
         {
             SourcePath = configuration.SourcePath,
+            DriveToolsPath = configuration.DriveToolsPath,
             SourceVolume = sourceVolumeService.TryCreateVolume(configuration.SourcePath, out var sourceVolume, out _)
                 ? sourceVolume
                 : null,
@@ -76,11 +77,17 @@ public static class SyncVolumeServiceFactory
             VerifyChecksums = configuration.VerifyChecksums,
             MoveMode = configuration.MoveMode,
             IncludeSubfolders = configuration.IncludeSubfolders,
+            DriveToolsIncludeSubfolders = configuration.DriveToolsIncludeSubfolders,
+            PreventDeletingAllFilesInDuplicateGroup = configuration.PreventDeletingAllFilesInDuplicateGroup,
             HideMacOsSystemFiles = configuration.HideMacOsSystemFiles,
+            ExcludedPathPatterns = configuration.ExcludedPathPatterns.ToList(),
             ParallelCopyCount = configuration.ParallelCopyCount,
             PreviewProviderMappings = new Dictionary<string, string>(configuration.PreviewProviderMappings, StringComparer.OrdinalIgnoreCase),
             UseCustomCloudProviderCredentials = configuration.UseCustomCloudProviderCredentials,
             CloudProviderAppRegistrations = configuration.CloudProviderAppRegistrations.ToList(),
+            ImageRenamePattern = configuration.ImageRenamePattern,
+            ImageRenameFileNamePatterns = configuration.ImageRenameFileNamePatterns.ToList(),
+            ImageRenameExtensions = configuration.ImageRenameExtensions.ToList(),
         };
     }
 

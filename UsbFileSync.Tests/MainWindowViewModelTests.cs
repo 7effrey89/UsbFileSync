@@ -678,6 +678,38 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public void LoadSavedConfiguration_RestoresDriveToolsPath()
+    {
+        var settingsStore = new StubSyncSettingsStore(new SyncConfiguration
+        {
+            SourcePath = "F:\\Primary",
+            DestinationPath = "E:\\Backup",
+            DriveToolsPath = "D:\\Photos",
+            DriveToolsIncludeSubfolders = false,
+        });
+
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: settingsStore, folderPickerService: new StubFolderPickerService(null));
+
+        Assert.Equal("D:\\Photos", viewModel.DriveToolsPath);
+        Assert.False(viewModel.DriveToolsIncludeSubfolders);
+    }
+
+    [Fact]
+    public async Task DriveToolsPathChange_PersistsConfiguration()
+    {
+        var settingsStore = new RecordingSyncSettingsStore();
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: settingsStore, folderPickerService: new StubFolderPickerService(null));
+
+        viewModel.DriveToolsPath = "D:\\Photos";
+        viewModel.DriveToolsIncludeSubfolders = false;
+
+        await WaitForAsync(() => settingsStore.LastSavedConfiguration is not null).ConfigureAwait(true);
+
+        Assert.Equal("D:\\Photos", settingsStore.LastSavedConfiguration!.DriveToolsPath);
+        Assert.False(settingsStore.LastSavedConfiguration.DriveToolsIncludeSubfolders);
+    }
+
+    [Fact]
     public void UpdateParallelCopyCount_AllowsAutoValue_AndLogsAutoMode()
     {
         using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null));
@@ -1724,6 +1756,86 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public async Task AnalyzeImageRenameCommand_SplitsMatchedNoMatchAndCompletedRows()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("IMG_7035.JPG", "matched-photo");
+        workspace.WriteSourceFile("holiday.JPG", "optional-photo");
+        workspace.WriteSourceFile("20260319_120000_IMG_9905.JPG", "completed-photo");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            DriveToolsPath = workspace.SourcePath,
+        };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
+        viewModel.IsImageRenameDriveToolSelected = true;
+
+        viewModel.AnalyzeImageRenameCommand.Execute(null);
+
+        await WaitForAsync(() =>
+            viewModel.ImageRenameMatchedRowCount == 1 &&
+            viewModel.ImageRenameNoMatchRowCount == 1 &&
+            viewModel.ImageRenameCompletedRowCount == 1 &&
+            viewModel.ImageRenameAllRowCount == 3).ConfigureAwait(true);
+
+        Assert.Equal("IMG_????", viewModel.ImageRenameMatchedRows.Single().FilePatternText);
+        Assert.Equal("No File Pattern Match", viewModel.ImageRenameNoMatchRows.Single().FilePatternText);
+        Assert.Equal("Completed", viewModel.ImageRenameCompletedRows.Single().StatusText);
+    }
+
+    [Fact]
+    public async Task ApplyImageRenameCommand_RenamesOnlySelectedRow_AndKeepsAnalysisVisible()
+    {
+        using var workspace = new SyncTestWorkspace();
+        workspace.WriteSourceFile("IMG_7035.JPG", "matched-photo");
+        workspace.WriteSourceFile("holiday.JPG", "optional-photo");
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null))
+        {
+            DriveToolsPath = workspace.SourcePath,
+        };
+        viewModel.IsDriveToolsWorkspaceSelected = true;
+        viewModel.IsImageRenameDriveToolSelected = true;
+
+        viewModel.AnalyzeImageRenameCommand.Execute(null);
+
+        await WaitForAsync(() =>
+            viewModel.ImageRenameMatchedRowCount == 1 &&
+            viewModel.ImageRenameNoMatchRowCount == 1 &&
+            viewModel.ImageRenameAllRowCount == 2 &&
+            !viewModel.IsBusy).ConfigureAwait(true);
+
+        var matchedRow = Assert.Single(viewModel.ImageRenameMatchedRows);
+        var noMatchRow = Assert.Single(viewModel.ImageRenameNoMatchRows);
+        matchedRow.IsSelected = true;
+        noMatchRow.IsSelected = false;
+
+        Assert.True(viewModel.ApplyImageRenameCommand.CanExecute(null));
+
+        viewModel.ApplyImageRenameCommand.Execute(null);
+
+        await WaitForAsync(() =>
+            viewModel.ImageRenameCompletedRowCount == 1 &&
+            viewModel.ImageRenameMatchedRowCount == 1 &&
+            viewModel.ImageRenameNoMatchRowCount == 1 &&
+            viewModel.ImageRenameAllRowCount == 2 &&
+            viewModel.ImageRenameMatchedRows.Single().StatusText == "Renamed" &&
+            !viewModel.IsBusy).ConfigureAwait(true);
+
+        matchedRow = Assert.Single(viewModel.ImageRenameMatchedRows);
+        noMatchRow = Assert.Single(viewModel.ImageRenameNoMatchRows);
+
+        Assert.Equal("Renamed", matchedRow.RenameChevronText);
+        Assert.Equal("Renamed", matchedRow.StatusText);
+        Assert.False(matchedRow.CanSelect);
+        Assert.False(matchedRow.IsSelected);
+        Assert.Equal("Rename", noMatchRow.RenameChevronText);
+        Assert.True(noMatchRow.CanSelect);
+        Assert.Equal(2, viewModel.ImageRenameAllRowCount);
+        Assert.Equal(1, viewModel.ImageRenameCompletedRowCount);
+        Assert.Contains("remain visible", viewModel.CurrentTransferDetails, StringComparison.OrdinalIgnoreCase);
+        Assert.True(File.Exists(Path.Combine(workspace.SourcePath, matchedRow.CurrentFileName)));
+    }
+
+    [Fact]
     public void PreventDeletingAllFilesInDuplicateGroup_DefaultsToTrue()
     {
         using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: null, folderPickerService: new StubFolderPickerService(null));
@@ -2675,6 +2787,18 @@ public sealed class MainWindowViewModelTests
 
         public void Save(SyncConfiguration configuration)
         {
+        }
+    }
+
+    private sealed class RecordingSyncSettingsStore : ISyncSettingsStore
+    {
+        public SyncConfiguration? LastSavedConfiguration { get; private set; }
+
+        public SyncConfiguration? Load() => null;
+
+        public void Save(SyncConfiguration configuration)
+        {
+            LastSavedConfiguration = configuration;
         }
     }
 

@@ -26,6 +26,7 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
         var configuration = new SyncConfiguration
         {
             SourcePath = @"E:\MainDrive",
+            DriveToolsPath = @"D:\Photos",
             DestinationPath = @"F:\BackupDrive",
             Mode = SyncMode.TwoWay,
             DetectMoves = false,
@@ -33,6 +34,7 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
             VerifyChecksums = true,
             MoveMode = true,
             IncludeSubfolders = false,
+            DriveToolsIncludeSubfolders = false,
             PreventDeletingAllFilesInDuplicateGroup = false,
             HideMacOsSystemFiles = false,
             ExcludedPathPatterns = ["node_modules", ".venv", "bin", "obj"],
@@ -44,6 +46,7 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
 
         Assert.NotNull(restored);
         Assert.Equal(configuration.SourcePath, restored.SourcePath);
+        Assert.Equal(configuration.DriveToolsPath, restored.DriveToolsPath);
         Assert.Equal(configuration.DestinationPath, restored.DestinationPath);
         Assert.Equal(configuration.Mode, restored.Mode);
         Assert.Equal(configuration.DetectMoves, restored.DetectMoves);
@@ -51,6 +54,7 @@ public sealed class JsonSyncSettingsStoreTests : IDisposable
         Assert.Equal(configuration.VerifyChecksums, restored.VerifyChecksums);
         Assert.Equal(configuration.MoveMode, restored.MoveMode);
         Assert.Equal(configuration.IncludeSubfolders, restored.IncludeSubfolders);
+        Assert.Equal(configuration.DriveToolsIncludeSubfolders, restored.DriveToolsIncludeSubfolders);
         Assert.Equal(configuration.PreventDeletingAllFilesInDuplicateGroup, restored.PreventDeletingAllFilesInDuplicateGroup);
         Assert.Equal(configuration.HideMacOsSystemFiles, restored.HideMacOsSystemFiles);
         Assert.Equal(configuration.ExcludedPathPatterns, restored.ExcludedPathPatterns);

@@ -9,6 +9,8 @@ public sealed class SyncConfiguration
 {
     public string SourcePath { get; init; } = string.Empty;
 
+    public string DriveToolsPath { get; init; } = string.Empty;
+
     [JsonIgnore]
     public IVolumeSource? SourceVolume { get; init; }
 
@@ -33,6 +35,8 @@ public sealed class SyncConfiguration
     public bool MoveMode { get; init; }
 
     public bool IncludeSubfolders { get; init; } = true;
+
+    public bool DriveToolsIncludeSubfolders { get; init; } = true;
 
     public bool HideMacOsSystemFiles { get; init; } = true;
 
