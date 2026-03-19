@@ -76,7 +76,7 @@
                 <StackPanel Margin="0,18,0,0">
                     <TextBlock Text="Image rename camera filename scope" FontSize="15" FontWeight="SemiBold" />
                     <TextBlock Margin="0,8,0,0"
-                               Text="UsbFileSync only renames common camera-style filenames. Choose the default camera masks to include, then add your own masks below if needed. Use ? for one character and * for multiple characters."
+                               Text="UsbFileSync only renames common camera-style filenames. Choose the default camera File Patterns to include, then add your own File Patterns below if needed. Use ? for one character and * for multiple characters."
                                TextWrapping="Wrap"
                                Foreground="#616161" />
                     <ItemsControl x:Name="ImageRenamePatternOptionsItemsControl" Margin="0,12,0,0">
@@ -89,10 +89,10 @@
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
                     <TextBlock Margin="0,12,0,0"
-                               Text="Custom filename masks"
+                               Text="Custom File Patterns"
                                FontWeight="SemiBold" />
                     <TextBlock Margin="0,8,0,0"
-                               Text="Add one custom mask per row, then check the rows you want Image Rename to use."
+                               Text="Add one custom File Pattern per row, then check the rows you want Image Rename to use."
                                TextWrapping="Wrap"
                                Foreground="#616161" />
                     <ItemsControl x:Name="ImageRenameCustomPatternItemsControl" Margin="0,10,0,0">
@@ -124,10 +124,10 @@
                     <Button Width="170"
                             Margin="0,10,0,0"
                             HorizontalAlignment="Left"
-                            Content="Add custom mask"
+                            Content="Add custom File Pattern"
                             Click="OnAddImageRenameCustomPatternClicked" />
                     <TextBlock Margin="0,8,0,0"
-                               Text="Example custom masks: GOPR????, MVI_????, or VID_*."
+                               Text="Example custom File Patterns: GOPR????, MVI_????, or VID_*."
                                TextWrapping="Wrap"
                                Foreground="#616161" />
                 </StackPanel>

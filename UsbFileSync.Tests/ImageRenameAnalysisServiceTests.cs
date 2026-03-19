@@ -37,6 +37,7 @@ public sealed class ImageRenameAnalysisServiceTests : IDisposable
         Assert.Equal("20240305_101112_IMG_1234.jpg", plan.ProposedFileName);
         Assert.Equal(2, result.CandidateFileCount);
         Assert.Equal(1, result.MatchedMaskCandidateCount);
+        Assert.Equal(0, result.CompletedCandidateCount);
     }
 
     [Fact]
@@ -59,7 +60,7 @@ public sealed class ImageRenameAnalysisServiceTests : IDisposable
             [".jpg"]);
 
         Assert.Collection(
-            result.RenameSuggestions.OrderBy(plan => plan.CurrentFileName, StringComparer.OrdinalIgnoreCase),
+            result.RenameSuggestions.Where(plan => !plan.IsCompleted).OrderBy(plan => plan.CurrentFileName, StringComparer.OrdinalIgnoreCase),
             first =>
             {
                 Assert.Equal("IMG_0001.jpg", first.CurrentFileName);
@@ -118,18 +119,21 @@ public sealed class ImageRenameAnalysisServiceTests : IDisposable
         Assert.Equal(2, result.RenameSuggestions.Count);
         Assert.Equal(2, result.CandidateFileCount);
         Assert.Equal(1, result.MatchedMaskCandidateCount);
+        Assert.Equal(0, result.CompletedCandidateCount);
         Assert.Collection(
             result.RenameSuggestions.OrderBy(plan => plan.CurrentFileName, StringComparer.OrdinalIgnoreCase),
             matched =>
             {
                 Assert.Equal("IMG_1234.jpg", matched.CurrentFileName);
                 Assert.True(matched.IsMatchedByFileNameMask);
+                Assert.False(matched.IsCompleted);
                 Assert.Equal("IMG_????", matched.MatchedFileNameMask);
             },
             unmatched =>
             {
                 Assert.Equal("notes.jpg", unmatched.CurrentFileName);
                 Assert.False(unmatched.IsMatchedByFileNameMask);
+                Assert.False(unmatched.IsCompleted);
                 Assert.Equal(string.Empty, unmatched.MatchedFileNameMask);
                 Assert.Equal("20240305_101112_notes.jpg", unmatched.ProposedFileName);
             });
@@ -154,6 +158,43 @@ public sealed class ImageRenameAnalysisServiceTests : IDisposable
         var plan = Assert.Single(result.RenameSuggestions);
         Assert.Equal("20240305_101112_IMG_1234_Berlin.jpg", plan.ProposedFileName);
         Assert.Equal(["IMG_1234.jpg"], cityResolver.RequestedPaths);
+    }
+
+    [Fact]
+    public void Analyze_TracksCompletedFilesThatAlreadyMatchTheTargetFormat()
+    {
+        WriteFile("20240305_101112_IMG_1234.jpg", new DateTime(2024, 3, 5, 10, 11, 12, DateTimeKind.Utc));
+        WriteFile("IMG_1234.jpg", new DateTime(2024, 3, 5, 10, 11, 12, DateTimeKind.Utc));
+
+        var service = new ImageRenameAnalysisService();
+
+        var result = service.Analyze(
+            new WindowsMountedVolume(_rootPath),
+            hideMacOsSystemFiles: false,
+            excludedPathPatterns: null,
+            includeSubfolders: true,
+            ImageRenamePatternKind.TimestampOriginalFileName,
+            ["IMG_????"],
+            [".jpg"]);
+
+        Assert.Equal(2, result.CandidateFileCount);
+        Assert.Equal(1, result.CompletedCandidateCount);
+        Assert.Equal(2, result.RenameSuggestions.Count);
+
+        Assert.Collection(
+            result.RenameSuggestions.OrderBy(plan => plan.CurrentFileName, StringComparer.OrdinalIgnoreCase),
+            completed =>
+            {
+                Assert.Equal("20240305_101112_IMG_1234.jpg", completed.CurrentFileName);
+                Assert.True(completed.IsCompleted);
+                Assert.Equal(completed.SourceRelativePath, completed.ProposedRelativePath);
+                Assert.Equal(completed.CurrentFileName, completed.ProposedFileName);
+            },
+            pending =>
+            {
+                Assert.Equal("IMG_1234.jpg", pending.CurrentFileName);
+                Assert.False(pending.IsCompleted);
+            });
     }
 
     [Fact]

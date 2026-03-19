@@ -365,7 +365,7 @@ public partial class SettingsDialog : Window
 
             if (normalizedPattern.IndexOfAny(['/', '\\', '.']) >= 0)
             {
-                errorMessage = $"The camera filename mask '{rawPattern}' can only describe the base filename, not folders or extensions.";
+                errorMessage = $"The camera File Pattern '{rawPattern}' can only describe the base filename, not folders or extensions.";
                 return false;
             }
 
@@ -377,7 +377,7 @@ public partial class SettingsDialog : Window
 
         if (patterns.Count == 0)
         {
-            errorMessage = "Select at least one camera filename mask for Image Rename.";
+            errorMessage = "Select at least one camera File Pattern for Image Rename.";
             return false;
         }
 

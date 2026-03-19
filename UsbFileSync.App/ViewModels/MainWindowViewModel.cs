@@ -194,7 +194,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         AllFiles = new BulkObservableCollection<SyncPreviewRowViewModel>();
         DriveToolDuplicateRows = new BulkObservableCollection<DriveToolDuplicateRowViewModel>();
         ImageRenameMatchedRows = new BulkObservableCollection<ImageRenameRowViewModel>();
-        ImageRenameUnmatchedRows = new BulkObservableCollection<ImageRenameRowViewModel>();
+        ImageRenameAllRows = new BulkObservableCollection<ImageRenameRowViewModel>();
+        ImageRenameCompletedRows = new BulkObservableCollection<ImageRenameRowViewModel>();
         if (_hasWpfApplication)
         {
             _previewViews[PreviewTabKind.NewFiles] = CreatePreviewView(NewFiles);
@@ -257,7 +258,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<ImageRenameRowViewModel> ImageRenameMatchedRows { get; }
 
-    public ObservableCollection<ImageRenameRowViewModel> ImageRenameUnmatchedRows { get; }
+    public ObservableCollection<ImageRenameRowViewModel> ImageRenameAllRows { get; }
+
+    public ObservableCollection<ImageRenameRowViewModel> ImageRenameCompletedRows { get; }
 
     public ObservableCollection<SyncLogEntryViewModel> ActivityLog { get; }
 
@@ -686,8 +689,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public string ImageRenamePatternDescription =>
         ImageRenamePattern == ImageRenamePatternKind.TimestampOriginalFileNameCity
-            ? "Rename analysis uses the stored file timestamp, tries to resolve a city from supported GPS metadata, preselects mask matches, and puts no-mask files on a separate optional tab."
-            : "Rename analysis uses the stored file timestamp, preselects mask matches, keeps no-mask files on a separate optional tab, and adds a sequencer when a target name is already taken.";
+            ? "Rename analysis uses the stored file timestamp, tries to resolve a city from supported GPS metadata, preselects File Pattern matches, shows all analyzed media in All, and keeps already aligned files in Completed."
+            : "Rename analysis uses the stored file timestamp, preselects File Pattern matches, shows all analyzed media in All, keeps already aligned files in Completed, and adds a sequencer when a target name is already taken.";
 
     public bool UseCustomCloudProviderCredentials
     {
@@ -852,9 +855,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public int ImageRenameMatchedRowCount => ImageRenameMatchedRows.Count;
 
-    public int ImageRenameUnmatchedRowCount => ImageRenameUnmatchedRows.Count;
+    public int ImageRenameAllRowCount => ImageRenameAllRows.Count;
 
-    public int ImageRenameRowCount => ImageRenameMatchedRows.Count + ImageRenameUnmatchedRows.Count;
+    public int ImageRenameCompletedRowCount => ImageRenameCompletedRows.Count;
+
+    public int ImageRenameRowCount => ImageRenameAllRows.Count;
 
     public int AllFilesCount => AllFiles.Count;
 
@@ -900,10 +905,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         set => SetImageRenameSelection(ImageRenameMatchedRows, value);
     }
 
-    public bool? AreAllImageRenameUnmatchedRowsSelected
+    public bool? AreAllImageRenameAllRowsSelected
     {
-        get => GetImageRenameSelectionState(ImageRenameUnmatchedRows);
-        set => SetImageRenameSelection(ImageRenameUnmatchedRows, value);
+        get => GetImageRenameSelectionState(ImageRenameAllRows);
+        set => SetImageRenameSelection(ImageRenameAllRows, value);
     }
 
     public string QueueSummary => RemainingQueue.Count == 0
@@ -1068,6 +1073,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         SyncPreviewRowViewModel row => !string.IsNullOrWhiteSpace(row.OpenPath),
         DriveToolDuplicateRowViewModel row => row.HasOpenPath,
+        ImageRenameRowViewModel row => row.HasOpenPath,
         _ => false,
     };
 
@@ -1075,6 +1081,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         SyncPreviewRowViewModel row => File.Exists(row.OpenPath),
         DriveToolDuplicateRowViewModel row => row.HasOpenPath && File.Exists(row.OpenPath),
+        ImageRenameRowViewModel row => row.HasOpenPath && File.Exists(row.OpenPath),
         _ => false,
     };
 
@@ -1281,7 +1288,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         HandleConfigurationChanged();
-        AddLog("Settings", $"Image rename filename scope updated for {_imageRenameFileNamePatterns.Count} mask(s).");
+        AddLog("Settings", $"Image rename filename scope updated for {_imageRenameFileNamePatterns.Count} File Pattern entry(s).");
     }
 
     public void UpdateImageRenameExtensions(IReadOnlyList<string> imageRenameExtensions)
@@ -1779,7 +1786,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 _imageRenameAnalysisService.ApplyRenames(sourceVolume, selectedPlans, cancellationTokenSource.Token),
                 cancellationTokenSource.Token).ConfigureAwait(true);
 
-            ReplaceImageRenameRows([], []);
+            ReplaceImageRenameRows([], [], []);
             _imageRenamePlanItems.Clear();
             SetStatusMessage(
                 appliedCount == 1
@@ -2575,7 +2582,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         ReplaceDriveToolDuplicateEntries([]);
         ReplaceDriveToolDuplicateRows([]);
-        ReplaceImageRenameRows([], []);
+        ReplaceImageRenameRows([], [], []);
         _imageRenamePlanItems.Clear();
         ReplaceActions(actions);
         await ReplacePreviewAsync(preview, cancellationToken).ConfigureAwait(true);
@@ -2595,7 +2602,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         var duplicateRows = CreateDriveToolDuplicateRows(analysisResult.Groups);
         ReplaceDriveToolDuplicateEntries(analysisResult.Groups.SelectMany(group => group.Files));
         ReplaceDriveToolDuplicateRows(duplicateRows);
-        ReplaceImageRenameRows([], []);
+        ReplaceImageRenameRows([], [], []);
         _imageRenamePlanItems.Clear();
         ReplaceActions([]);
         ReplaceQueue([]);
@@ -2615,33 +2622,50 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void ApplyImageRenameAnalysisResult(ImageRenameAnalysisResult analysisResult)
     {
-        var matchedRows = analysisResult.RenameSuggestions
-            .Where(plan => plan.IsMatchedByFileNameMask)
-            .Select(plan => new ImageRenameRowViewModel(plan, isSelected: true))
-            .ToList();
-        var unmatchedRows = analysisResult.RenameSuggestions
-            .Where(plan => !plan.IsMatchedByFileNameMask)
-            .Select(plan => new ImageRenameRowViewModel(plan))
-            .ToList();
+        var allRows = new List<ImageRenameRowViewModel>();
+        var matchedRows = new List<ImageRenameRowViewModel>();
+        var completedRows = new List<ImageRenameRowViewModel>();
+        foreach (var plan in analysisResult.RenameSuggestions)
+        {
+            var row = new ImageRenameRowViewModel(
+                plan,
+                isSelected: plan.IsMatchedByFileNameMask && !plan.IsCompleted,
+                driveDisplayNameService: _driveDisplayNameService);
+            allRows.Add(row);
+            if (plan.IsCompleted)
+            {
+                completedRows.Add(row);
+            }
+
+            if (plan.IsMatchedByFileNameMask && !plan.IsCompleted)
+            {
+                matchedRows.Add(row);
+            }
+        }
 
         ReplaceDriveToolDuplicateEntries([]);
         ReplaceDriveToolDuplicateRows([]);
-        ReplaceImageRenameRows(matchedRows, unmatchedRows);
+        ReplaceImageRenameRows(matchedRows, allRows, completedRows);
         _imageRenamePlanItems.Clear();
         _imageRenamePlanItems.AddRange(analysisResult.RenameSuggestions);
         ReplaceActions([]);
         ReplaceQueue([]);
 
         var renameSuggestionCount = analysisResult.RenameSuggestions.Count;
-        var unmatchedCandidateCount = Math.Max(0, analysisResult.CandidateFileCount - analysisResult.MatchedMaskCandidateCount);
+        var pendingRenameCount = analysisResult.RenameSuggestions.Count(plan => !plan.IsCompleted);
+        var optionalCandidateCount = Math.Max(0, analysisResult.CandidateFileCount - analysisResult.MatchedMaskCandidateCount - analysisResult.CompletedCandidateCount);
         var message = renameSuggestionCount == 0
             ? $"No image rename candidates were staged across {analysisResult.ScannedFileCount} scanned file(s)."
-            : $"Prepared {renameSuggestionCount} image rename suggestion(s) from {analysisResult.CandidateFileCount} media candidate file(s). {analysisResult.MatchedMaskCandidateCount} matched the current filename mask scope and {unmatchedCandidateCount} did not.";
+            : pendingRenameCount == 0
+                ? $"All {analysisResult.CompletedCandidateCount} analyzed media file(s) already align with the current rename format."
+            : $"Prepared {renameSuggestionCount} analyzed media row(s) from {analysisResult.CandidateFileCount} candidate file(s). {analysisResult.MatchedMaskCandidateCount} matched the current file pattern scope, {analysisResult.CompletedCandidateCount} are already completed, and {optionalCandidateCount} remain optional in All.";
         SetStatusMessage(message, isSuccess: renameSuggestionCount > 0);
-        CurrentTransferItem = renameSuggestionCount == 0 ? "No image renames pending." : "Image rename results ready.";
+        CurrentTransferItem = pendingRenameCount == 0 ? "Image rename analysis complete." : "Image rename results ready.";
         CurrentTransferDetails = renameSuggestionCount == 0
             ? "No eligible media files were found for the current rename pattern."
-            : $"{matchedRows.Count} mask match(es) preselected and {unmatchedRows.Count} no-mask suggestion(s) available for optional selection.";
+            : pendingRenameCount == 0
+                ? $"{completedRows.Count} completed file(s) already match the configured rename format."
+            : $"{matchedRows.Count} file pattern match(es) preselected, {completedRows.Count} completed file(s) locked, and {optionalCandidateCount} optional row(s) available in All.";
         CurrentTransferProgressValue = 0;
         AddLog("Image Rename", StatusMessage, renameSuggestionCount == 0 ? SyncLogSeverity.Verbose : SyncLogSeverity.Warning);
     }
@@ -2719,36 +2743,29 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void ReplaceImageRenameRows(
         IReadOnlyList<ImageRenameRowViewModel> matchedRows,
-        IReadOnlyList<ImageRenameRowViewModel> unmatchedRows)
+        IReadOnlyList<ImageRenameRowViewModel> allRows,
+        IReadOnlyList<ImageRenameRowViewModel> completedRows)
     {
         RunOnDispatcher(() =>
         {
-            foreach (var existingRow in ImageRenameMatchedRows)
-            {
-                existingRow.PropertyChanged -= OnImageRenameRowPropertyChanged;
-            }
-
-            foreach (var existingRow in ImageRenameUnmatchedRows)
+            foreach (var existingRow in ImageRenameMatchedRows.Concat(ImageRenameAllRows).Concat(ImageRenameCompletedRows).Distinct())
             {
                 existingRow.PropertyChanged -= OnImageRenameRowPropertyChanged;
             }
 
             ReplaceCollection(ImageRenameMatchedRows, matchedRows);
-            ReplaceCollection(ImageRenameUnmatchedRows, unmatchedRows);
-            foreach (var row in ImageRenameMatchedRows)
-            {
-                row.PropertyChanged += OnImageRenameRowPropertyChanged;
-            }
-
-            foreach (var row in ImageRenameUnmatchedRows)
+            ReplaceCollection(ImageRenameAllRows, allRows);
+            ReplaceCollection(ImageRenameCompletedRows, completedRows);
+            foreach (var row in ImageRenameMatchedRows.Concat(ImageRenameAllRows).Concat(ImageRenameCompletedRows).Distinct())
             {
                 row.PropertyChanged += OnImageRenameRowPropertyChanged;
             }
             RaisePropertyChanged(nameof(ImageRenameRowCount));
             RaisePropertyChanged(nameof(ImageRenameMatchedRowCount));
-            RaisePropertyChanged(nameof(ImageRenameUnmatchedRowCount));
+            RaisePropertyChanged(nameof(ImageRenameAllRowCount));
+            RaisePropertyChanged(nameof(ImageRenameCompletedRowCount));
             RaisePropertyChanged(nameof(AreAllImageRenameMatchedRowsSelected));
-            RaisePropertyChanged(nameof(AreAllImageRenameUnmatchedRowsSelected));
+            RaisePropertyChanged(nameof(AreAllImageRenameAllRowsSelected));
             AnalyzeImageRenameCommand.RaiseCanExecuteChanged();
             ApplyImageRenameCommand.RaiseCanExecuteChanged();
         });
@@ -3245,9 +3262,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     }
 
     private IReadOnlyList<ImageRenamePlanItem> GetSelectedImageRenamePlans() =>
-        ImageRenameMatchedRows
-            .Concat(ImageRenameUnmatchedRows)
-            .Where(row => row.IsSelected)
+        ImageRenameAllRows
+            .Where(row => row.CanSelect && row.IsSelected)
             .Select(row => row.PlanItem)
             .ToList();
 
@@ -3277,7 +3293,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private static bool? GetImageRenameSelectionState(IEnumerable<ImageRenameRowViewModel> rows)
     {
-        var selectableRows = rows.ToList();
+        var selectableRows = rows
+            .Where(row => row.CanSelect)
+            .ToList();
         if (selectableRows.Count == 0)
         {
             return false;
@@ -3311,7 +3329,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             foreach (var row in rows)
             {
-                row.IsSelected = isSelected.Value;
+                if (row.CanSelect)
+                {
+                    row.IsSelected = isSelected.Value;
+                }
             }
         }
         finally
@@ -3628,7 +3649,29 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             duplicateRow.FileEntry is null ||
             string.IsNullOrWhiteSpace(duplicateRow.OpenPath))
         {
-            return null;
+            if (parameter is not ImageRenameRowViewModel imageRenameRow ||
+                string.IsNullOrWhiteSpace(imageRenameRow.OpenPath))
+            {
+                return null;
+            }
+
+            return new SyncPreviewRowViewModel(
+                new SyncPreviewItem(
+                    ItemKey: imageRenameRow.ItemKey,
+                    RelativePath: imageRenameRow.PlanItem.SourceRelativePath,
+                    IsDirectory: false,
+                    SourceFullPath: imageRenameRow.OpenPath,
+                    SourceLength: null,
+                    SourceLastWriteTimeUtc: imageRenameRow.PlanItem.TimestampLocal.ToUniversalTime(),
+                    DestinationFullPath: string.Empty,
+                    DestinationLength: null,
+                    DestinationLastWriteTimeUtc: null,
+                    Direction: string.Empty,
+                    Status: imageRenameRow.StatusText,
+                    Category: SyncPreviewCategory.UnchangedFiles,
+                    PlannedActionType: null,
+                    DriveLocationPath: DriveToolsPath),
+                driveDisplayNameService: _driveDisplayNameService);
         }
 
         return new SyncPreviewRowViewModel(
@@ -3656,6 +3699,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             SyncPreviewRowViewModel row => row.OpenPath,
             DriveToolDuplicateRowViewModel row => row.OpenPath,
+            ImageRenameRowViewModel row => row.OpenPath,
             _ => string.Empty,
         };
 
@@ -3863,7 +3907,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private void RaiseImageRenameSelectionStateChanged()
     {
         RaisePropertyChanged(nameof(AreAllImageRenameMatchedRowsSelected));
-        RaisePropertyChanged(nameof(AreAllImageRenameUnmatchedRowsSelected));
+        RaisePropertyChanged(nameof(AreAllImageRenameAllRowsSelected));
         ApplyImageRenameCommand.RaiseCanExecuteChanged();
     }
 
@@ -4100,7 +4144,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             BusyOperationKind.Analyze => ("Loading preview...", "Building the synchronization preview."),
             BusyOperationKind.FindDuplicates => ("Finding duplicates...", "Hashing same-size files to confirm identical copies."),
-            BusyOperationKind.AnalyzeImageRename => ("Analyzing image rename...", "Preparing rename suggestions, separating mask matches, and reserving unique target names."),
+            BusyOperationKind.AnalyzeImageRename => ("Analyzing image rename...", "Preparing File Pattern matches, All rows, and Completed rows while reserving unique target names."),
             BusyOperationKind.Sync => ("Synchronizing...", "Applying the selected file operations."),
             _ => ("Working...", "Please wait."),
         };

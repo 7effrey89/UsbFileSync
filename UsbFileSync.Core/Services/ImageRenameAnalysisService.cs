@@ -42,6 +42,7 @@ public sealed class ImageRenameAnalysisService
         var plans = new List<ImageRenamePlanItem>();
         var candidateCount = 0;
         var matchedMaskCandidateCount = 0;
+        var completedCandidateCount = 0;
 
         foreach (var snapshot in snapshots.Values.OrderBy(snapshot => snapshot.RelativePath, StringComparer.OrdinalIgnoreCase))
         {
@@ -62,14 +63,27 @@ public sealed class ImageRenameAnalysisService
                 matchedMaskCandidateCount++;
             }
 
+            if (LooksLikeCompletedFileName(fileNameWithoutExtension, patternKind))
+            {
+                completedCandidateCount++;
+                plans.Add(new ImageRenamePlanItem(
+                    snapshot.RelativePath,
+                    snapshot.FullPath,
+                    Path.GetFileName(snapshot.RelativePath),
+                    Path.GetFileName(snapshot.RelativePath),
+                    snapshot.RelativePath,
+                    matchedMask.Key ?? string.Empty,
+                    snapshot.LastWriteTimeUtc.ToLocalTime(),
+                    UsedCollisionSuffix: false,
+                    IsMatchedByFileNameMask: isMatchedByMask,
+                    IsCompleted: true));
+                continue;
+            }
+
             var city = patternKind == ImageRenamePatternKind.TimestampOriginalFileNameCity
                 ? _cityResolver.TryResolveCity(volume, snapshot.RelativePath, extension)
                 : null;
             var proposedFileName = BuildProposedFileName(snapshot.LastWriteTimeUtc.ToLocalTime(), fileNameWithoutExtension, extension, patternKind, city);
-            if (string.Equals(Path.GetFileName(snapshot.RelativePath), proposedFileName, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
 
             var proposedRelativePath = BuildUniqueRelativePath(snapshot.RelativePath, proposedFileName, occupiedRelativePaths);
 
@@ -88,10 +102,11 @@ public sealed class ImageRenameAnalysisService
                 matchedMask.Key ?? string.Empty,
                 snapshot.LastWriteTimeUtc.ToLocalTime(),
                 !string.Equals(Path.GetFileName(proposedRelativePath), proposedFileName, StringComparison.OrdinalIgnoreCase),
-                isMatchedByMask));
+                isMatchedByMask,
+                IsCompleted: false));
         }
 
-        return new ImageRenameAnalysisResult(plans, snapshots.Count, candidateCount, matchedMaskCandidateCount);
+        return new ImageRenameAnalysisResult(plans, snapshots.Count, candidateCount, matchedMaskCandidateCount, completedCandidateCount);
     }
 
     public int ApplyRenames(IVolumeSource volume, IEnumerable<ImageRenamePlanItem> plannedRenames, CancellationToken cancellationToken)
@@ -100,7 +115,9 @@ public sealed class ImageRenameAnalysisService
         ArgumentNullException.ThrowIfNull(plannedRenames);
 
         var appliedCount = 0;
-        foreach (var plan in plannedRenames.OrderBy(plan => plan.SourceRelativePath, StringComparer.OrdinalIgnoreCase))
+        foreach (var plan in plannedRenames
+            .Where(plan => !plan.IsCompleted)
+            .OrderBy(plan => plan.SourceRelativePath, StringComparer.OrdinalIgnoreCase))
         {
             cancellationToken.ThrowIfCancellationRequested();
             volume.Move(plan.SourceRelativePath, plan.ProposedRelativePath, overwrite: false);
@@ -196,6 +213,35 @@ public sealed class ImageRenameAnalysisService
             .Replace("\\?", ".", StringComparison.Ordinal) + "$";
 
         return new Regex(pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    }
+
+    private static bool LooksLikeCompletedFileName(string fileNameWithoutExtension, ImageRenamePatternKind patternKind)
+    {
+        var normalizedFileName = fileNameWithoutExtension?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(normalizedFileName) ||
+            normalizedFileName.Length < 15)
+        {
+            return false;
+        }
+
+        var timestampSegment = normalizedFileName[..15];
+        if (!DateTime.TryParseExact(
+                timestampSegment,
+                "yyyyMMdd_HHmmss",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out _))
+        {
+            return false;
+        }
+
+        return patternKind switch
+        {
+            ImageRenamePatternKind.TimestampOnly => normalizedFileName.Length == 15,
+            ImageRenamePatternKind.TimestampOriginalFileName => normalizedFileName.Length > 16 && normalizedFileName[15] == '_',
+            ImageRenamePatternKind.TimestampOriginalFileNameCity => normalizedFileName.Length > 16 && normalizedFileName[15] == '_',
+            _ => normalizedFileName.Length > 16 && normalizedFileName[15] == '_',
+        };
     }
 
     private static string SanitizeSegment(string? value)

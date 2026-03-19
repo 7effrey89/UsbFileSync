@@ -9,10 +9,12 @@ public sealed record ImageRenamePlanItem(
     string MatchedFileNameMask,
     DateTime TimestampLocal,
     bool UsedCollisionSuffix,
-    bool IsMatchedByFileNameMask);
+    bool IsMatchedByFileNameMask,
+    bool IsCompleted);
 
 public sealed record ImageRenameAnalysisResult(
     IReadOnlyList<ImageRenamePlanItem> RenameSuggestions,
     int ScannedFileCount,
     int CandidateFileCount,
-    int MatchedMaskCandidateCount);
+    int MatchedMaskCandidateCount,
+    int CompletedCandidateCount);
