@@ -10,6 +10,7 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>UsbFileSync</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>

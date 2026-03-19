@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version or tag name"
+        required: false
+        type: string
+      sign:
+        description: "Sign the published executable when signing secrets are available"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  publish-release:
+    runs-on: windows-latest
+    env:
+      WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
+      WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
+      WINDOWS_CODESIGN_TIMESTAMP_URL: ${{ secrets.WINDOWS_CODESIGN_TIMESTAMP_URL }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6.0.2
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5.2.0
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore "${{ github.workspace }}/UsbFileSync.sln"
+
+      - name: Build
+        run: dotnet build "${{ github.workspace }}/UsbFileSync.sln" --configuration Release --no-restore
+
+      - name: Run unit tests
+        run: dotnet test "${{ github.workspace }}/UsbFileSync.Tests/UsbFileSync.Tests.csproj" --configuration Release --no-build
+
+      - name: Publish release package
+        id: publish
+        shell: pwsh
+        run: |
+          $version = "${{ inputs.version }}"
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            $version = "${{ github.ref_name }}"
+          }
+
+          $shouldSign = $true
+          if ("${{ github.event_name }}" -eq "workflow_dispatch" -and "${{ inputs.sign }}" -eq "false") {
+            $shouldSign = $false
+          }
+
+          $arguments = @(
+            "-Version", $version
+          )
+
+          if ($shouldSign -and $env:WINDOWS_CODESIGN_PFX_BASE64 -and $env:WINDOWS_CODESIGN_PFX_PASSWORD) {
+            $certificatePath = Join-Path $env:RUNNER_TEMP "codesign.pfx"
+            [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CODESIGN_PFX_BASE64))
+            $arguments += @(
+              "-Sign",
+              "-SigningCertificatePath", $certificatePath,
+              "-SigningCertificatePassword", $env:WINDOWS_CODESIGN_PFX_PASSWORD
+            )
+          }
+
+          if ($env:WINDOWS_CODESIGN_TIMESTAMP_URL) {
+            $arguments += @(
+              "-TimestampServer", $env:WINDOWS_CODESIGN_TIMESTAMP_URL
+            )
+          }
+
+          ./scripts/Publish-Release.ps1 @arguments
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: UsbFileSync-${{ steps.publish.outputs.release_version }}-win-x64
+          path: ${{ steps.publish.outputs.package_path }}
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2.4.1
+        with:
+          files: ${{ steps.publish.outputs.package_path }}
+          generate_release_notes: true
