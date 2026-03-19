@@ -86,6 +86,7 @@ public static class SyncVolumeServiceFactory
             UseCustomCloudProviderCredentials = configuration.UseCustomCloudProviderCredentials,
             CloudProviderAppRegistrations = configuration.CloudProviderAppRegistrations.ToList(),
             ImageRenamePattern = configuration.ImageRenamePattern,
+            ImageRenameCityLanguagePreference = configuration.ImageRenameCityLanguagePreference,
             ImageRenameFileNamePatterns = configuration.ImageRenameFileNamePatterns.ToList(),
             ImageRenameExtensions = configuration.ImageRenameExtensions.ToList(),
         };

@@ -1560,7 +1560,7 @@ public sealed class MainWindowViewModelTests
 
         viewModel.DeleteSelectedDuplicatesCommand.Execute(null);
 
-        await WaitForAsync(() => viewModel.DriveToolDuplicateRowCount == 0).ConfigureAwait(true);
+        await WaitForAsync(() => viewModel.StatusMessage == "Deleted 1 duplicate file.").ConfigureAwait(true);
 
         var remainingFiles = new[]
         {
@@ -1569,7 +1569,8 @@ public sealed class MainWindowViewModelTests
         }.Where(File.Exists).ToList();
 
         Assert.Single(remainingFiles);
-        Assert.Equal("No duplicated files were found in the selected source location.", viewModel.StatusMessage);
+        Assert.Equal(0, viewModel.DriveToolDuplicateRowCount);
+        Assert.Equal("Deleted 1 duplicate file.", viewModel.StatusMessage);
     }
 
     [Fact]
