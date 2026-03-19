@@ -338,6 +338,7 @@ Create the certificate in the current user's certificate store:
 ```powershell
 $certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=UsbFileSync Test Code Signing" -FriendlyName "UsbFileSync" -CertStoreLocation "Cert:\CurrentUser\My" -KeyExportPolicy Exportable -HashAlgorithm sha256
 ```
+![Create a Desktop app OAuth client ID for UsbFileSync](<./docs/images/cert.png>)
 
 Export it to a `.pfx` file and set a password:
 
