@@ -225,6 +225,10 @@ public sealed class ImageRenameAnalysisServiceTests : IDisposable
             [".jpg"],
             progress: new ImmediateProgress<ImageRenameAnalyzeProgress>(progressEvents.Enqueue));
 
+        SpinWait.SpinUntil(
+            () => progressEvents.Any(progress => progress.Phase == ImageRenameAnalyzePhase.Scanning),
+            TimeSpan.FromSeconds(1));
+
         Assert.Contains(progressEvents, progress => progress.Phase == ImageRenameAnalyzePhase.Scanning);
         Assert.Contains(progressEvents, progress => progress.Phase == ImageRenameAnalyzePhase.Planning && progress.ProcessedFiles > 0);
     }

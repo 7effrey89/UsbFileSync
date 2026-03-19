@@ -49,6 +49,10 @@ public sealed class DuplicateFileAnalysisServiceTests
             includeSubfolders: true,
             progress: new ImmediateProgress<DuplicateAnalyzeProgress>(progressEvents.Enqueue));
 
+        SpinWait.SpinUntil(
+            () => progressEvents.Any(progress => progress.Phase == DuplicateAnalyzePhase.Scanning),
+            TimeSpan.FromSeconds(1));
+
         Assert.Contains(progressEvents, progress => progress.Phase == DuplicateAnalyzePhase.Scanning);
         Assert.Contains(progressEvents, progress => progress.Phase == DuplicateAnalyzePhase.Hashing && progress.HashedFiles > 0);
     }
@@ -71,7 +75,7 @@ public sealed class DuplicateFileAnalysisServiceTests
             excludedPathPatterns: null,
             includeSubfolders: true,
             cancellationToken: cancellationTokenSource.Token,
-            progress: new Progress<DuplicateAnalyzeProgress>(progress =>
+            progress: new ImmediateProgress<DuplicateAnalyzeProgress>(progress =>
             {
                 if (progress.Phase == DuplicateAnalyzePhase.Hashing && progress.HashedFiles >= 1)
                 {
