@@ -4,6 +4,8 @@ namespace UsbFileSync.Core.Models;
 
 public sealed record ImageRenamePatternOption(ImageRenamePatternKind Kind, string DisplayName, string Example);
 
+public sealed record ImageRenameCityLanguagePreferenceOption(ImageRenameCityLanguagePreference Value, string DisplayName, string Description);
+
 public sealed record ImageRenameScopeOption(string Label, string Value);
 
 public static class ImageRenameDefaults
@@ -13,6 +15,12 @@ public static class ImageRenameDefaults
         new(ImageRenamePatternKind.TimestampOriginalFileName, "yyyyMMdd_HHmmss_original_filename.jpg", "20260318_140546_IMG_1234.jpg"),
         new(ImageRenamePatternKind.TimestampOriginalFileNameCity, "yyyyMMdd_HHmmss_original_filename_City.jpg", "20260318_140546_IMG_1234_Berlin.jpg"),
         new(ImageRenamePatternKind.TimestampOnly, "yyyyMMdd_HHmmss.jpg", "20260318_140546.jpg"),
+    ];
+
+    public static IReadOnlyList<ImageRenameCityLanguagePreferenceOption> CityLanguagePreferenceOptions { get; } =
+    [
+        new(ImageRenameCityLanguagePreference.EnglishThenLocal, "English, then local", "Try English city names first, then fall back to the provider's local language."),
+        new(ImageRenameCityLanguagePreference.LocalThenEnglish, "Local, then English", "Try the provider's local city name first, then fall back to English."),
     ];
 
     public static IReadOnlyList<ImageRenameScopeOption> DefaultCameraFileNamePatterns { get; } =
@@ -32,6 +40,8 @@ public static class ImageRenameDefaults
     [
         new("JPEG (.jpg)", ".jpg"),
         new("JPEG (.jpeg)", ".jpeg"),
+        new("TIFF (.tif)", ".tif"),
+        new("TIFF (.tiff)", ".tiff"),
         new("HEIC (.heic)", ".heic"),
         new("MOV (.mov)", ".mov"),
         new("3GP (.3gp)", ".3gp"),

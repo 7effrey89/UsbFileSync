@@ -20,6 +20,7 @@ public partial class SettingsDialog : Window
         bool hideMacOsSystemFiles,
         IReadOnlyList<string>? excludedPathPatterns = null,
         ImageRenamePatternKind imageRenamePattern = ImageRenamePatternKind.TimestampOriginalFileName,
+        ImageRenameCityLanguagePreference imageRenameCityLanguagePreference = ImageRenameCityLanguagePreference.EnglishThenLocal,
         IReadOnlyList<string>? imageRenameFileNamePatterns = null,
         IReadOnlyList<string>? imageRenameExtensions = null,
         IReadOnlyDictionary<string, string>? previewProviderMappings = null,
@@ -37,9 +38,13 @@ public partial class SettingsDialog : Window
         ProviderOptions = Enum.GetValues<PreviewProviderKind>();
         CloudStorageProviderOptions = Enum.GetValues<CloudStorageProvider>();
         ImageRenamePatternOptions = ImageRenameDefaults.PatternOptions;
+        ImageRenameCityLanguagePreferenceOptions = ImageRenameDefaults.CityLanguagePreferenceOptions;
         ImageRenamePattern = imageRenamePattern;
+        ImageRenameCityLanguagePreference = imageRenameCityLanguagePreference;
         ImageRenamePatternComboBox.ItemsSource = ImageRenamePatternOptions;
         ImageRenamePatternComboBox.SelectedValue = ImageRenamePattern;
+        ImageRenameCityLanguagePreferenceComboBox.ItemsSource = ImageRenameCityLanguagePreferenceOptions;
+        ImageRenameCityLanguagePreferenceComboBox.SelectedValue = ImageRenameCityLanguagePreference;
         ImageRenameFileNamePatternItems = CreateSelectableOptions(ImageRenameDefaults.DefaultCameraFileNamePatterns, imageRenameFileNamePatterns);
         ImageRenameExtensionItems = CreateSelectableOptions(ImageRenameDefaults.DefaultExtensions, imageRenameExtensions);
         ImageRenameCustomFileNamePatternItems = CreateCustomSelectableOptions(imageRenameFileNamePatterns, ImageRenameDefaults.DefaultCameraFileNamePatterns.Select(option => option.Value));
@@ -82,6 +87,8 @@ public partial class SettingsDialog : Window
 
     public ImageRenamePatternKind ImageRenamePattern { get; private set; }
 
+    public ImageRenameCityLanguagePreference ImageRenameCityLanguagePreference { get; private set; }
+
     public IReadOnlyList<string> ImageRenameFileNamePatterns => _imageRenameFileNamePatterns;
 
     public IReadOnlyList<string> ImageRenameExtensions => _imageRenameExtensions;
@@ -97,6 +104,8 @@ public partial class SettingsDialog : Window
     public Array CloudStorageProviderOptions { get; }
 
     public IReadOnlyList<ImageRenamePatternOption> ImageRenamePatternOptions { get; }
+
+    public IReadOnlyList<ImageRenameCityLanguagePreferenceOption> ImageRenameCityLanguagePreferenceOptions { get; }
 
     public ObservableCollection<SelectableTextOptionViewModel> ImageRenameFileNamePatternItems { get; }
 
@@ -144,6 +153,11 @@ public partial class SettingsDialog : Window
         if (ImageRenamePatternComboBox.SelectedValue is ImageRenamePatternKind selectedImageRenamePattern)
         {
             ImageRenamePattern = selectedImageRenamePattern;
+        }
+
+        if (ImageRenameCityLanguagePreferenceComboBox.SelectedValue is ImageRenameCityLanguagePreference selectedImageRenameCityLanguagePreference)
+        {
+            ImageRenameCityLanguagePreference = selectedImageRenameCityLanguagePreference;
         }
 
         if (!TryCreateImageRenameFileNamePatterns(ImageRenameFileNamePatternItems, ImageRenameCustomFileNamePatternItems, out var imageRenameFileNamePatterns, out errorMessage))

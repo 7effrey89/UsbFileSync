@@ -28,6 +28,7 @@ public partial class MainWindow : Window
             _viewModel.HideMacOsSystemFiles,
             _viewModel.GetExcludedPathPatterns(),
             _viewModel.ImageRenamePattern,
+            _viewModel.ImageRenameCityLanguagePreference,
             _viewModel.GetImageRenameFileNamePatterns(),
             _viewModel.GetImageRenameExtensions(),
             _viewModel.GetPreviewProviderMappings(),
@@ -43,6 +44,7 @@ public partial class MainWindow : Window
             _viewModel.UpdateHideMacOsSystemFiles(dialog.HideMacOsSystemFiles);
             _viewModel.UpdateExcludedPathPatterns(dialog.ExcludedPathPatterns);
             _viewModel.UpdateImageRenamePattern(dialog.ImageRenamePattern);
+            _viewModel.UpdateImageRenameCityLanguagePreference(dialog.ImageRenameCityLanguagePreference);
             _viewModel.UpdateImageRenameFileNamePatterns(dialog.ImageRenameFileNamePatterns);
             _viewModel.UpdateImageRenameExtensions(dialog.ImageRenameExtensions);
             _viewModel.UpdatePreviewProviderMappings(dialog.PreviewProviderMappings);

@@ -54,6 +54,8 @@ public sealed class SyncConfiguration
 
     public ImageRenamePatternKind ImageRenamePattern { get; init; } = ImageRenamePatternKind.TimestampOriginalFileName;
 
+    public ImageRenameCityLanguagePreference ImageRenameCityLanguagePreference { get; init; } = ImageRenameCityLanguagePreference.EnglishThenLocal;
+
     public IReadOnlyList<string> ImageRenameFileNamePatterns { get; init; } = ImageRenameDefaults.GetDefaultCameraFileNameMasks();
 
     public IReadOnlyList<string> ImageRenameExtensions { get; init; } = ImageRenameDefaults.GetDefaultExtensions();

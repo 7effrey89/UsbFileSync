@@ -2,6 +2,7 @@ using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Services;
 using UsbFileSync.Core.Volumes;
 using System.Collections.Concurrent;
+using System.Text.Json;
 
 namespace UsbFileSync.Tests;
 
@@ -252,6 +253,83 @@ public sealed class ImageRenameAnalysisServiceTests : IDisposable
         Assert.True(success);
         Assert.Equal(52.5d, coordinates.Latitude, precision: 4);
         Assert.Equal(13.4d, coordinates.Longitude, precision: 4);
+    }
+
+    [Theory]
+    [InlineData(".jpg")]
+    [InlineData(".jpeg")]
+    [InlineData(".tif")]
+    [InlineData(".tiff")]
+    [InlineData(".heic")]
+    [InlineData(".heif")]
+    [InlineData(".avif")]
+    [InlineData(".png")]
+    [InlineData(".gif")]
+    public void SupportsMetadataLookup_IncludesModernImageFormats(string extension)
+    {
+        Assert.True(ImageRenameCityResolver.SupportsMetadataLookup(extension));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(".")]
+    public void SupportsMetadataLookup_RejectsUnsupportedFormats(string extension)
+    {
+        Assert.False(ImageRenameCityResolver.SupportsMetadataLookup(extension));
+    }
+
+    [Fact]
+    public void DefaultExtensions_IncludeTiffFormats()
+    {
+        Assert.Contains(".tif", ImageRenameDefaults.GetDefaultExtensions());
+        Assert.Contains(".tiff", ImageRenameDefaults.GetDefaultExtensions());
+    }
+
+    [Fact]
+    public void GetPreferredReverseGeocodeLanguages_PrefersEnglishThenFallsBackToLocal()
+    {
+        Assert.Equal(["en", null], ImageRenameCityResolver.GetPreferredReverseGeocodeLanguages(ImageRenameCityLanguagePreference.EnglishThenLocal));
+    }
+
+    [Fact]
+    public void GetPreferredReverseGeocodeLanguages_PrefersLocalThenFallsBackToEnglish()
+    {
+        Assert.Equal([null, "en"], ImageRenameCityResolver.GetPreferredReverseGeocodeLanguages(ImageRenameCityLanguagePreference.LocalThenEnglish));
+    }
+
+    [Fact]
+    public void CreateReverseGeocodeRequest_AddsEnglishAcceptLanguageWhenRequested()
+    {
+        using var request = ImageRenameCityResolver.CreateReverseGeocodeRequest((55.6761d, 12.5683d), "en");
+
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.Equal("https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=10&addressdetails=1&lat=55.676100&lon=12.568300", request.RequestUri?.ToString());
+        Assert.Equal("en", Assert.Single(request.Headers.AcceptLanguage).Value);
+    }
+
+    [Fact]
+    public void CreateReverseGeocodeRequest_OmitsAcceptLanguageForLocalFallback()
+    {
+        using var request = ImageRenameCityResolver.CreateReverseGeocodeRequest((55.6761d, 12.5683d), preferredLanguage: null);
+
+        Assert.Empty(request.Headers.AcceptLanguage);
+    }
+
+    [Fact]
+    public void TryExtractCityName_UsesAvailableLocalizedAddressField()
+    {
+        using var document = JsonDocument.Parse("""
+            {
+              "address": {
+                "municipality": "Kobenhavn"
+              }
+            }
+            """);
+
+        var city = ImageRenameCityResolver.TryExtractCityName(document.RootElement);
+
+        Assert.Equal("Kobenhavn", city);
     }
 
     public void Dispose()

@@ -143,6 +143,13 @@ public sealed class SettingsDialogTests
     }
 
     [Fact]
+    public void CityLanguagePreferenceOptions_ExposeBothSupportedOrders()
+    {
+        Assert.Contains(ImageRenameDefaults.CityLanguagePreferenceOptions, option => option.Value == ImageRenameCityLanguagePreference.EnglishThenLocal);
+        Assert.Contains(ImageRenameDefaults.CityLanguagePreferenceOptions, option => option.Value == ImageRenameCityLanguagePreference.LocalThenEnglish);
+    }
+
+    [Fact]
     public void TryCreateCloudProviderAppRegistrations_StoresConfiguredProvidersOnly()
     {
         var registrations = new[]

@@ -74,6 +74,20 @@
                 </StackPanel>
 
                 <StackPanel Margin="0,18,0,0">
+                    <TextBlock Text="City name language order" FontSize="15" FontWeight="SemiBold" />
+                    <TextBlock Margin="0,8,0,0"
+                               Text="Choose whether the _City suffix should prefer English names or the provider's local language first when both are available."
+                               TextWrapping="Wrap"
+                               Foreground="#616161" />
+                    <ComboBox x:Name="ImageRenameCityLanguagePreferenceComboBox"
+                              Margin="0,12,0,0"
+                              Width="260"
+                              HorizontalAlignment="Left"
+                              DisplayMemberPath="DisplayName"
+                              SelectedValuePath="Value" />
+                </StackPanel>
+
+                <StackPanel Margin="0,18,0,0">
                     <TextBlock Text="Image rename camera filename scope" FontSize="15" FontWeight="SemiBold" />
                     <TextBlock Margin="0,8,0,0"
                                Text="UsbFileSync only renames common camera-style filenames. Choose the default camera File Patterns to include, then add your own File Patterns below if needed. Use ? for one character and * for multiple characters."

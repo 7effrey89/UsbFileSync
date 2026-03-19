@@ -695,6 +695,21 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public void LoadSavedConfiguration_RestoresImageRenameCityLanguagePreference()
+    {
+        var settingsStore = new StubSyncSettingsStore(new SyncConfiguration
+        {
+            SourcePath = "F:\\Primary",
+            DestinationPath = "E:\\Backup",
+            ImageRenameCityLanguagePreference = ImageRenameCityLanguagePreference.LocalThenEnglish,
+        });
+
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: settingsStore, folderPickerService: new StubFolderPickerService(null));
+
+        Assert.Equal(ImageRenameCityLanguagePreference.LocalThenEnglish, viewModel.ImageRenameCityLanguagePreference);
+    }
+
+    [Fact]
     public async Task DriveToolsPathChange_PersistsConfiguration()
     {
         var settingsStore = new RecordingSyncSettingsStore();
@@ -707,6 +722,19 @@ public sealed class MainWindowViewModelTests
 
         Assert.Equal("D:\\Photos", settingsStore.LastSavedConfiguration!.DriveToolsPath);
         Assert.False(settingsStore.LastSavedConfiguration.DriveToolsIncludeSubfolders);
+    }
+
+    [Fact]
+    public async Task UpdateImageRenameCityLanguagePreference_PersistsConfiguration()
+    {
+        var settingsStore = new RecordingSyncSettingsStore();
+        using var viewModel = new MainWindowViewModel(new SyncService(), settingsStore: settingsStore, folderPickerService: new StubFolderPickerService(null));
+
+        viewModel.UpdateImageRenameCityLanguagePreference(ImageRenameCityLanguagePreference.LocalThenEnglish);
+
+        await WaitForAsync(() => settingsStore.LastSavedConfiguration is not null).ConfigureAwait(true);
+
+        Assert.Equal(ImageRenameCityLanguagePreference.LocalThenEnglish, settingsStore.LastSavedConfiguration!.ImageRenameCityLanguagePreference);
     }
 
     [Fact]

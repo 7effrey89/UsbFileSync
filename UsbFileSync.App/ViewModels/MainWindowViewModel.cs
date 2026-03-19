@@ -64,7 +64,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private readonly SyncService _syncService;
     private readonly DuplicateFileAnalysisService _duplicateFileAnalysisService;
-    private readonly ImageRenameAnalysisService _imageRenameAnalysisService;
+    private ImageRenameAnalysisService _imageRenameAnalysisService;
     private readonly ISyncSettingsStore? _settingsStore;
     private readonly IFolderPickerService _folderPickerService;
     private readonly IUserDialogService _userDialogService;
@@ -112,6 +112,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private IReadOnlyList<string> _excludedPathPatterns = Array.Empty<string>();
     private IReadOnlyList<string> _imageRenameFileNamePatterns = ImageRenameDefaults.GetDefaultCameraFileNameMasks();
     private IReadOnlyList<string> _imageRenameExtensions = ImageRenameDefaults.GetDefaultExtensions();
+    private ImageRenameCityLanguagePreference _imageRenameCityLanguagePreference = ImageRenameCityLanguagePreference.EnglishThenLocal;
     private bool _useCustomCloudProviderCredentials;
     private Dictionary<string, string> _previewProviderMappings = PreviewProviderDefaults.CreateSerializableMapping();
     private IReadOnlyList<CloudProviderAppRegistration> _cloudProviderAppRegistrations = Array.Empty<CloudProviderAppRegistration>();
@@ -686,6 +687,18 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public IReadOnlyList<string> GetImageRenameExtensions() => _imageRenameExtensions.ToList();
 
+    public ImageRenameCityLanguagePreference ImageRenameCityLanguagePreference
+    {
+        get => _imageRenameCityLanguagePreference;
+        private set
+        {
+            if (SetProperty(ref _imageRenameCityLanguagePreference, value))
+            {
+                HandleConfigurationChanged();
+            }
+        }
+    }
+
     public string ImageRenamePatternDisplayName =>
         ImageRenameDefaults.PatternOptions.FirstOrDefault(option => option.Kind == ImageRenamePattern)?.DisplayName
         ?? "yyyyMMdd_HHmmss_original_filename.jpg";
@@ -1238,6 +1251,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 HideMacOsSystemFiles = HideMacOsSystemFiles,
                 ExcludedPathPatterns = _excludedPathPatterns.ToList(),
                 ImageRenamePattern = ImageRenamePattern,
+                ImageRenameCityLanguagePreference = ImageRenameCityLanguagePreference,
                 ImageRenameFileNamePatterns = _imageRenameFileNamePatterns.ToList(),
                 ImageRenameExtensions = _imageRenameExtensions.ToList(),
                 ParallelCopyCount = ParallelCopyCount,
@@ -1297,6 +1311,17 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         ImageRenamePattern = imageRenamePattern;
         AddLog("Settings", $"Image rename pattern set to {ImageRenamePatternDisplayName}.");
+    }
+
+    public void UpdateImageRenameCityLanguagePreference(ImageRenameCityLanguagePreference imageRenameCityLanguagePreference)
+    {
+        ImageRenameCityLanguagePreference = imageRenameCityLanguagePreference;
+        _imageRenameAnalysisService = new ImageRenameAnalysisService(imageRenameCityLanguagePreference);
+        AddLog(
+            "Settings",
+            imageRenameCityLanguagePreference == ImageRenameCityLanguagePreference.LocalThenEnglish
+                ? "Image rename city suffixes will prefer local place names, then fall back to English."
+                : "Image rename city suffixes will prefer English place names, then fall back to local names.");
     }
 
     public void UpdateImageRenameFileNamePatterns(IReadOnlyList<string> imageRenameFileNamePatterns)
@@ -2363,6 +2388,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
             ImageRenamePattern = savedConfiguration.ImageRenamePattern;
+            ImageRenameCityLanguagePreference = savedConfiguration.ImageRenameCityLanguagePreference;
+            _imageRenameAnalysisService = new ImageRenameAnalysisService(ImageRenameCityLanguagePreference);
             _imageRenameFileNamePatterns = (savedConfiguration.ImageRenameFileNamePatterns ?? ImageRenameDefaults.GetDefaultCameraFileNameMasks())
                 .Select(ImageRenameDefaults.NormalizeFileNameMask)
                 .Where(pattern => !string.IsNullOrWhiteSpace(pattern))

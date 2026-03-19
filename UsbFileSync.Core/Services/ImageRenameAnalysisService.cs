@@ -12,7 +12,12 @@ public sealed class ImageRenameAnalysisService
     private readonly IImageRenameCityResolver _cityResolver;
 
     public ImageRenameAnalysisService()
-        : this(new ImageRenameCityResolver())
+        : this(ImageRenameCityLanguagePreference.EnglishThenLocal)
+    {
+    }
+
+    public ImageRenameAnalysisService(ImageRenameCityLanguagePreference cityLanguagePreference)
+        : this(new ImageRenameCityResolver(cityLanguagePreference))
     {
     }
 
