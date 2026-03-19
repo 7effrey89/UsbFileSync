@@ -677,7 +677,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             if (SetProperty(ref _imageRenamePattern, value))
             {
                 RaisePropertyChanged(nameof(ImageRenamePatternDisplayName));
-                RaisePropertyChanged(nameof(ImageRenamePatternDescription));
                 HandleConfigurationChanged();
             }
         }
@@ -702,11 +701,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public string ImageRenamePatternDisplayName =>
         ImageRenameDefaults.PatternOptions.FirstOrDefault(option => option.Kind == ImageRenamePattern)?.DisplayName
         ?? "yyyyMMdd_HHmmss_original_filename.jpg";
-
-    public string ImageRenamePatternDescription =>
-        ImageRenamePattern == ImageRenamePatternKind.TimestampOriginalFileNameCity
-            ? "Rename analysis uses the stored file timestamp, tries to resolve a city from supported GPS metadata, preselects File Pattern matches, shows all analyzed media in All, and keeps already aligned files in Completed."
-            : "Rename analysis uses the stored file timestamp, preselects File Pattern matches, shows all analyzed media in All, keeps already aligned files in Completed, and adds a sequencer when a target name is already taken.";
 
     public bool UseCustomCloudProviderCredentials
     {

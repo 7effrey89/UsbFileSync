@@ -1369,10 +1369,6 @@
                                             Command="{Binding ApplyImageRenameCommand}"
                                             Content="Rename files" />
                                 </Grid>
-                                <TextBlock Margin="0,12,0,0"
-                                           Foreground="{StaticResource SubtleTextBrush}"
-                                           Text="{Binding ImageRenamePatternDescription}"
-                                           TextWrapping="Wrap" />
                             </StackPanel>
                         </Grid>
                     </Grid>
@@ -1762,26 +1758,13 @@
                         <StackPanel Grid.Row="0" Margin="0,0,0,12">
                             <TextBlock Text="Image rename analysis" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}" />
                             <TextBlock Margin="0,6,0,0"
-                                       Text="Review the File Pattern Match, No Match, All, and Completed tabs below, then apply the rows you want to rename. File Pattern matches are preselected, No Match shows optional candidates outside the current file pattern scope, All includes every analyzed media file, and Completed shows files that already align with the target format or that you renamed during this session."
+                                       Text="Use the tabs to review File Pattern Match, No Match, Completed, or All rename candidates."
                                        Foreground="{StaticResource SubtleTextBrush}"
                                        TextWrapping="Wrap" />
                         </StackPanel>
 
-                        <Border Grid.Row="1" Style="{StaticResource CardBorderStyle}" Padding="20" Background="{StaticResource SectionBackgroundBrush}">
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="*" />
-                                </Grid.RowDefinitions>
-                                <StackPanel Grid.Row="0" Margin="0,0,0,12">
-                                    <TextBlock Text="{Binding ImageRenameRowCount, StringFormat=Planned renames ({0})}" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}" />
-                                    <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" Foreground="{StaticResource SubtleTextBrush}">
-                                        <Run Text="Each tab shows the current filename, a rename action chevron, the reserved target filename, the matched File Pattern status, and whether UsbFileSync had to append a " />
-                                        <Run Text="_001" FontFamily="Consolas" />
-                                        <Run Text="-style sequencer to avoid a collision. Use the first-column checkboxes to decide which files should be renamed, and renamed rows stay in place with a completed chevron instead of clearing the full analysis." />
-                                    </TextBlock>
-                                </StackPanel>
-                                <TabControl Grid.Row="1">
+                        <Border Grid.Row="1" Style="{StaticResource CardBorderStyle}" Padding="16">
+                            <TabControl>
                                     <TabItem>
                                         <TabItem.Header>
                                             <StackPanel Orientation="Horizontal">
@@ -1932,7 +1915,6 @@
                                         </DataGrid>
                                     </TabItem>
                                 </TabControl>
-                            </Grid>
                         </Border>
                     </Grid>
                 </Grid>
