@@ -16,12 +16,30 @@ public sealed class DuplicateFileAnalysisService
     {
         ArgumentNullException.ThrowIfNull(volume);
 
-        var files = DirectorySnapshotBuilder.Build(
+        var progressTracker = progress is null ? null : new AnalyzeProgressTracker(
+            new Progress<AnalyzeProgress>(scanProgress =>
+                progress.Report(new DuplicateAnalyzeProgress(
+                    DuplicateAnalyzePhase.Scanning,
+                    scanProgress.RootPath,
+                    scanProgress.CurrentPath,
+                    scanProgress.FilesScanned,
+                    scanProgress.DirectoriesScanned,
+                    scanProgress.PendingDirectories,
+                    HashedFiles: 0,
+                    TotalFilesToHash: 0,
+                    DuplicateGroupsFound: 0))),
+            TimeSpan.FromMilliseconds(250));
+        var scanObserver = progressTracker?.CreateObserver(volume.Root);
+
+        var (files, directories) = DirectorySnapshotBuilder.BuildSnapshot(
             volume,
             hideMacOsSystemFiles,
             excludedPathPatterns,
-            scanObserver: null,
-            includeSubfolders: includeSubfolders);
+            scanObserver,
+            includeSubfolders,
+            cancellationToken);
+
+        progressTracker?.Flush();
 
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -47,7 +65,16 @@ public sealed class DuplicateFileAnalysisService
 
                 var checksum = await ComputeChecksumAsync(volume, file.RelativePath, cancellationToken).ConfigureAwait(false);
                 hashedFiles++;
-                progress?.Report(new DuplicateAnalyzeProgress(file.FullPath, hashedFiles, totalFilesToHash, duplicateGroups));
+                progress?.Report(new DuplicateAnalyzeProgress(
+                    DuplicateAnalyzePhase.Hashing,
+                    volume.Root,
+                    file.FullPath,
+                    files.Count,
+                    directories.Count,
+                    PendingDirectories: 0,
+                    hashedFiles,
+                    totalFilesToHash,
+                    duplicateGroups));
 
                 if (!checksumGroups.TryGetValue(checksum, out var group))
                 {
@@ -83,6 +110,20 @@ public sealed class DuplicateFileAnalysisService
                             ChecksumSha256: checksumGroup.Key))
                         .ToList()));
             }
+        }
+
+        if (progress is not null)
+        {
+            progress.Report(new DuplicateAnalyzeProgress(
+                DuplicateAnalyzePhase.Hashing,
+                volume.Root,
+                string.Empty,
+                files.Count,
+                directories.Count,
+                PendingDirectories: 0,
+                hashedFiles,
+                totalFilesToHash,
+                duplicateGroups));
         }
 
         return new DuplicateAnalysisResult(groups, duplicateGroups, hashedFiles);

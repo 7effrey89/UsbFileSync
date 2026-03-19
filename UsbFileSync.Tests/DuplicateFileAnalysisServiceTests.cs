@@ -1,5 +1,7 @@
+using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Services;
 using UsbFileSync.Core.Volumes;
+using System.Collections.Concurrent;
 
 namespace UsbFileSync.Tests;
 
@@ -29,6 +31,55 @@ public sealed class DuplicateFileAnalysisServiceTests
         Assert.Equal(new[] { "copy.txt", "keep.txt" }, pairedPaths);
         Assert.Equal(group.ChecksumSha256, group.Files[0].ChecksumSha256);
         Assert.True(result.HashedFileCount >= 3);
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_ReportsScanningAndHashingProgress()
+    {
+        using var workspace = new DuplicateWorkspace();
+        workspace.WriteFile("folder/keep.txt", "duplicate-bytes");
+        workspace.WriteFile("folder/copy.txt", "duplicate-bytes");
+        var progressEvents = new ConcurrentQueue<DuplicateAnalyzeProgress>();
+        var service = new DuplicateFileAnalysisService();
+
+        await service.AnalyzeAsync(
+            new WindowsMountedVolume(workspace.RootPath),
+            hideMacOsSystemFiles: true,
+            excludedPathPatterns: null,
+            includeSubfolders: true,
+            progress: new Progress<DuplicateAnalyzeProgress>(progressEvents.Enqueue));
+
+        Assert.Contains(progressEvents, progress => progress.Phase == DuplicateAnalyzePhase.Scanning);
+        Assert.Contains(progressEvents, progress => progress.Phase == DuplicateAnalyzePhase.Hashing && progress.HashedFiles > 0);
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_CanCancelDuringHashing()
+    {
+        using var workspace = new DuplicateWorkspace();
+        for (var index = 0; index < 12; index++)
+        {
+            workspace.WriteFile($"folder/file{index:00}.txt", $"duplicate-{index % 3}");
+        }
+
+        var service = new DuplicateFileAnalysisService();
+        using var cancellationTokenSource = new CancellationTokenSource();
+
+        var analyzeTask = service.AnalyzeAsync(
+            new WindowsMountedVolume(workspace.RootPath),
+            hideMacOsSystemFiles: false,
+            excludedPathPatterns: null,
+            includeSubfolders: true,
+            cancellationToken: cancellationTokenSource.Token,
+            progress: new Progress<DuplicateAnalyzeProgress>(progress =>
+            {
+                if (progress.Phase == DuplicateAnalyzePhase.Hashing && progress.HashedFiles >= 1)
+                {
+                    cancellationTokenSource.Cancel();
+                }
+            }));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => analyzeTask);
     }
 
     private sealed class DuplicateWorkspace : IDisposable

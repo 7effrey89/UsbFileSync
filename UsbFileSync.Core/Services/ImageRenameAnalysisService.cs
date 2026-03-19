@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -27,28 +28,94 @@ public sealed class ImageRenameAnalysisService
         bool includeSubfolders,
         ImageRenamePatternKind patternKind,
         IReadOnlyList<string>? enabledFileNameMasks,
-        IReadOnlyList<string>? enabledExtensions)
+        IReadOnlyList<string>? enabledExtensions,
+        CancellationToken cancellationToken = default,
+        IProgress<ImageRenameAnalyzeProgress>? progress = null)
     {
         ArgumentNullException.ThrowIfNull(volume);
 
         var fileNameMasks = NormalizeFileNameMasks(enabledFileNameMasks);
         var extensions = NormalizeExtensions(enabledExtensions);
-        var snapshots = DirectorySnapshotBuilder.Build(volume, hideMacOsSystemFiles, excludedPathPatterns, includeSubfolders: includeSubfolders);
+        var progressTracker = progress is null ? null : new AnalyzeProgressTracker(
+            new Progress<AnalyzeProgress>(scanProgress =>
+                progress.Report(new ImageRenameAnalyzeProgress(
+                    ImageRenameAnalyzePhase.Scanning,
+                    scanProgress.RootPath,
+                    scanProgress.CurrentPath,
+                    scanProgress.FilesScanned,
+                    scanProgress.DirectoriesScanned,
+                    scanProgress.PendingDirectories,
+                    ProcessedFiles: 0,
+                    TotalFiles: 0,
+                    CandidateFiles: 0,
+                    PlannedRows: 0,
+                    CompletedRows: 0))),
+            TimeSpan.FromMilliseconds(250));
+        var scanObserver = progressTracker?.CreateObserver(volume.Root);
+        var (snapshots, directories) = DirectorySnapshotBuilder.BuildSnapshot(
+            volume,
+            hideMacOsSystemFiles,
+            excludedPathPatterns,
+            scanObserver,
+            includeSubfolders,
+            cancellationToken);
+        progressTracker?.Flush();
+
+        cancellationToken.ThrowIfCancellationRequested();
         var occupiedRelativePaths = snapshots.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var compiledMasks = fileNameMasks
             .Select(mask => new KeyValuePair<string, Regex>(mask, CreateMaskRegex(mask)))
             .ToArray();
+        var orderedSnapshots = snapshots.Values
+            .OrderBy(snapshot => snapshot.RelativePath, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
         var plans = new List<ImageRenamePlanItem>();
         var candidateCount = 0;
         var matchedMaskCandidateCount = 0;
         var completedCandidateCount = 0;
+        var processedFiles = 0;
+        var lastPlanningProgressTick = Stopwatch.GetTimestamp();
 
-        foreach (var snapshot in snapshots.Values.OrderBy(snapshot => snapshot.RelativePath, StringComparer.OrdinalIgnoreCase))
+        void ReportPlanningProgress(string currentPath, bool force)
         {
+            if (progress is null)
+            {
+                return;
+            }
+
+            if (!force)
+            {
+                var elapsed = Stopwatch.GetElapsedTime(lastPlanningProgressTick);
+                if (processedFiles % 25 != 0 && elapsed < TimeSpan.FromMilliseconds(200))
+                {
+                    return;
+                }
+            }
+
+            lastPlanningProgressTick = Stopwatch.GetTimestamp();
+            progress.Report(new ImageRenameAnalyzeProgress(
+                ImageRenameAnalyzePhase.Planning,
+                volume.Root,
+                currentPath,
+                snapshots.Count,
+                directories.Count,
+                PendingDirectories: 0,
+                processedFiles,
+                orderedSnapshots.Count,
+                candidateCount,
+                plans.Count,
+                completedCandidateCount));
+        }
+
+        foreach (var snapshot in orderedSnapshots)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            processedFiles++;
             var extension = ImageRenameDefaults.NormalizeExtension(Path.GetExtension(snapshot.RelativePath));
             if (!extensions.Contains(extension))
             {
+                ReportPlanningProgress(snapshot.FullPath, force: false);
                 continue;
             }
 
@@ -77,6 +144,7 @@ public sealed class ImageRenameAnalysisService
                     UsedCollisionSuffix: false,
                     IsMatchedByFileNameMask: isMatchedByMask,
                     IsCompleted: true));
+                ReportPlanningProgress(snapshot.FullPath, force: false);
                 continue;
             }
 
@@ -104,7 +172,10 @@ public sealed class ImageRenameAnalysisService
                 !string.Equals(Path.GetFileName(proposedRelativePath), proposedFileName, StringComparison.OrdinalIgnoreCase),
                 isMatchedByMask,
                 IsCompleted: false));
+            ReportPlanningProgress(snapshot.FullPath, force: false);
         }
+
+        ReportPlanningProgress(string.Empty, force: true);
 
         return new ImageRenameAnalysisResult(plans, snapshots.Count, candidateCount, matchedMaskCandidateCount, completedCandidateCount);
     }

@@ -1184,7 +1184,13 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 _isBusyOverlayDismissed = true;
                 RaisePropertyChanged(nameof(IsBusyOverlayVisible));
                 StatusMessage = "Cancelling duplicate analysis...";
-                AddLog("Duplicate Finder", "Cancel requested while hashing duplicate candidates.", SyncLogSeverity.Warning);
+                AddLog("Duplicate Finder", "Cancel requested while analyzing duplicate candidates.", SyncLogSeverity.Warning);
+                break;
+            case BusyOperationKind.AnalyzeImageRename:
+                _isBusyOverlayDismissed = true;
+                RaisePropertyChanged(nameof(IsBusyOverlayVisible));
+                StatusMessage = "Cancelling image rename analysis...";
+                AddLog("Image Rename", "Cancel requested while analyzing image rename candidates.", SyncLogSeverity.Warning);
                 break;
             case BusyOperationKind.Sync:
                 StatusMessage = "Stopping synchronization...";
@@ -1697,24 +1703,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                     _excludedPathPatterns,
                     DriveToolsIncludeSubfolders,
                     cancellationTokenSource.Token,
-                    progress: new Progress<DuplicateAnalyzeProgress>(progress =>
-                    {
-                        RunOnDispatcher(() =>
-                        {
-                            IsBusyOverlayProgressIndeterminate = false;
-                            BusyOverlayProgressValue = progress.TotalFilesToHash == 0
-                                ? 100
-                                : Math.Clamp((progress.HashedFiles * 100d) / progress.TotalFilesToHash, 0d, 100d);
-                            BusyOverlayDescription = progress.TotalFilesToHash == 0
-                                ? "No checksum candidates required hashing."
-                                : $"Hashing {progress.HashedFiles:N0} of {progress.TotalFilesToHash:N0} duplicate candidates...";
-                            BusyOverlayCountersText = progress.DuplicateGroupsFound == 0
-                                ? "No identical checksum groups confirmed yet."
-                                : $"{progress.DuplicateGroupsFound:N0} duplicate group(s) confirmed.";
-                            BusyOverlayPathText = FormatPathForProgress(progress.CurrentPath);
-                            BusyOverlayEtaText = string.Empty;
-                        });
-                    })).ConfigureAwait(false),
+                    progress: new Progress<DuplicateAnalyzeProgress>(progress => RunOnDispatcher(() => UpdateDuplicateAnalyzeOverlay(progress)))).ConfigureAwait(false),
                 CancellationToken.None).ConfigureAwait(true);
 
             cancellationTokenSource.Token.ThrowIfCancellationRequested();
@@ -1750,7 +1739,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                     DriveToolsIncludeSubfolders,
                     ImageRenamePattern,
                     _imageRenameFileNamePatterns,
-                    _imageRenameExtensions),
+                    _imageRenameExtensions,
+                    cancellationTokenSource.Token,
+                    progress: new Progress<ImageRenameAnalyzeProgress>(progress => RunOnDispatcher(() => UpdateImageRenameAnalyzeOverlay(progress)))),
                 CancellationToken.None).ConfigureAwait(true);
 
             cancellationTokenSource.Token.ThrowIfCancellationRequested();
@@ -2913,6 +2904,80 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         UpdateAnalyzeEta(completedSteps, totalSteps);
     }
 
+    private void UpdateDuplicateAnalyzeOverlay(DuplicateAnalyzeProgress progress)
+    {
+        switch (progress.Phase)
+        {
+            case DuplicateAnalyzePhase.Scanning:
+                BusyOverlayDescription = "Scanning files and grouping same-size duplicate candidates.";
+                OnAnalyzeProgress(ToAnalyzeProgress(progress), completedSteps: 0, totalSteps: 2, _busyOperationStopwatch.Elapsed, analyzeTimingHistory: null, historicalDurationAfterCurrentDestination: TimeSpan.Zero);
+                return;
+            case DuplicateAnalyzePhase.Hashing:
+                IsBusyOverlayProgressIndeterminate = false;
+                BusyOverlayProgressValue = progress.TotalFilesToHash == 0
+                    ? 100
+                    : Math.Clamp(50d + ((progress.HashedFiles * 50d) / progress.TotalFilesToHash), 0d, 100d);
+                BusyOverlayDescription = progress.TotalFilesToHash == 0
+                    ? "No checksum candidates required hashing."
+                    : $"Hashing {progress.HashedFiles:N0} of {progress.TotalFilesToHash:N0} duplicate candidates...";
+
+                var counters = $"{progress.FilesScanned:N0} files scanned";
+                if (progress.DirectoriesScanned > 0)
+                {
+                    counters += $" | {progress.DirectoriesScanned:N0} folders scanned";
+                }
+
+                if (progress.TotalFilesToHash > 0)
+                {
+                    counters += $" | {progress.HashedFiles:N0}/{progress.TotalFilesToHash:N0} hashed";
+                }
+
+                counters += progress.DuplicateGroupsFound == 0
+                    ? " | No duplicate groups confirmed yet"
+                    : $" | {progress.DuplicateGroupsFound:N0} duplicate group(s) confirmed";
+                BusyOverlayCountersText = counters;
+                BusyOverlayPathText = AbbreviateAnalyzeProgressPath(progress.RootPath, progress.CurrentPath);
+                UpdateAnalyzeEta(progress.TotalFilesToHash == 0 ? 2 : 1 + ((double)progress.HashedFiles / progress.TotalFilesToHash), 2);
+                return;
+        }
+    }
+
+    private void UpdateImageRenameAnalyzeOverlay(ImageRenameAnalyzeProgress progress)
+    {
+        switch (progress.Phase)
+        {
+            case ImageRenameAnalyzePhase.Scanning:
+                BusyOverlayDescription = "Scanning media files and reserving the source inventory for rename planning.";
+                OnAnalyzeProgress(ToAnalyzeProgress(progress), completedSteps: 0, totalSteps: 2, _busyOperationStopwatch.Elapsed, analyzeTimingHistory: null, historicalDurationAfterCurrentDestination: TimeSpan.Zero);
+                return;
+            case ImageRenameAnalyzePhase.Planning:
+                IsBusyOverlayProgressIndeterminate = false;
+                BusyOverlayProgressValue = progress.TotalFiles == 0
+                    ? 100
+                    : Math.Clamp(50d + ((progress.ProcessedFiles * 50d) / progress.TotalFiles), 0d, 100d);
+                BusyOverlayDescription = progress.TotalFiles == 0
+                    ? "No eligible media files were found for the current rename settings."
+                    : $"Planning rename rows for {progress.ProcessedFiles:N0} of {progress.TotalFiles:N0} scanned files...";
+
+                var counters = $"{progress.FilesScanned:N0} files scanned";
+                if (progress.DirectoriesScanned > 0)
+                {
+                    counters += $" | {progress.DirectoriesScanned:N0} folders scanned";
+                }
+
+                if (progress.TotalFiles > 0)
+                {
+                    counters += $" | {progress.CandidateFiles:N0} candidate(s)";
+                }
+
+                counters += $" | {progress.PlannedRows:N0} row(s) staged | {progress.CompletedRows:N0} completed";
+                BusyOverlayCountersText = counters;
+                BusyOverlayPathText = AbbreviateAnalyzeProgressPath(progress.RootPath, progress.CurrentPath);
+                UpdateAnalyzeEta(progress.TotalFiles == 0 ? 2 : 1 + ((double)progress.ProcessedFiles / progress.TotalFiles), 2);
+                return;
+        }
+    }
+
     private void OnAnalyzeProgress(
         AnalyzeProgress progress,
         int completedSteps,
@@ -2945,6 +3010,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         // historical data, because the scanner reports its live queue depth.
         var totalDiscovered = 1 + progress.DirectoriesScanned;
         var processed = totalDiscovered - progress.PendingDirectories;
+        var completedUnits = (double)completedSteps;
         if (totalDiscovered > 1 && processed > 0)
         {
             if (IsBusyOverlayProgressIndeterminate)
@@ -2955,13 +3021,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             var normalizedTotalSteps = Math.Max(1, totalSteps);
             var stepWeight = 100d / normalizedTotalSteps;
             var withinStepFraction = Math.Clamp((double)processed / totalDiscovered, 0, 0.95);
+            completedUnits += withinStepFraction;
             var interpolatedProgress = (completedSteps * stepWeight) + (stepWeight * withinStepFraction);
             BusyOverlayProgressValue = Math.Clamp(interpolatedProgress, 0, 99);
         }
 
         if (!TryUpdateAnalyzeEtaFromHistory(analyzeElapsed, analyzeTimingHistory, historicalDurationAfterCurrentDestination))
         {
-            UpdateAnalyzeEta(completedSteps, totalSteps);
+            UpdateAnalyzeEta(completedUnits, totalSteps);
         }
     }
 
@@ -2996,45 +3063,44 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         return true;
     }
 
-    private void UpdateAnalyzeEta(int completedSteps, int totalSteps)
+    private void UpdateAnalyzeEta(double completedUnits, double totalUnits)
     {
-        if (_busyOperationKind != BusyOperationKind.Analyze)
+        if (!IsAnalyzeStyleBusyOperation())
         {
             BusyOverlayEtaText = string.Empty;
             return;
         }
 
-        if (BusyOverlayProgressValue >= 100 || completedSteps >= totalSteps)
+        if (BusyOverlayProgressValue >= 100 || completedUnits >= totalUnits)
         {
-            BusyOverlayEtaText = string.Empty;
+            BusyOverlayEtaText = BuildBusyOverlayElapsedEtaText();
             return;
         }
 
-        var minimumCompletedSteps = totalSteps <= 2 ? 1 : 2;
-        if (BusyOverlayProgressValue < AnalyzeEtaMinimumProgressPercent || completedSteps < minimumCompletedSteps)
+        if (BusyOverlayProgressValue < AnalyzeEtaMinimumProgressPercent || completedUnits <= 0)
         {
-            BusyOverlayEtaText = "Estimated time: estimating...";
+            BusyOverlayEtaText = BuildBusyOverlayElapsedEtaText("Estimated time: estimating...");
             return;
         }
 
         var elapsedSeconds = _busyOperationStopwatch.Elapsed.TotalSeconds;
         if (elapsedSeconds <= 0)
         {
-            BusyOverlayEtaText = "Estimated time: estimating...";
+            BusyOverlayEtaText = BuildBusyOverlayElapsedEtaText("Estimated time: estimating...");
             return;
         }
 
-        var remainingSteps = Math.Max(0, totalSteps - completedSteps);
-        if (remainingSteps == 0)
+        var remainingUnits = Math.Max(0, totalUnits - completedUnits);
+        if (remainingUnits <= 0)
         {
-            BusyOverlayEtaText = string.Empty;
+            BusyOverlayEtaText = BuildBusyOverlayElapsedEtaText();
             return;
         }
 
-        var rawEtaSeconds = (elapsedSeconds / completedSteps) * remainingSteps;
+        var rawEtaSeconds = (elapsedSeconds / completedUnits) * remainingUnits;
         if (double.IsNaN(rawEtaSeconds) || double.IsInfinity(rawEtaSeconds) || rawEtaSeconds < 0)
         {
-            BusyOverlayEtaText = "Estimated time: estimating...";
+            BusyOverlayEtaText = BuildBusyOverlayElapsedEtaText("Estimated time: estimating...");
             return;
         }
 
@@ -3047,8 +3113,37 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             ? rawEtaSeconds
             : (_busyOverlaySmoothedEtaSeconds.Value * (1 - AnalyzeEtaSmoothingFactor)) + (rawEtaSeconds * AnalyzeEtaSmoothingFactor);
 
-        BusyOverlayEtaText = $"Estimated time: {FormatApproximateDuration(TimeSpan.FromSeconds(_busyOverlaySmoothedEtaSeconds.Value))}";
+        BusyOverlayEtaText = BuildBusyOverlayElapsedEtaText($"Estimated time: {FormatApproximateDuration(TimeSpan.FromSeconds(_busyOverlaySmoothedEtaSeconds.Value))}");
     }
+
+    private bool IsAnalyzeStyleBusyOperation() =>
+        _busyOperationKind is BusyOperationKind.Analyze or BusyOperationKind.FindDuplicates or BusyOperationKind.AnalyzeImageRename;
+
+    private string BuildBusyOverlayElapsedEtaText(string? etaText = null)
+    {
+        if (!IsAnalyzeStyleBusyOperation())
+        {
+            return string.Empty;
+        }
+
+        var elapsedText = $"Elapsed: {FormatApproximateDuration(_busyOperationStopwatch.Elapsed)}";
+        return string.IsNullOrWhiteSpace(etaText)
+            ? elapsedText
+            : $"{elapsedText} | {etaText}";
+    }
+
+    private string AbbreviateAnalyzeProgressPath(string rootPath, string currentPath)
+    {
+        var formattedRootPath = FormatPathForProgress(rootPath);
+        var formattedCurrentPath = FormatPathForProgress(currentPath);
+        return AbbreviateAnalyzePath(formattedCurrentPath, formattedRootPath);
+    }
+
+    private static AnalyzeProgress ToAnalyzeProgress(DuplicateAnalyzeProgress progress) =>
+        new(progress.RootPath, progress.CurrentPath, progress.FilesScanned, progress.DirectoriesScanned, progress.PendingDirectories);
+
+    private static AnalyzeProgress ToAnalyzeProgress(ImageRenameAnalyzeProgress progress) =>
+        new(progress.RootPath, progress.CurrentPath, progress.FilesScanned, progress.DirectoriesScanned, progress.PendingDirectories);
 
     private TimeSpan GetHistoricalRemainingAnalyzeDuration(IReadOnlyList<string> destinationPathsToAnalyze, int currentIndex)
     {

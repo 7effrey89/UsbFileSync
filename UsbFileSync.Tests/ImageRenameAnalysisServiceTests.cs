@@ -1,6 +1,7 @@
 using UsbFileSync.Core.Models;
 using UsbFileSync.Core.Services;
 using UsbFileSync.Core.Volumes;
+using System.Collections.Concurrent;
 
 namespace UsbFileSync.Tests;
 
@@ -198,6 +199,49 @@ public sealed class ImageRenameAnalysisServiceTests : IDisposable
     }
 
     [Fact]
+    public void Analyze_ReportsScanningAndPlanningProgress()
+    {
+        WriteFile("IMG_1234.jpg", new DateTime(2024, 3, 5, 10, 11, 12, DateTimeKind.Utc));
+        WriteFile("notes.jpg", new DateTime(2024, 3, 5, 10, 11, 12, DateTimeKind.Utc));
+        var progressEvents = new ConcurrentQueue<ImageRenameAnalyzeProgress>();
+        var service = new ImageRenameAnalysisService();
+
+        service.Analyze(
+            new WindowsMountedVolume(_rootPath),
+            hideMacOsSystemFiles: false,
+            excludedPathPatterns: null,
+            includeSubfolders: true,
+            ImageRenamePatternKind.TimestampOriginalFileName,
+            ["IMG_????"],
+            [".jpg"],
+            progress: new Progress<ImageRenameAnalyzeProgress>(progressEvents.Enqueue));
+
+        Assert.Contains(progressEvents, progress => progress.Phase == ImageRenameAnalyzePhase.Scanning);
+        Assert.Contains(progressEvents, progress => progress.Phase == ImageRenameAnalyzePhase.Planning && progress.ProcessedFiles > 0);
+    }
+
+    [Fact]
+    public void Analyze_CanCancelDuringScanning()
+    {
+        var service = new ImageRenameAnalysisService();
+        var volume = SlowImageRenameVolumeSource.CreateFileTree(fileCount: 48);
+        using var cancellationTokenSource = new CancellationTokenSource();
+
+        cancellationTokenSource.CancelAfter(TimeSpan.FromMilliseconds(50));
+
+        Assert.ThrowsAny<OperationCanceledException>(() =>
+            service.Analyze(
+                volume,
+                hideMacOsSystemFiles: false,
+                excludedPathPatterns: null,
+                includeSubfolders: true,
+                ImageRenamePatternKind.TimestampOriginalFileName,
+                ["IMG_????"],
+                [".jpg"],
+                cancellationToken: cancellationTokenSource.Token));
+    }
+
+    [Fact]
     public void TryReadGpsCoordinates_ReadsExifGpsCoordinatesFromJpeg()
     {
         var jpegBytes = CreateExifJpegWithGps(52, 30, 0, 'N', 13, 24, 0, 'E');
@@ -327,5 +371,102 @@ public sealed class ImageRenameAnalysisServiceTests : IDisposable
             RequestedPaths.Add(relativePath);
             return city;
         }
+    }
+
+    private sealed class SlowImageRenameVolumeSource : IVolumeSource
+    {
+        private readonly Dictionary<string, List<SlowImageRenameFileEntry>> _entriesByDirectory;
+
+        private SlowImageRenameVolumeSource(Dictionary<string, List<SlowImageRenameFileEntry>> entriesByDirectory)
+        {
+            _entriesByDirectory = entriesByDirectory;
+        }
+
+        public string Id => "slow-image-rename";
+
+        public string DisplayName => "Slow Image Rename";
+
+        public string FileSystemType => "NTFS";
+
+        public bool IsReadOnly => false;
+
+        public string Root => "SlowRenameRoot";
+
+        public static SlowImageRenameVolumeSource CreateFileTree(int fileCount)
+        {
+            var entriesByDirectory = new Dictionary<string, List<SlowImageRenameFileEntry>>(StringComparer.OrdinalIgnoreCase)
+            {
+                [string.Empty] = []
+            };
+
+            for (var index = 0; index < fileCount; index++)
+            {
+                var directory = $"folder{index / 8:00}";
+                if (!entriesByDirectory.ContainsKey(directory))
+                {
+                    entriesByDirectory[directory] = [];
+                    entriesByDirectory[string.Empty].Add(new SlowImageRenameFileEntry($"SlowRenameRoot\\{directory}", directory, IsDirectory: true, null, DateTime.UtcNow, Exists: true));
+                }
+
+                var relativePath = $"{directory}/IMG_{index:0000}.jpg";
+                entriesByDirectory[directory].Add(new SlowImageRenameFileEntry($"SlowRenameRoot\\{relativePath.Replace('/', '\\')}", $"IMG_{index:0000}.jpg", IsDirectory: false, 32, new DateTime(2024, 3, 5, 10, 11, 12, DateTimeKind.Utc), Exists: true));
+            }
+
+            return new SlowImageRenameVolumeSource(entriesByDirectory);
+        }
+
+        public IFileEntry GetEntry(string path)
+        {
+            var normalizedPath = Normalize(path);
+            if (string.IsNullOrEmpty(normalizedPath))
+            {
+                return new SlowImageRenameFileEntry(Root, Root, IsDirectory: true, null, DateTime.UtcNow, Exists: true);
+            }
+
+            if (_entriesByDirectory.ContainsKey(normalizedPath))
+            {
+                return new SlowImageRenameFileEntry($"{Root}\\{normalizedPath.Replace('/', '\\')}", Path.GetFileName(normalizedPath), IsDirectory: true, null, DateTime.UtcNow, Exists: true);
+            }
+
+            foreach (var entries in _entriesByDirectory.Values)
+            {
+                var match = entries.FirstOrDefault(entry => string.Equals(Normalize(entry.RelativePath), normalizedPath, StringComparison.OrdinalIgnoreCase));
+                if (match is not null)
+                {
+                    return match;
+                }
+            }
+
+            return new SlowImageRenameFileEntry($"{Root}\\{normalizedPath.Replace('/', '\\')}", Path.GetFileName(normalizedPath), IsDirectory: false, null, null, Exists: false);
+        }
+
+        public IEnumerable<IFileEntry> Enumerate(string path)
+        {
+            Thread.Sleep(150);
+            return _entriesByDirectory.TryGetValue(Normalize(path), out var entries)
+                ? entries.ToArray()
+                : Array.Empty<IFileEntry>();
+        }
+
+        public Stream OpenRead(string path) => new MemoryStream([1, 2, 3], writable: false);
+
+        public Stream OpenWrite(string path, bool overwrite = true) => throw new NotSupportedException();
+
+        public void DeleteFile(string path) => throw new NotSupportedException();
+
+        public void DeleteDirectory(string path) => throw new NotSupportedException();
+
+        public void Move(string sourcePath, string destinationPath, bool overwrite = false) => throw new NotSupportedException();
+
+        public void CreateDirectory(string path) => throw new NotSupportedException();
+
+        public void SetLastWriteTimeUtc(string path, DateTime lastWriteTimeUtc) => throw new NotSupportedException();
+
+        private static string Normalize(string path) => path.Replace('\\', '/').Trim('/');
+    }
+
+    private sealed record SlowImageRenameFileEntry(string FullPath, string Name, bool IsDirectory, long? Size, DateTime? LastWriteTimeUtc, bool Exists) : IFileEntry
+    {
+        public string RelativePath => FullPath.Replace("SlowRenameRoot\\", string.Empty, StringComparison.Ordinal).Replace('\\', '/');
     }
 }
