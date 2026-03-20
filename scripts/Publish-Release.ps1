@@ -66,6 +66,17 @@ function Get-NumericVersion {
     return ($segments -join '.')
 }
 
+function ConvertTo-GitHubOutputPath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $Path
+    }
+
+    $resolvedPath = Resolve-Path -LiteralPath $Path
+    return $resolvedPath.Path.Replace('\', '/')
+}
+
 $resolvedVersion = Get-ReleaseVersion -RequestedVersion $Version
 $normalizedVersion = $resolvedVersion.TrimStart('v', 'V')
 $numericVersion = Get-NumericVersion -ReleaseVersion $normalizedVersion
@@ -135,8 +146,8 @@ Write-Host "Published executable: $executablePath"
 Write-Host "Release package: $packagePath"
 
 if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_OUTPUT)) {
-    Add-Content -Path $env:GITHUB_OUTPUT -Value "package_path=$packagePath"
-    Add-Content -Path $env:GITHUB_OUTPUT -Value "publish_directory=$publishDirectory"
-    Add-Content -Path $env:GITHUB_OUTPUT -Value "executable_path=$executablePath"
+    Add-Content -Path $env:GITHUB_OUTPUT -Value "package_path=$(ConvertTo-GitHubOutputPath -Path $packagePath)"
+    Add-Content -Path $env:GITHUB_OUTPUT -Value "publish_directory=$(ConvertTo-GitHubOutputPath -Path $publishDirectory)"
+    Add-Content -Path $env:GITHUB_OUTPUT -Value "executable_path=$(ConvertTo-GitHubOutputPath -Path $executablePath)"
     Add-Content -Path $env:GITHUB_OUTPUT -Value "release_version=$resolvedVersion"
 }
