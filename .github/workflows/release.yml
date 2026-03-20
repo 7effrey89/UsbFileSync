@@ -59,27 +59,23 @@ jobs:
             $shouldSign = $false
           }
 
-          $arguments = @(
-            "-Version", $version
-          )
+          $publishParameters = @{
+            Version = $version
+          }
 
           if ($shouldSign -and $env:WINDOWS_CODESIGN_PFX_BASE64 -and $env:WINDOWS_CODESIGN_PFX_PASSWORD) {
             $certificatePath = Join-Path $env:RUNNER_TEMP "codesign.pfx"
             [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CODESIGN_PFX_BASE64))
-            $arguments += @(
-              "-Sign",
-              "-SigningCertificatePath", $certificatePath,
-              "-SigningCertificatePassword", $env:WINDOWS_CODESIGN_PFX_PASSWORD
-            )
+            $publishParameters.Sign = $true
+            $publishParameters.SigningCertificatePath = $certificatePath
+            $publishParameters.SigningCertificatePassword = $env:WINDOWS_CODESIGN_PFX_PASSWORD
           }
 
           if ($env:WINDOWS_CODESIGN_TIMESTAMP_URL) {
-            $arguments += @(
-              "-TimestampServer", $env:WINDOWS_CODESIGN_TIMESTAMP_URL
-            )
+            $publishParameters.TimestampServer = $env:WINDOWS_CODESIGN_TIMESTAMP_URL
           }
 
-          ./scripts/Publish-Release.ps1 @arguments
+          ./scripts/Publish-Release.ps1 @publishParameters
 
       - name: Upload release artifact
         uses: actions/upload-artifact@v4.6.2
