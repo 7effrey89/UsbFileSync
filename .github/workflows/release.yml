@@ -84,8 +84,11 @@ jobs:
           path: ${{ steps.publish.outputs.package_path }}
 
       - name: Publish GitHub release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2.4.1
         with:
-          files: ${{ steps.publish.outputs.package_path }}
+          tag_name: ${{ steps.publish.outputs.release_version }}
+          files: |
+            ${{ steps.publish.outputs.package_path }}
+            ${{ steps.publish.outputs.executable_path }}
           generate_release_notes: true
