@@ -265,7 +265,7 @@ dotnet run --project UsbFileSync.App/UsbFileSync.App.csproj
 
 ## Create A GitHub Release Build
 
-UsbFileSync now includes a Windows release workflow that publishes a self-contained `win-x64` executable as `UsbFileSync.exe`, zips the publish folder, and attaches that zip to a GitHub release when you push a `v*` tag.
+UsbFileSync now includes a Windows release workflow that publishes a self-contained `win-x64` executable as `UsbFileSync.exe`, zips the publish folder, and attaches both the `UsbFileSync.exe` and the zip archive to a GitHub release when you push a `v*` tag or run the workflow manually.
 
 ### Release files produced
 
@@ -274,7 +274,7 @@ The release packaging script writes these outputs:
 - `artifacts/release/win-x64/publish/UsbFileSync.exe`
 - `artifacts/release/UsbFileSync-v1.0.0-win-x64.zip`
 
-The zip is the file intended for GitHub Releases.
+Both the `UsbFileSync.exe` executable and the zip archive are attached to the GitHub Release as downloadable assets.
 
 ### Step 1: Prepare a code-signing certificate
 
@@ -408,9 +408,9 @@ The `Release` workflow does this on `windows-latest`:
 5. Signs `UsbFileSync.exe` if signing secrets are configured.
 6. Zips the publish folder.
 7. Uploads the zip as a workflow artifact.
-8. Creates or updates the GitHub Release for the tag and attaches the zip.
+8. Creates or updates the GitHub Release for the tag and attaches both `UsbFileSync.exe` and the zip archive as downloadable assets.
 
-You can also run the workflow manually from the `Actions` tab by choosing the `Release` workflow and using `Run workflow`. The manual run supports an optional version string and an optional `sign` toggle.
+You can also run the workflow manually from the `Actions` tab by choosing the `Release` workflow and using `Run workflow`. The manual run supports an optional version string and an optional `sign` toggle. When run manually, the workflow creates or updates the GitHub Release for the specified version so that the `.exe` and zip are attached even without pushing a tag.
 
 ### Step 8: Verify the GitHub release
 
@@ -418,8 +418,8 @@ After the workflow completes:
 
 1. Open the `Actions` tab and confirm the `Release` workflow succeeded.
 2. Open the new GitHub Release for the tag.
-3. Download the attached `UsbFileSync-<version>-win-x64.zip` asset.
-4. Extract it and launch `UsbFileSync.exe` on a clean Windows machine if possible.
+3. Download `UsbFileSync.exe` directly, or download the `UsbFileSync-<version>-win-x64.zip` archive and extract it.
+4. Launch `UsbFileSync.exe` on a clean Windows machine if possible.
 5. If you enabled signing, confirm Windows reports the file as digitally signed.
 
 ### If you want an unsigned release
