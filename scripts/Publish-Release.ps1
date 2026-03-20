@@ -66,6 +66,8 @@ function Get-NumericVersion {
     return ($segments -join '.')
 }
 
+# action-gh-release on Windows failed to glob ".\..." paths, so normalize release outputs
+# to resolved forward-slash paths before exporting them through GITHUB_OUTPUT.
 function ConvertTo-GitHubOutputPath {
     param([string]$Path)
 
